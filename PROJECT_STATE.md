@@ -19,6 +19,7 @@ Current implementation:
 - group_weights.json
 - fly_controller.py
 - fly_state.json
+- brain_dashboard.py (dependency-free PNG state dashboard used by Discord replies)
 
 Next:
 Integrate and validate the brain behavior with the Discord bot without unnecessarily rewriting the existing brain code.
@@ -72,17 +73,20 @@ Do not have Claude and Codex edit the same files simultaneously.
 Use Git commits as handoff points.
 
 ## Current Task
-Set up the shared Claude Code + OpenAI Codex workflow in VS Code.
+Validate the Discord bot startup and its brain-dashboard output.
 
 ## Next Task
-Create a clean handoff between the existing Fly brain code and the Discord bot.
+Run the bot with a Discord token in a test server and verify slash-command,
+reaction, ambient-event, and dashboard delivery end to end.
 
 ## Known Problems
-None currently recorded.
+None currently recorded. The dashboard deliberately has no Pillow dependency;
+it produces PNG data with the standard library.
 
 ## Last Change
-GitHub repository initialized and pushed to origin/main.
-Claude Code and OpenAI Codex extensions installed in VS Code.
+Added brain_dashboard.py. It renders behavior, tick count, drives, and all
+functional-group activation values into a lightweight PNG for fly_bot.py.
+The bot import and dashboard PNG output were validated locally; no commit was made.
 
 ## Notes
 The project should remain lightweight.
