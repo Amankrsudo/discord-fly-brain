@@ -47,6 +47,11 @@ HABITUATION_INCREMENT = 0.6   # desensitization added per external hit
 HABITUATION_DECAY = 0.85      # per-tick recovery toward full sensitivity
 HABITUATION_MAX_SUPPRESSION = 0.85  # never fully silence the pathway
 
+# A looming visual threat enters through VIS_LC rather than a persistent
+# stimulate flag.  Keep its lasting fear effect modest: /scare sends three
+# pulses and each one is followed by a tick that applies normal fear decay.
+VIS_LC_FEAR_INCREMENT = 0.15
+
 BEHAVIOR_THRESHOLDS = {
     "startle": 30, "fly": 15, "feed": 8, "groom": 8, "walk": 5,
     "restFatigue": 0.7, "exploreCuriosity": 0.4, "phototaxisLight": 0.5,
@@ -171,6 +176,8 @@ class GroupBrain:
         short window get progressively weaker; stopping lets it recover."""
         if self.is_overloaded():
             return  # unresponsive -- nothing gets through until it recovers
+        if group == "VIS_LC":
+            self.drives["fear"] = min(1.0, self.drives["fear"] + VIS_LC_FEAR_INCREMENT)
         suppression = self._suppression(group)
         self._accumulate(group, scale * (1.0 - suppression))
         self.habituation[group] = self.habituation.get(group, 0.0) + HABITUATION_INCREMENT

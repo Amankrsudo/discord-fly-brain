@@ -73,20 +73,22 @@ Do not have Claude and Codex edit the same files simultaneously.
 Use Git commits as handoff points.
 
 ## Current Task
-Validate the Discord bot startup and its brain-dashboard output.
+Validate the corrected persistent-fear response to /scare in a Discord test server.
 
 ## Next Task
 Run the bot with a Discord token in a test server and verify slash-command,
-reaction, ambient-event, and dashboard delivery end to end.
+reaction, ambient-event, dashboard delivery, and /scare fear response end to end.
 
 ## Known Problems
 None currently recorded. The dashboard deliberately has no Pillow dependency;
 it produces PNG data with the standard library.
 
 ## Last Change
-Added brain_dashboard.py. It renders behavior, tick count, drives, and all
-functional-group activation values into a lightweight PNG for fly_bot.py.
-The bot import and dashboard PNG output were validated locally; no commit was made.
+Added a persistent fear increment for external VIS_LC (looming/scare) stimulation.
+VIS_LC_FEAR_INCREMENT is 0.15 per pulse, clamped to 1.0; the existing
+VIS_LC -> DN_STARTLE / DRIVE_FEAR weighted cascade is unchanged. In-memory
+validation confirmed fear reaches 0.328 after the three-pulse scare pattern,
+and fly_bot imports successfully. No commit was made.
 
 ## Notes
 The project should remain lightweight.
