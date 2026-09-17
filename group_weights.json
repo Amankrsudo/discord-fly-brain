@@ -1,0 +1,339 @@
+{
+ "VIS_R1R6": {
+  "VIS_ME": 8,
+  "VIS_LPTC": 4,
+  "DRIVE_CURIOSITY": 2
+ },
+ "VIS_R7R8": {
+  "VIS_ME": 6,
+  "LH_APP": 4,
+  "MB_KC": 3
+ },
+ "VIS_ME": {
+  "VIS_LO": 7,
+  "VIS_LPTC": 6,
+  "VIS_LC": 5,
+  "CX_EPG": 3
+ },
+ "VIS_LO": {
+  "VIS_LC": 5,
+  "MB_KC": 4,
+  "CX_EPG": 3,
+  "LH_APP": 2
+ },
+ "VIS_LC": {
+  "DN_STARTLE": 12,
+  "DRIVE_FEAR": 6,
+  "DN_FLIGHT": 5,
+  "GNG_DESC": 3
+ },
+ "VIS_LPTC": {
+  "CX_EPG": 6,
+  "CX_HDELTA": 5,
+  "CX_PFN": 4,
+  "DN_TURN": 3
+ },
+ "OLF_ORN_FOOD": {
+  "OLF_PN": 10,
+  "OLF_LN": 5,
+  "MB_KC": 2
+ },
+ "OLF_ORN_DANGER": {
+  "OLF_PN": 10,
+  "OLF_LN": 5,
+  "DRIVE_FEAR": 3
+ },
+ "OLF_LN": {
+  "OLF_PN": 4,
+  "OLF_ORN_FOOD": -2,
+  "OLF_ORN_DANGER": -2
+ },
+ "OLF_PN": {
+  "MB_KC": 8,
+  "LH_APP": 5,
+  "LH_AV": 5
+ },
+ "GUS_GRN_SWEET": {
+  "SEZ_FEED": 10,
+  "MB_DAN_REW": 7,
+  "MB_MBON_APP": 4,
+  "DRIVE_HUNGER": -5
+ },
+ "GUS_GRN_BITTER": {
+  "SEZ_FEED": -8,
+  "MB_DAN_PUN": 7,
+  "DRIVE_FEAR": 4,
+  "MB_MBON_AV": 5,
+  "LH_AV": 4
+ },
+ "GUS_GRN_WATER": {
+  "SEZ_WATER": 8,
+  "SEZ_FEED": 3,
+  "MB_DAN_REW": 3
+ },
+ "MECH_BRISTLE": {
+  "SEZ_GROOM": 6,
+  "DRIVE_GROOM": 4,
+  "DRIVE_FEAR": 5,
+  "DN_STARTLE": 7,
+  "GNG_DESC": 3,
+  "ANTENNAL_MECH": 2
+ },
+ "MECH_JO": {
+  "ANTENNAL_MECH": 10,
+  "CX_HDELTA": 4,
+  "DN_STARTLE": 3,
+  "DRIVE_FEAR": 2
+ },
+ "MECH_CHORD": {
+  "CX_PFN": 5,
+  "CX_FC": 3,
+  "DN_WALK": 2
+ },
+ "THERMO_WARM": {
+  "CX_HDELTA": 4,
+  "LH_AV": 3,
+  "DRIVE_FEAR": 2,
+  "THERMO_COOL": -2
+ },
+ "THERMO_COOL": {
+  "CX_HDELTA": 3,
+  "LH_APP": 2,
+  "DRIVE_CURIOSITY": 2,
+  "THERMO_WARM": -2
+ },
+ "NOCI": {
+  "DN_STARTLE": 10,
+  "DRIVE_FEAR": 8,
+  "DN_FLIGHT": 6,
+  "SEZ_GROOM": 4,
+  "SEZ_FEED": -5
+ },
+ "MB_KC": {
+  "MB_MBON_APP": 6,
+  "MB_MBON_AV": 6,
+  "MB_APL": 4
+ },
+ "MB_MBON_APP": {
+  "LH_APP": 5,
+  "SEZ_FEED": 4,
+  "DN_WALK": 3,
+  "CX_FC": 3,
+  "MB_MBON_AV": -4
+ },
+ "MB_MBON_AV": {
+  "LH_AV": 5,
+  "DRIVE_FEAR": 4,
+  "DN_STARTLE": 3,
+  "MB_MBON_APP": -4,
+  "SEZ_FEED": -3
+ },
+ "MB_APL": {
+  "MB_KC": -5,
+  "MB_MBON_APP": -2,
+  "MB_MBON_AV": -2
+ },
+ "MB_DAN_REW": {
+  "MB_MBON_APP": 7,
+  "MB_KC": 3,
+  "DRIVE_CURIOSITY": 2
+ },
+ "MB_DAN_PUN": {
+  "MB_MBON_AV": 7,
+  "MB_KC": 3,
+  "DRIVE_FEAR": 3
+ },
+ "LH_APP": {
+  "DN_WALK": 6,
+  "CX_FC": 4,
+  "SEZ_FEED": 3,
+  "DN_TURN": 3,
+  "LH_AV": -3
+ },
+ "LH_AV": {
+  "DN_STARTLE": 6,
+  "DRIVE_FEAR": 5,
+  "DN_FLIGHT": 4,
+  "DN_TURN": 4,
+  "LH_APP": -3,
+  "SEZ_FEED": -5
+ },
+ "CX_EPG": {
+  "CX_PFN": 7,
+  "CX_FC": 6,
+  "CX_HDELTA": 4,
+  "CX_EPG": 3
+ },
+ "CX_PFN": {
+  "CX_FC": 6,
+  "CX_EPG": 3,
+  "CX_HDELTA": 3
+ },
+ "CX_FC": {
+  "DN_WALK": 8,
+  "DN_TURN": 5,
+  "CX_EPG": 2,
+  "CX_FC": 3,
+  "DN_FLIGHT": -2
+ },
+ "CX_HDELTA": {
+  "CX_EPG": 5,
+  "DN_TURN": 6,
+  "CX_FC": 3
+ },
+ "SEZ_FEED": {
+  "MN_PROBOSCIS": 14,
+  "MN_HEAD": 4,
+  "DN_WALK": -6,
+  "DN_FLIGHT": -5,
+  "SEZ_GROOM": -4,
+  "DRIVE_HUNGER": -3
+ },
+ "SEZ_GROOM": {
+  "MN_LEG_L1": 10,
+  "MN_LEG_R1": 10,
+  "MN_ABDOMEN": 5,
+  "MN_HEAD": 4,
+  "DN_WALK": -5,
+  "DN_FLIGHT": -4,
+  "SEZ_FEED": -3
+ },
+ "ANTENNAL_MECH": {
+  "DN_STARTLE": 5,
+  "CX_HDELTA": 4,
+  "DRIVE_FEAR": 3,
+  "DN_TURN": 3
+ },
+ "GNG_DESC": {
+  "DN_WALK": 4,
+  "SEZ_FEED": 2,
+  "CX_FC": 4,
+  "GNG_DESC": 2
+ },
+ "DN_WALK": {
+  "VNC_CPG": 8,
+  "MN_LEG_L1": 4,
+  "MN_LEG_R1": 4,
+  "MN_LEG_L2": 5,
+  "MN_LEG_R2": 5,
+  "MN_LEG_L3": 3,
+  "MN_LEG_R3": 3,
+  "CX_FC": 2,
+  "DN_FLIGHT": -3
+ },
+ "DN_FLIGHT": {
+  "MN_WING_L": 10,
+  "MN_WING_R": 10,
+  "MN_LEG_L1": -3,
+  "MN_LEG_R1": -3,
+  "MN_LEG_L2": -3,
+  "MN_LEG_R2": -3,
+  "MN_LEG_L3": -3,
+  "MN_LEG_R3": -3,
+  "DN_WALK": -5
+ },
+ "DN_TURN": {
+  "MN_LEG_L1": 4,
+  "MN_LEG_L2": 5,
+  "MN_LEG_L3": 3,
+  "MN_LEG_R1": -3,
+  "MN_LEG_R2": -4,
+  "MN_LEG_R3": -2,
+  "MN_HEAD": 4
+ },
+ "DN_BACKUP": {
+  "MN_LEG_L3": 5,
+  "MN_LEG_R3": 5,
+  "MN_LEG_L2": 3,
+  "MN_LEG_R2": 3,
+  "MN_LEG_L1": -2,
+  "MN_LEG_R1": -2,
+  "DN_WALK": -4
+ },
+ "DN_STARTLE": {
+  "DN_FLIGHT": 10,
+  "MN_WING_L": 8,
+  "MN_WING_R": 8,
+  "MN_LEG_L2": 5,
+  "MN_LEG_R2": 5,
+  "MN_LEG_L3": 6,
+  "MN_LEG_R3": 6,
+  "DN_BACKUP": 5,
+  "DRIVE_FEAR": 4,
+  "DN_WALK": -4,
+  "SEZ_FEED": -6,
+  "SEZ_GROOM": -5
+ },
+ "VNC_CPG": {
+  "MN_LEG_L1": 3,
+  "MN_LEG_R1": 3,
+  "MN_LEG_L2": 4,
+  "MN_LEG_R2": 4,
+  "MN_LEG_L3": 3,
+  "MN_LEG_R3": 3,
+  "VNC_CPG": 2
+ },
+ "CLOCK_DN": {
+  "DRIVE_FATIGUE": 2,
+  "DRIVE_CURIOSITY": 2,
+  "CX_FC": 2,
+  "GNG_DESC": 2
+ },
+ "SEZ_WATER": {
+  "MN_PROBOSCIS": 6,
+  "MN_HEAD": 3,
+  "DN_WALK": -3,
+  "SEZ_FEED": -2
+ },
+ "DRIVE_HUNGER": {
+  "OLF_PN": 5,
+  "LH_APP": 6,
+  "SEZ_FEED": 4,
+  "MB_MBON_APP": 4,
+  "DN_WALK": 3,
+  "CX_FC": 3,
+  "DRIVE_CURIOSITY": 3,
+  "DRIVE_FATIGUE": -2
+ },
+ "DRIVE_FEAR": {
+  "DN_STARTLE": 5,
+  "DN_FLIGHT": 4,
+  "LH_AV": 3,
+  "SEZ_FEED": -6,
+  "SEZ_GROOM": -4,
+  "DN_WALK": 2,
+  "DRIVE_CURIOSITY": -3,
+  "DRIVE_FATIGUE": -2
+ },
+ "DRIVE_FATIGUE": {
+  "DN_WALK": -6,
+  "DN_FLIGHT": -5,
+  "CX_FC": -4,
+  "DRIVE_CURIOSITY": -3,
+  "DN_STARTLE": -2
+ },
+ "DRIVE_CURIOSITY": {
+  "CX_FC": 6,
+  "DN_WALK": 4,
+  "CX_HDELTA": 5,
+  "DN_TURN": 4,
+  "CX_EPG": 3,
+  "DRIVE_FATIGUE": 1
+ },
+ "DRIVE_GROOM": {
+  "SEZ_GROOM": 8,
+  "DN_WALK": -3,
+  "DN_FLIGHT": -2
+ },
+ "MN_LEG_L1": {},
+ "MN_LEG_R1": {},
+ "MN_LEG_L2": {},
+ "MN_LEG_R2": {},
+ "MN_LEG_L3": {},
+ "MN_LEG_R3": {},
+ "MN_WING_L": {},
+ "MN_WING_R": {},
+ "MN_PROBOSCIS": {},
+ "MN_HEAD": {},
+ "MN_ABDOMEN": {}
+}
