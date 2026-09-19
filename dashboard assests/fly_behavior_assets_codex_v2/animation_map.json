@@ -1,0 +1,236 @@
+{
+  "species": "Drosophila melanogaster",
+  "frame_size": [
+    96,
+    96
+  ],
+  "frame_count": 8,
+  "transparent_background": true,
+  "source": "approved Fly Brain behavior reference sheet",
+  "behaviors": {
+    "idle": {
+      "frames": [
+        "animations/idle/idle_01.png",
+        "animations/idle/idle_02.png",
+        "animations/idle/idle_03.png",
+        "animations/idle/idle_04.png",
+        "animations/idle/idle_05.png",
+        "animations/idle/idle_06.png",
+        "animations/idle/idle_07.png",
+        "animations/idle/idle_08.png"
+      ],
+      "gif": "animations/idle/fly_idle.gif",
+      "sheet": "animations/idle/fly_idle_sheet.png"
+    },
+    "walk": {
+      "frames": [
+        "animations/walk/walk_01.png",
+        "animations/walk/walk_02.png",
+        "animations/walk/walk_03.png",
+        "animations/walk/walk_04.png",
+        "animations/walk/walk_05.png",
+        "animations/walk/walk_06.png",
+        "animations/walk/walk_07.png",
+        "animations/walk/walk_08.png"
+      ],
+      "gif": "animations/walk/fly_walk.gif",
+      "sheet": "animations/walk/fly_walk_sheet.png"
+    },
+    "feed": {
+      "frames": [
+        "animations/feed/feed_01.png",
+        "animations/feed/feed_02.png",
+        "animations/feed/feed_03.png",
+        "animations/feed/feed_04.png",
+        "animations/feed/feed_05.png",
+        "animations/feed/feed_06.png",
+        "animations/feed/feed_07.png",
+        "animations/feed/feed_08.png"
+      ],
+      "gif": "animations/feed/fly_feed.gif",
+      "sheet": "animations/feed/fly_feed_sheet.png"
+    },
+    "groom": {
+      "frames": [
+        "animations/groom/groom_01.png",
+        "animations/groom/groom_02.png",
+        "animations/groom/groom_03.png",
+        "animations/groom/groom_04.png",
+        "animations/groom/groom_05.png",
+        "animations/groom/groom_06.png",
+        "animations/groom/groom_07.png",
+        "animations/groom/groom_08.png"
+      ],
+      "gif": "animations/groom/fly_groom.gif",
+      "sheet": "animations/groom/fly_groom_sheet.png"
+    },
+    "scare": {
+      "frames": [
+        "animations/scare/scare_01.png",
+        "animations/scare/scare_02.png",
+        "animations/scare/scare_03.png",
+        "animations/scare/scare_04.png",
+        "animations/scare/scare_05.png",
+        "animations/scare/scare_06.png",
+        "animations/scare/scare_07.png",
+        "animations/scare/scare_08.png"
+      ],
+      "gif": "animations/scare/fly_scare.gif",
+      "sheet": "animations/scare/fly_scare_sheet.png"
+    },
+    "burn": {
+      "frames": [
+        "animations/burn/burn_01.png",
+        "animations/burn/burn_02.png",
+        "animations/burn/burn_03.png",
+        "animations/burn/burn_04.png",
+        "animations/burn/burn_05.png",
+        "animations/burn/burn_06.png",
+        "animations/burn/burn_07.png",
+        "animations/burn/burn_08.png"
+      ],
+      "gif": "animations/burn/fly_burn.gif",
+      "sheet": "animations/burn/fly_burn_sheet.png"
+    },
+    "freeze": {
+      "frames": [
+        "animations/freeze/freeze_01.png",
+        "animations/freeze/freeze_02.png",
+        "animations/freeze/freeze_03.png",
+        "animations/freeze/freeze_04.png",
+        "animations/freeze/freeze_05.png",
+        "animations/freeze/freeze_06.png",
+        "animations/freeze/freeze_07.png",
+        "animations/freeze/freeze_08.png"
+      ],
+      "gif": "animations/freeze/fly_freeze.gif",
+      "sheet": "animations/freeze/fly_freeze_sheet.png"
+    },
+    "shock": {
+      "frames": [
+        "animations/shock/shock_01.png",
+        "animations/shock/shock_02.png",
+        "animations/shock/shock_03.png",
+        "animations/shock/shock_04.png",
+        "animations/shock/shock_05.png",
+        "animations/shock/shock_06.png",
+        "animations/shock/shock_07.png",
+        "animations/shock/shock_08.png"
+      ],
+      "gif": "animations/shock/fly_shock.gif",
+      "sheet": "animations/shock/fly_shock_sheet.png"
+    },
+    "mate": {
+      "frames": [
+        "animations/mate/mate_01.png",
+        "animations/mate/mate_02.png",
+        "animations/mate/mate_03.png",
+        "animations/mate/mate_04.png",
+        "animations/mate/mate_05.png",
+        "animations/mate/mate_06.png",
+        "animations/mate/mate_07.png",
+        "animations/mate/mate_08.png"
+      ],
+      "gif": "animations/mate/fly_mate.gif",
+      "sheet": "animations/mate/fly_mate_sheet.png"
+    },
+    "takeoff": {
+      "frames": [
+        "animations/takeoff/takeoff_01.png",
+        "animations/takeoff/takeoff_02.png",
+        "animations/takeoff/takeoff_03.png",
+        "animations/takeoff/takeoff_04.png",
+        "animations/takeoff/takeoff_05.png",
+        "animations/takeoff/takeoff_06.png",
+        "animations/takeoff/takeoff_07.png",
+        "animations/takeoff/takeoff_08.png"
+      ],
+      "gif": "animations/takeoff/fly_takeoff.gif",
+      "sheet": "animations/takeoff/fly_takeoff_sheet.png"
+    },
+    "land": {
+      "frames": [
+        "animations/land/land_01.png",
+        "animations/land/land_02.png",
+        "animations/land/land_03.png",
+        "animations/land/land_04.png",
+        "animations/land/land_05.png",
+        "animations/land/land_06.png",
+        "animations/land/land_07.png",
+        "animations/land/land_08.png"
+      ],
+      "gif": "animations/land/fly_land.gif",
+      "sheet": "animations/land/fly_land_sheet.png"
+    },
+    "sleep": {
+      "frames": [
+        "animations/sleep/sleep_01.png",
+        "animations/sleep/sleep_02.png",
+        "animations/sleep/sleep_03.png",
+        "animations/sleep/sleep_04.png",
+        "animations/sleep/sleep_05.png",
+        "animations/sleep/sleep_06.png",
+        "animations/sleep/sleep_07.png",
+        "animations/sleep/sleep_08.png"
+      ],
+      "gif": "animations/sleep/fly_sleep.gif",
+      "sheet": "animations/sleep/fly_sleep_sheet.png"
+    },
+    "happy": {
+      "frames": [
+        "animations/happy/happy_01.png",
+        "animations/happy/happy_02.png",
+        "animations/happy/happy_03.png",
+        "animations/happy/happy_04.png",
+        "animations/happy/happy_05.png",
+        "animations/happy/happy_06.png",
+        "animations/happy/happy_07.png",
+        "animations/happy/happy_08.png"
+      ],
+      "gif": "animations/happy/fly_happy.gif",
+      "sheet": "animations/happy/fly_happy_sheet.png"
+    },
+    "hurt": {
+      "frames": [
+        "animations/hurt/hurt_01.png",
+        "animations/hurt/hurt_02.png",
+        "animations/hurt/hurt_03.png",
+        "animations/hurt/hurt_04.png",
+        "animations/hurt/hurt_05.png",
+        "animations/hurt/hurt_06.png",
+        "animations/hurt/hurt_07.png",
+        "animations/hurt/hurt_08.png"
+      ],
+      "gif": "animations/hurt/fly_hurt.gif",
+      "sheet": "animations/hurt/fly_hurt_sheet.png"
+    },
+    "dead": {
+      "frames": [
+        "animations/dead/dead_01.png",
+        "animations/dead/dead_02.png",
+        "animations/dead/dead_03.png",
+        "animations/dead/dead_04.png",
+        "animations/dead/dead_05.png",
+        "animations/dead/dead_06.png",
+        "animations/dead/dead_07.png",
+        "animations/dead/dead_08.png"
+      ],
+      "gif": "animations/dead/fly_dead.gif",
+      "sheet": "animations/dead/fly_dead_sheet.png"
+    },
+    "confused": {
+      "frames": [
+        "animations/confused/confused_01.png",
+        "animations/confused/confused_02.png",
+        "animations/confused/confused_03.png",
+        "animations/confused/confused_04.png",
+        "animations/confused/confused_05.png",
+        "animations/confused/confused_06.png",
+        "animations/confused/confused_07.png",
+        "animations/confused/confused_08.png"
+      ],
+      "gif": "animations/confused/fly_confused.gif",
+      "sheet": "animations/confused/fly_confused_sheet.png"
+    }
+  }
+}

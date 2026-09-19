@@ -1,0 +1,7 @@
+{
+  "primary_hero_asset": "fly_hero_transparent.png",
+  "reference": "fly_brain_dashboard_reference_v2.png",
+  "recommended_use": "center hero fly in brain_dashboard.py",
+  "style": "detailed Drosophila fruit fly, warm natural body, translucent wings, dark sci-fi HUD",
+  "note": "Use the transparent fly as a live dashboard visual. Do not bake static dashboard text/values into it."
+}

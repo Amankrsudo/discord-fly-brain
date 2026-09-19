@@ -113,6 +113,7 @@ class FlyController:
                 b = self.brain.evaluate_behavior(has_nearby_food=fed)
                 if not arc or arc[-1] != b:
                     arc.append(b)
+            stimulus_snapshot = dict(self.brain.stimulate)
             for k in flags:
                 cur = self.brain.stimulate.get(k)
                 if isinstance(cur, bool):
@@ -120,7 +121,9 @@ class FlyController:
                 elif k == "temperature":
                     self.brain.stimulate[k] = 0.5  # back to neutral
             self.brain.save(self.checkpoint_path)
-            return self._snapshot(has_nearby_food=fed, all_fired=all_fired, arc=arc)
+            snapshot = self._snapshot(has_nearby_food=fed, all_fired=all_fired, arc=arc)
+            snapshot["stimuli"] = stimulus_snapshot
+            return snapshot
 
     async def trigger_group(self, group_name, pulses=3):
         """Direct injection for commands with no real stimulate-flag
@@ -144,7 +147,12 @@ class FlyController:
                 if not arc or arc[-1] != b:
                     arc.append(b)
             self.brain.save(self.checkpoint_path)
-            return self._snapshot(all_fired=all_fired, arc=arc)
+            snapshot = self._snapshot(all_fired=all_fired, arc=arc)
+            # NOCI is the brain's nociceptive external entry point.  Preserve
+            # that real, momentary input for the response dashboard only.
+            if group_name == "NOCI":
+                snapshot["stimuli"]["nociception"] = True
+            return snapshot
 
     async def overload(self):
         """Pleasure and pain simultaneously -- forces a real wall-clock
@@ -166,4 +174,5 @@ class FlyController:
             # the reliable signal -- what actually crossed threshold and
             # cascaded, independent of whether the coarser label caught it
             "fired": sorted(all_fired if all_fired is not None else b.last_fired),
+            "stimuli": dict(b.stimulate),
         }

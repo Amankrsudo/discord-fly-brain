@@ -1,0 +1,28 @@
+{
+  "reference": "fly_brain_dashboard_reference.png",
+  "hero_reference": "fly_brain_hero_reference.png",
+  "renderer_interface": "render_dashboard(brain, highlight=None)",
+  "output": "PNG via returned_object.save(buffer, format='PNG')",
+  "style": "dark sci-fi scientific HUD, neon cyan with magenta/orange/green accents",
+  "panels": [
+    "drives_state",
+    "vitals",
+    "environment",
+    "hero_fly",
+    "neural_activity",
+    "recent_events",
+    "learning_adaptation",
+    "neural_flow"
+  ],
+  "actions": [
+    "IDLE",
+    "WALK",
+    "FEED",
+    "GROOM",
+    "SCARE",
+    "BURN",
+    "SHOCK",
+    "SLEEP"
+  ],
+  "production_note": "Reference images are visual guides only; render live values from GroupBrain."
+}

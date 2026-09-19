@@ -85,6 +85,13 @@ SPRITES = {
     "idle": "idle.gif",
 }
 
+VISUAL_COMMAND_OVERRIDES = {
+    "feed": "feed", "love": "happy", "burn": "burn", "freeze": "freeze",
+    "shock": "shock", "scare": "scare", "hurt": "hurt", "mate": "mate",
+    "takeoff": "takeoff", "land": "land", "sleep": "sleep", "wake": "idle",
+    "happy": "happy", "confused": "confused",
+}
+
 # groups worth calling out by name if they actually fired, per command
 NOTABLE = {
     "feed":   ["MB_DAN_REW", "SEZ_FEED"],
@@ -129,8 +136,9 @@ def sprite_file(name: str):
     return discord.File(path) if os.path.exists(path) else None
 
 
-def dashboard_file(fired=None) -> discord.File:
-    img = render_dashboard(fly.brain, highlight=fired)
+def dashboard_file(fired=None, stimuli=None, behavior=None, visual_override=None) -> discord.File:
+    img = render_dashboard(fly.brain, highlight=fired, stimulus_snapshot=stimuli,
+                           behavior_snapshot=behavior, visual_override=visual_override)
     buf = io.BytesIO()
     img.save(buf, format="PNG")
     buf.seek(0)
@@ -183,8 +191,13 @@ async def _reply(interaction: discord.Interaction, command: str, snapshot: dict)
             fired_str = ", ".join(snapshot["fired"]) or "nothing measurable"
             fly.brain.log_event(f"overload (fired: {fired_str})")
     content = describe(command, snapshot)
-    files = [f for f in (sprite_file(SPRITES.get(command, "idle.gif")),
-                          dashboard_file(fired=snapshot["fired"])) if f]
+    # Preserve the GroupBrain behavior for its response data unless a command
+    # explicitly requests a distinct visual intent.
+    behavior_arc = snapshot.get("behavior_arc") or [snapshot["behavior"]]
+    behavior = next((item for item in behavior_arc if item != "idle"), behavior_arc[-1])
+    files = [dashboard_file(fired=snapshot["fired"], stimuli=snapshot.get("stimuli"),
+                            behavior=behavior,
+                            visual_override=VISUAL_COMMAND_OVERRIDES.get(command))]
     if files:
         await interaction.followup.send(content=content, files=files)
     else:
@@ -314,6 +327,84 @@ async def cmd_smell_food(interaction: discord.Interaction):
     await _reply(interaction, "smell_food", snap)
 
 
+@tree.command(name="mate", description="present a courtship/reward cue to the fly")
+async def cmd_mate(interaction: discord.Interaction):
+    if not await check_rate_limit(interaction):
+        return
+    await interaction.response.defer()
+    # The model has no mating-specific group; reward is the closest existing
+    # functional pathway, so the resulting behavior remains brain-selected.
+    snap = await fly.trigger_group("MB_DAN_REW", pulses=3)
+    await _reply(interaction, "mate", snap)
+
+
+@tree.command(name="sleep", description="darken the ambient environment")
+async def cmd_sleep(interaction: discord.Interaction):
+    if not await check_rate_limit(interaction):
+        return
+    await interaction.response.defer()
+    # Darkness uses the existing fatigue/rest logic; it does not force rest.
+    snap = await fly.set_ambient(lightLevel=0.0)
+    await _reply(interaction, "sleep", snap)
+
+
+@tree.command(name="wake", description="restore normal ambient light")
+async def cmd_wake(interaction: discord.Interaction):
+    if not await check_rate_limit(interaction):
+        return
+    await interaction.response.defer()
+    snap = await fly.set_ambient(lightLevel=1.0)
+    await _reply(interaction, "wake", snap)
+
+
+@tree.command(name="takeoff", description="stimulate the existing flight motor pathway")
+async def cmd_takeoff(interaction: discord.Interaction):
+    if not await check_rate_limit(interaction):
+        return
+    await interaction.response.defer()
+    snap = await fly.trigger_group("DN_FLIGHT", pulses=3)
+    await _reply(interaction, "takeoff", snap)
+
+
+@tree.command(name="land", description="recruit walking after flight")
+async def cmd_land(interaction: discord.Interaction):
+    if not await check_rate_limit(interaction):
+        return
+    await interaction.response.defer()
+    # No landing state exists; the closest modelled post-flight output is walk.
+    snap = await fly.trigger_group("DN_WALK", pulses=3)
+    await _reply(interaction, "land", snap)
+
+
+@tree.command(name="hurt", description="stimulate the nociceptive pathway")
+async def cmd_hurt(interaction: discord.Interaction):
+    if not await check_rate_limit(interaction):
+        return
+    await interaction.response.defer()
+    snap = await fly.trigger_group("NOCI", pulses=4)
+    await _reply(interaction, "hurt", snap)
+
+
+@tree.command(name="happy", description="stimulate the existing reward pathway")
+async def cmd_happy(interaction: discord.Interaction):
+    if not await check_rate_limit(interaction):
+        return
+    await interaction.response.defer()
+    snap = await fly.trigger_group("MB_DAN_REW", pulses=3)
+    await _reply(interaction, "happy", snap)
+
+
+@tree.command(name="confused", description="stimulate the orientation pathway")
+async def cmd_confused(interaction: discord.Interaction):
+    if not await check_rate_limit(interaction):
+        return
+    await interaction.response.defer()
+    # CX_HDELTA is the existing heading/orientation group; no confusion label
+    # is added to GroupBrain, so rendering still follows its chosen behavior.
+    snap = await fly.trigger_group("CX_HDELTA", pulses=3)
+    await _reply(interaction, "confused", snap)
+
+
 @tree.command(name="status", description="check on the fly")
 async def cmd_status(interaction: discord.Interaction):
     async with fly.lock:
@@ -326,7 +417,7 @@ async def cmd_status(interaction: discord.Interaction):
     if hab:
         parts = ", ".join(f"{g} {int(v*100)}%" for g, v in sorted(hab.items(), key=lambda x: -x[1]))
         content += f"\ndesensitized: {parts}"
-    files = [f for f in (sprite_file("idle.gif"), dashboard_file()) if f]
+    files = [dashboard_file()]
     if files:
         await interaction.response.send_message(content=content, files=files)
     else:
