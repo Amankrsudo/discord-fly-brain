@@ -12,7 +12,7 @@ _PACK_NAMES = (os.path.join("dashboard assets", "fly_behavior_assets_codex_v2"),
 BEHAVIOR_ASSETS = {
     "idle": "idle", "walk": "walk", "explore": "walk", "phototaxis": "walk",
     "feed": "feed", "groom": "groom", "startle": "scare", "fly": "takeoff",
-    "rest": "sleep", "overload": "confused", "mate": "mate", "land": "land",
+    "rest": "sleep", "overload": "overload", "mate": "mate", "land": "land",
     "happy": "happy", "hurt": "hurt", "dead": "dead", "confused": "confused",
 }
 
@@ -52,6 +52,10 @@ def visual_state(behavior, stimuli=None, tick=0, visual_override=None):
         else:
             key, effects = BEHAVIOR_ASSETS.get(str(behavior).lower(), "idle"), []
     root, manifest = load_animation_map()
+    if key == "overload":
+        frame = os.path.join(root, "animations", "overload.gif") if root else None
+        if frame and os.path.isfile(frame):
+            return {"key": key, "frame": frame, "effects": []}
     frames = manifest.get("behaviors", {}).get(key, {}).get("frames", [])
     if not root or not frames:
         return {"key": "idle", "frame": None, "effects": []}

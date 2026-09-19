@@ -23,8 +23,9 @@
  },
  "VIS_LC": {
   "DN_STARTLE": 12,
-  "DRIVE_FEAR": 6,
+  "DRIVE_FEAR": 10,
   "DN_FLIGHT": 5,
+  "MB_DAN_PUN": 4,
   "GNG_DESC": 3
  },
  "VIS_LPTC": {
@@ -41,7 +42,8 @@
  "OLF_ORN_DANGER": {
   "OLF_PN": 10,
   "OLF_LN": 5,
-  "DRIVE_FEAR": 3
+  "DRIVE_FEAR": 6,
+  "MB_DAN_PUN": 4
  },
  "OLF_LN": {
   "OLF_PN": 4,
@@ -93,19 +95,23 @@
  "THERMO_WARM": {
   "CX_HDELTA": 4,
   "LH_AV": 3,
-  "DRIVE_FEAR": 2,
+  "DRIVE_FEAR": 14,
+  "MB_DAN_PUN": 8,
   "THERMO_COOL": -2
  },
  "THERMO_COOL": {
   "CX_HDELTA": 3,
   "LH_APP": 2,
   "DRIVE_CURIOSITY": 2,
+  "DRIVE_FEAR": 14,
+  "MB_DAN_PUN": 8,
   "THERMO_WARM": -2
  },
  "NOCI": {
   "DN_STARTLE": 10,
-  "DRIVE_FEAR": 8,
+  "DRIVE_FEAR": 12,
   "DN_FLIGHT": 6,
+  "MB_DAN_PUN": 10,
   "SEZ_GROOM": 4,
   "SEZ_FEED": -5
  },

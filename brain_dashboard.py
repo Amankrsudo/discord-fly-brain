@@ -183,6 +183,147 @@ def _load_png_asset(path):
         return None
 
 
+def _gif_lzw_decode(data, minimum_code_size, expected):
+    clear, end = 1 << minimum_code_size, (1 << minimum_code_size) + 1
+    code_size, next_code = minimum_code_size + 1, end + 1
+    table = {index: bytes((index,)) for index in range(clear)}
+    output, bit_position, previous = bytearray(), 0, None
+
+    def read_code():
+        nonlocal bit_position
+        value = 0
+        for bit in range(code_size):
+            offset = bit_position + bit
+            if offset // 8 >= len(data):
+                return None
+            value |= ((data[offset // 8] >> (offset % 8)) & 1) << bit
+        bit_position += code_size
+        return value
+
+    while len(output) < expected:
+        code = read_code()
+        if code is None or code == end:
+            break
+        if code == clear:
+            table = {index: bytes((index,)) for index in range(clear)}
+            code_size, next_code, previous = minimum_code_size + 1, end + 1, None
+            continue
+        if code in table:
+            entry = table[code]
+        elif code == next_code and previous is not None:
+            entry = previous + previous[:1]
+        else:
+            return None
+        output.extend(entry)
+        if previous is not None:
+            table[next_code] = previous + entry[:1]
+            next_code += 1
+            if next_code == (1 << code_size) and code_size < 12:
+                code_size += 1
+        previous = entry
+    return bytes(output[:expected]) if len(output) >= expected else None
+
+
+def _load_gif_asset(path, frame_index=0):
+    """Decode one GIF frame into the same RGBA tuple used by PNG assets."""
+    try:
+        data = open(path, "rb").read()
+        if data[:6] not in (b"GIF87a", b"GIF89a"):
+            return None
+        width, height, packed, background, _ = struct.unpack_from("<HHBBB", data, 6)
+        global_table = None
+        offset = 13
+        if packed & 0x80:
+            size = 3 * (1 << ((packed & 0x07) + 1))
+            global_table, offset = data[offset:offset + size], offset + size
+        canvas = bytearray(width * height * 4)
+        previous_canvas = None
+        transparent = None
+        disposal = 0
+        frames = []
+
+        def color(table, index):
+            start = index * 3
+            return tuple(table[start:start + 3]) if table and start + 3 <= len(table) else (0, 0, 0)
+
+        while offset < len(data) and data[offset] != 0x3B:
+            marker = data[offset]
+            offset += 1
+            if marker == 0x21:
+                label = data[offset]
+                offset += 1
+                if label == 0xF9:
+                    block_size = data[offset]
+                    packed_gce, _, transparent_index = struct.unpack_from("<BBB", data, offset + 1)
+                    disposal = (packed_gce >> 2) & 0x07
+                    transparent = transparent_index if packed_gce & 1 else None
+                    offset += block_size + 2
+                else:
+                    while offset < len(data):
+                        block_size = data[offset]
+                        offset += 1
+                        if not block_size:
+                            break
+                        offset += block_size
+            elif marker == 0x2C:
+                left, top, frame_width, frame_height, packed_image = struct.unpack_from("<HHHHB", data, offset)
+                offset += 9
+                local_table = None
+                if packed_image & 0x80:
+                    size = 3 * (1 << ((packed_image & 0x07) + 1))
+                    local_table, offset = data[offset:offset + size], offset + size
+                minimum_code_size = data[offset]
+                offset += 1
+                compressed = bytearray()
+                while offset < len(data):
+                    block_size = data[offset]
+                    offset += 1
+                    if not block_size:
+                        break
+                    compressed.extend(data[offset:offset + block_size])
+                    offset += block_size
+                pixels = _gif_lzw_decode(compressed, minimum_code_size, frame_width * frame_height)
+                if pixels is None:
+                    return None
+                if disposal == 3:
+                    previous_canvas = bytes(canvas)
+                table = local_table or global_table
+                rows = list(range(frame_height))
+                if packed_image & 0x40:
+                    rows = (list(range(0, frame_height, 8)) + list(range(4, frame_height, 8)) +
+                            list(range(2, frame_height, 4)) + list(range(1, frame_height, 2)))
+                for source_row, row in enumerate(rows):
+                    for column in range(frame_width):
+                        target_x, target_y = left + column, top + row
+                        if target_x >= width or target_y >= height:
+                            continue
+                        pixel_index = pixels[source_row * frame_width + column]
+                        if pixel_index == transparent:
+                            continue
+                        target = (target_y * width + target_x) * 4
+                        canvas[target:target + 4] = bytes((*color(table, pixel_index), 255))
+                frames.append((bytes(canvas), width, height))
+                if disposal == 2:
+                    for row in range(top, min(height, top + frame_height)):
+                        start = (row * width + left) * 4
+                        end = (row * width + min(width, left + frame_width)) * 4
+                        canvas[start:end] = b"\0" * (end - start)
+                elif disposal == 3 and previous_canvas is not None:
+                    canvas = bytearray(previous_canvas)
+                transparent, disposal, previous_canvas = None, 0, None
+            else:
+                return None
+        return frames[frame_index % len(frames)] if frames else None
+    except (OSError, IndexError, ValueError, struct.error):
+        return None
+
+
+def _load_visual_asset(path, frame_index=0):
+    if path and path.lower().endswith(".gif"):
+        return _load_gif_asset(path, frame_index)
+    return _load_png_asset(path) if path else None
+
+
 def _load_hero_asset():
     global _HERO_ASSET
     if _HERO_ASSET is None:
@@ -233,7 +374,7 @@ def _meter(image, x, y, name, value, color):
     image.text(x + 238, y, f"{value:.2f}", color, 1)
 
 
-def _hero(image, x, y, states, visual):
+def _hero(image, x, y, states, visual, tick=0):
     image.rectangle(x + 10, y + 40, 555, 500, (5, 16, 26))
     for xx in range(x + 25, x + 565, 44): image.line(xx, y + 45, xx, y + 535, (8, 43, 58))
     for yy in range(y + 60, y + 535, 36): image.line(x + 15, yy, x + 565, yy, (8, 43, 58))
@@ -244,18 +385,25 @@ def _hero(image, x, y, states, visual):
         radius = 23 + int(min(1.0, level / FIRE_THRESHOLD) * 14)
         image.ellipse(cx + dx, cy + dy, radius, radius - 5, color, CYAN_DIM)
         image.text(cx + dx - 10, cy + dy - 3, prefix, BG, 1)
-    frame_asset = _load_png_asset(visual["frame"]) if visual.get("frame") else None
+    frame_asset = _load_visual_asset(visual.get("frame"), tick)
     hero_asset = frame_asset or _load_hero_asset()
     if hero_asset:
         rgba, source_width, source_height = hero_asset
-        image.composite_rgba(rgba, source_width, source_height, x + 145, y + 245, 285, 285)
+        target_width = target_height = 285
+        scale = min(target_width / source_width, target_height / source_height)
+        display_width = max(1, int(source_width * scale))
+        display_height = max(1, int(source_height * scale))
+        display_x = x + 145 + (target_width - display_width) // 2
+        display_y = y + 245 + (target_height - display_height) // 2
+        image.composite_rgba(rgba, source_width, source_height,
+                              display_x, display_y, display_width, display_height)
     else:
         # Graceful fallback if the optional visual asset is unavailable.
         image.ellipse(cx - 96, y + 370, 38, 32, (136, 86, 52), ORANGE)
         image.ellipse(cx - 45, y + 374, 57, 37, (103, 69, 48), ORANGE)
         image.ellipse(cx + 27, y + 380, 82, 30, (87, 56, 43), ORANGE)
     for effect_path in visual.get("effects", []):
-        effect_asset = _load_png_asset(effect_path)
+        effect_asset = _load_visual_asset(effect_path)
         if effect_asset:
             rgba, source_width, source_height = effect_asset
             image.composite_rgba(rgba, source_width, source_height, x + 145, y + 245, 285, 285)
@@ -287,13 +435,13 @@ def render_dashboard(brain, highlight=None, stimulus_snapshot=None, behavior_sna
     _panel(image, 900, 18, 480, 88, "SYSTEM"); image.text(922, 57, "TICK: " + str(tick), CYAN, 2); image.text(1120, 57, "LIVE", GREEN, 2); image.text(922, 82, "BEHAVIOR: " + behavior, MUTED, 1, 34)
 
     _panel(image, 20, 124, 280, 590, "DRIVES AND STATE")
-    for index, (name, key, color) in enumerate((("HUNGER", "hunger", MAGENTA), ("FEAR", "fear", PURPLE), ("FATIGUE", "fatigue", BLUE), ("CURIOSITY", "curiosity", ORANGE), ("GROOMING", "groom", GREEN))): _meter(image, 40, 172 + index * 48, name, drives.get(key, 0), color)
-    image.line(38, 425, 282, 425, CYAN_DIM); image.text(40, 442, "LIVE INPUTS", CYAN, 1)
+    for index, (name, key, color) in enumerate((("HUNGER", "hunger", MAGENTA), ("FEAR", "fear", PURPLE), ("FATIGUE", "fatigue", BLUE), ("CURIOSITY", "curiosity", ORANGE), ("GROOMING", "groom", GREEN), ("REWARD", "positive_valence", GREEN), ("AVERSIVE", "aversive_valence", MAGENTA))): _meter(image, 40, 172 + index * 48, name, drives.get(key, 0), color)
+    image.line(38, 515, 282, 515, CYAN_DIM); image.text(40, 532, "LIVE INPUTS", CYAN, 1)
     inputs = (("LIGHT", stimuli.get("lightLevel", "N/A")), ("TEMP", stimuli.get("temperature", "N/A")), ("WIND", stimuli.get("windStrength", 0.0) if stimuli.get("wind") else 0.0), ("FOOD", 1.0 if stimuli.get("foodContact") or stimuli.get("foodNearby") else 0.0), ("THREAT", 1.0 if stimuli.get("dangerOdor") or stimuli.get("nociception") else 0.0))
-    for index, (name, value) in enumerate(inputs): image.text(40, 468 + index * 29, name, MUTED, 1); image.text(160, 468 + index * 29, f"{value:.2f}" if isinstance(value, (int, float)) else "N/A", TEXT, 1)
-    image.text(40, 630, "STIMULUS", CYAN, 1); image.text(40, 650, _stimulus(stimuli, fired), ORANGE, 1, 30)
+    for index, (name, value) in enumerate(inputs): image.text(40, 558 + index * 29, name, MUTED, 1); image.text(160, 558 + index * 29, f"{value:.2f}" if isinstance(value, (int, float)) else "N/A", TEXT, 1)
+    image.text(40, 680, "STIMULUS", CYAN, 1); image.text(40, 700, _stimulus(stimuli, fired), ORANGE, 1, 30)
 
-    _panel(image, 315, 124, 575, 590, "NEURAL FIELD"); _hero(image, 315, 124, states, visual)
+    _panel(image, 315, 124, 575, 590, "NEURAL FIELD"); _hero(image, 315, 124, states, visual, tick)
     for index, action in enumerate(("IDLE", "WALK", "FEED", "GROOM", "SCARE", "BURN", "SHOCK", "SLEEP")):
         x, active = 330 + index * 67, action == behavior or (action == "SLEEP" and behavior == "REST")
         image.rectangle(x, 665, 60, 28, PANEL_ALT if active else (5, 15, 24)); image.line(x, 665, x + 60, 665, GREEN if active else CYAN_DIM); image.text(x + 4, 676, action, GREEN if active else MUTED, 1, 9)

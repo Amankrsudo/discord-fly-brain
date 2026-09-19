@@ -47,10 +47,25 @@ HABITUATION_INCREMENT = 0.6   # desensitization added per external hit
 HABITUATION_DECAY = 0.85      # per-tick recovery toward full sensitivity
 HABITUATION_MAX_SUPPRESSION = 0.85  # never fully silence the pathway
 
-# A looming visual threat enters through VIS_LC rather than a persistent
-# stimulate flag.  Keep its lasting fear effect modest: /scare sends three
-# pulses and each one is followed by a tick that applies normal fear decay.
-VIS_LC_FEAR_INCREMENT = 0.15
+# Threat state is driven by functional-group firing. The activation-strength
+# multiplier preserves intensity without letting large accumulated values
+# create unbounded state changes.
+FEAR_DECAY = 0.96
+FEAR_EVENT_INCREMENT = 0.18
+FEAR_EVENT_COOLDOWN_TICKS = 1
+FEAR_SIGNAL_MAX = 2.0
+POSITIVE_VALENCE_INCREMENT = 0.12
+AVERSIVE_VALENCE_INCREMENT = 0.16
+POSITIVE_VALENCE_DECAY = 0.97
+AVERSIVE_VALENCE_DECAY = 0.95
+POSITIVE_VALENCE_PUNISHMENT = 0.12
+AVERSIVE_REWARD_RELIEF = 0.08
+FEAR_HIGH_THRESHOLD = 0.6
+AVERSIVE_HIGH_THRESHOLD = 0.15
+DEFENSIVE_FLIGHT_THRESHOLD = 8
+THREAT_SIGNAL_DECAY = 0.5
+THREAT_SIGNAL_MINIMUM = 0.2
+THREAT_ENTRY_GROUPS = {"VIS_LC", "NOCI", "THERMO_WARM", "THERMO_COOL", "OLF_ORN_DANGER"}
 
 BEHAVIOR_THRESHOLDS = {
     "startle": 30, "fly": 15, "feed": 8, "groom": 8, "walk": 5,
@@ -84,7 +99,8 @@ class GroupBrain:
         self.next_state = {g: 0.0 for g in self.groups}
 
         self.drives = {"hunger": 0.3, "fear": 0.0, "fatigue": 0.0,
-                        "curiosity": 0.5, "groom": 0.1}
+                "curiosity": 0.5, "groom": 0.1,
+                "positive_valence": 0.0, "aversive_valence": 0.0}
         self.stimulate = {
             "touch": False, "touchLocation": None,
             "foodNearby": False, "foodContact": False, "dangerOdor": False,
@@ -100,12 +116,15 @@ class GroupBrain:
         self.tick_count = 0
         self.last_accum = {}       # most recent motor-readout, for behavior selection
         self.last_fired = set()    # groups that actually crossed FIRE_THRESHOLD last tick
+        self.last_fired_strengths = {}
         self.habituation = {}      # group -> desensitization level, external stimuli only
         self.overload_until_time = 0.0   # wall-clock -- "a few seconds" means real seconds
         self.history = []          # rolling life log, capped at HISTORY_MAX
         self.first_seen = set()    # which "first X" events have already been logged
         self.idle_since = None     # wall-clock time the current idle stretch started
         self.longest_idle_seconds = 0.0
+        self.fear_event_cooldown = 0
+        self.threat_signal = 0.0
 
     # ---- persistence ----
     def save(self, path: str):
@@ -114,6 +133,7 @@ class GroupBrain:
             "this_state": self.this_state,
             "next_state": self.next_state,
             "drives": self.drives,
+            "stimulate": self.stimulate,
             "tick_count": self.tick_count,
             "cooldown_until": self.cooldown_until,
             "current_behavior": self.current_behavior,
@@ -123,6 +143,7 @@ class GroupBrain:
             "first_seen": list(self.first_seen),
             "idle_since": self.idle_since,
             "longest_idle_seconds": self.longest_idle_seconds,
+            "fear_event_cooldown": self.fear_event_cooldown,
         }
         tmp = path + ".tmp"
         with open(tmp, "w") as f:
@@ -142,6 +163,7 @@ class GroupBrain:
         b.this_state.update({k: v for k, v in data.get("this_state", {}).items() if k in b.this_state})
         b.next_state.update({k: v for k, v in data.get("next_state", {}).items() if k in b.next_state})
         b.drives.update(data.get("drives", {}))
+        b.stimulate.update(data.get("stimulate", {}))
         b.tick_count = data.get("tick_count", 0)
         b.cooldown_until = data.get("cooldown_until", {})
         b.current_behavior = data.get("current_behavior", "idle")
@@ -151,6 +173,7 @@ class GroupBrain:
         b.first_seen = set(data.get("first_seen", []))
         b.idle_since = data.get("idle_since")
         b.longest_idle_seconds = data.get("longest_idle_seconds", 0.0)
+        b.fear_event_cooldown = data.get("fear_event_cooldown", 0)
         return b
 
     # ---- core propagation: dendriteAccumulate / dendriteAccumulateScaled ----
@@ -176,8 +199,8 @@ class GroupBrain:
         short window get progressively weaker; stopping lets it recover."""
         if self.is_overloaded():
             return  # unresponsive -- nothing gets through until it recovers
-        if group == "VIS_LC":
-            self.drives["fear"] = min(1.0, self.drives["fear"] + VIS_LC_FEAR_INCREMENT)
+        if group in THREAT_ENTRY_GROUPS:
+            self.threat_signal = min(1.0, self.threat_signal + max(0.0, scale))
         suppression = self._suppression(group)
         self._accumulate(group, scale * (1.0 - suppression))
         self.habituation[group] = self.habituation.get(group, 0.0) + HABITUATION_INCREMENT
@@ -199,6 +222,10 @@ class GroupBrain:
             self._run_connectome()
             settled_fired |= self.last_fired
         self.last_fired = settled_fired
+        # Deliberate max-state mode: this is the one command allowed to push
+        # persistent internal state directly to its bounded extreme.
+        for name in ("fear", "positive_valence", "aversive_valence", "fatigue"):
+            self.drives[name] = 1.0
         self.overload_until_time = time.time() + OVERLOAD_SECONDS
         self.current_behavior = "overload"
 
@@ -225,17 +252,19 @@ class GroupBrain:
     # ---- drives: exact constants from BRAIN.updateDrives ----
     def _update_drives(self):
         d = self.drives
+        self.fear_event_cooldown = max(0, self.fear_event_cooldown - 1)
+        self.threat_signal *= THREAT_SIGNAL_DECAY
         d["hunger"] += 0.005
-        if self.is_feeding:
+        if self.is_feeding or self.stimulate["foodContact"]:
             d["hunger"] -= 0.3
 
         if self.stimulate["touch"]:
             d["fear"] += 0.3
         if self.stimulate["wind"] and self.stimulate["windStrength"] > 0.5:
             d["fear"] += 0.2 * self.stimulate["windStrength"]
-        if self.stimulate["dangerOdor"]:
-            d["fear"] += 0.25
-        d["fear"] *= 0.85
+        d["fear"] *= FEAR_DECAY
+        d["positive_valence"] *= POSITIVE_VALENCE_DECAY
+        d["aversive_valence"] *= AVERSIVE_VALENCE_DECAY
 
         if self.is_moving:
             d["fatigue"] += 0.006 if self.stimulate["lightLevel"] < 0.3 else 0.003
@@ -320,17 +349,41 @@ class GroupBrain:
 
     def _run_connectome(self):
         self.last_fired = set()
+        self.last_fired_strengths = {}
         for g in self.groups:
             if g.startswith(MOTOR_NEURON_PREFIX):
                 continue
             if self.this_state[g] > FIRE_THRESHOLD:
+                self.last_fired_strengths[g] = self.this_state[g]
                 self._fire(g)
                 self.last_fired.add(g)
 
         self.last_accum = self._motor_control()
+        self._apply_group_consequences()
 
         for g in self.groups:
             self.this_state[g] = self.next_state[g]
+
+    def _apply_group_consequences(self):
+        d = self.drives
+        def signal_strength(group):
+            activation = self.last_fired_strengths.get(group, FIRE_THRESHOLD)
+            return min(FEAR_SIGNAL_MAX, activation / FIRE_THRESHOLD)
+
+        if "DRIVE_FEAR" in self.last_fired and self.fear_event_cooldown == 0 and \
+           self.threat_signal >= THREAT_SIGNAL_MINIMUM:
+            d["fear"] += FEAR_EVENT_INCREMENT * signal_strength("DRIVE_FEAR") * (1.0 - d["fear"])
+            self.fear_event_cooldown = FEAR_EVENT_COOLDOWN_TICKS
+        if "MB_DAN_REW" in self.last_fired:
+            strength = signal_strength("MB_DAN_REW")
+            d["positive_valence"] += POSITIVE_VALENCE_INCREMENT * strength * (1.0 - d["positive_valence"])
+            d["aversive_valence"] *= (1.0 - AVERSIVE_REWARD_RELIEF)
+        if "MB_DAN_PUN" in self.last_fired:
+            strength = signal_strength("MB_DAN_PUN")
+            d["aversive_valence"] += AVERSIVE_VALENCE_INCREMENT * strength * (1.0 - d["aversive_valence"])
+            d["positive_valence"] *= (1.0 - POSITIVE_VALENCE_PUNISHMENT)
+        for name in ("fear", "positive_valence", "aversive_valence"):
+            d[name] = max(0.0, min(1.0, d[name]))
 
     def _motor_control(self):
         def read(name):
@@ -390,6 +443,7 @@ class GroupBrain:
 
     def _select_behavior(self, has_nearby_food=False):
         a, d = self.last_accum, self.drives
+        defensive_level = max(d["fear"], d["aversive_valence"])
 
         def cooling(name):
             return self.cooldown_until.get(name, -1) > time.time()
@@ -398,21 +452,27 @@ class GroupBrain:
             return "startle"
         if a.get("flight", 0) > BEHAVIOR_THRESHOLDS["fly"] and not cooling("fly"):
             return "fly"
+        if defensive_level >= min(FEAR_HIGH_THRESHOLD, AVERSIVE_HIGH_THRESHOLD) and \
+           a.get("flight", 0) > DEFENSIVE_FLIGHT_THRESHOLD and not cooling("fly"):
+            return "fly"
         feed_ready = a.get("feed", 0) > BEHAVIOR_THRESHOLDS["feed"] or \
             (d["hunger"] > 0.7 and self.stimulate["foodNearby"])
-        if feed_ready and has_nearby_food and not cooling("feed"):
+        feed_threshold = max(4.0, BEHAVIOR_THRESHOLDS["feed"] - 4.0 * d["positive_valence"])
+        if feed_ready and has_nearby_food and defensive_level < FEAR_HIGH_THRESHOLD and not cooling("feed"):
             return "feed"
-        if a.get("groom", 0) > BEHAVIOR_THRESHOLDS["groom"] and not cooling("groom"):
+        if a.get("groom", 0) > BEHAVIOR_THRESHOLDS["groom"] and \
+           defensive_level < FEAR_HIGH_THRESHOLD and not cooling("groom"):
             return "groom"
         rest_threshold = 0.4 if self.stimulate["lightLevel"] == 0 else BEHAVIOR_THRESHOLDS["restFatigue"]
         if d["fatigue"] > rest_threshold:
             return "rest"
         total_walk = a.get("walkLeft", 0) + a.get("walkRight", 0)
         if self.stimulate["lightLevel"] > BEHAVIOR_THRESHOLDS["phototaxisLight"] and \
-           d["curiosity"] > 0.2 and total_walk > 3:
+           d["curiosity"] > 0.2 and total_walk > 3 and defensive_level < FEAR_HIGH_THRESHOLD:
             return "phototaxis"
-        if total_walk > BEHAVIOR_THRESHOLDS["walk"] and d["curiosity"] > BEHAVIOR_THRESHOLDS["exploreCuriosity"]:
+        if total_walk > BEHAVIOR_THRESHOLDS["walk"] and d["curiosity"] > BEHAVIOR_THRESHOLDS["exploreCuriosity"] and \
+           defensive_level < FEAR_HIGH_THRESHOLD:
             return "explore"
-        if total_walk > BEHAVIOR_THRESHOLDS["walk"]:
+        if total_walk > BEHAVIOR_THRESHOLDS["walk"] and defensive_level < FEAR_HIGH_THRESHOLD:
             return "walk"
         return "idle"

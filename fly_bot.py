@@ -25,6 +25,10 @@ SPRITE_DIR = os.path.join(os.path.dirname(__file__), "sprites")
 WEIGHTS_PATH = os.path.join(os.path.dirname(__file__), "group_weights.json")
 CHECKPOINT_PATH = os.path.join(os.path.dirname(__file__), "fly_state.json")
 CONFIG_PATH = os.path.join(os.path.dirname(__file__), "bot_config.json")
+OVERLOAD_GIF_PATH = os.path.join(
+    os.path.dirname(__file__),
+    "dashboard assests", "fly_behavior_assets_codex_v2", "animations", "overload.gif",
+)
 
 VITALS_EDIT_INTERVAL = 30  # seconds between pinned-message refreshes
 
@@ -89,7 +93,7 @@ VISUAL_COMMAND_OVERRIDES = {
     "feed": "feed", "love": "happy", "burn": "burn", "freeze": "freeze",
     "shock": "shock", "scare": "scare", "hurt": "hurt", "mate": "mate",
     "takeoff": "takeoff", "land": "land", "sleep": "sleep", "wake": "idle",
-    "happy": "happy", "confused": "confused",
+    "happy": "happy", "confused": "confused", "overload": "overload",
 }
 
 # groups worth calling out by name if they actually fired, per command
@@ -134,6 +138,12 @@ def describe(command: str, snapshot: dict) -> str:
 def sprite_file(name: str):
     path = os.path.join(SPRITE_DIR, name)
     return discord.File(path) if os.path.exists(path) else None
+
+
+def overload_file():
+    if not os.path.isfile(OVERLOAD_GIF_PATH):
+        return None
+    return discord.File(OVERLOAD_GIF_PATH, filename="overload.gif")
 
 
 def dashboard_file(fired=None, stimuli=None, behavior=None, visual_override=None) -> discord.File:
@@ -198,6 +208,10 @@ async def _reply(interaction: discord.Interaction, command: str, snapshot: dict)
     files = [dashboard_file(fired=snapshot["fired"], stimuli=snapshot.get("stimuli"),
                             behavior=behavior,
                             visual_override=VISUAL_COMMAND_OVERRIDES.get(command))]
+    if command == "overload":
+        overload_gif = overload_file()
+        if overload_gif is not None:
+            files.append(overload_gif)
     if files:
         await interaction.followup.send(content=content, files=files)
     else:
@@ -233,7 +247,7 @@ async def cmd_feed(interaction: discord.Interaction):
     await _reply(interaction, "feed", snap)
 
 
-@tree.command(name="burn", description="apply heat to the fly")
+@tree.command(name="fire", description="apply heat to the fly")
 async def cmd_burn(interaction: discord.Interaction):
     if not await check_rate_limit(interaction):
         return
@@ -278,7 +292,7 @@ async def cmd_love(interaction: discord.Interaction):
     await _reply(interaction, "love", snap)
 
 
-@tree.command(name="overload", description="pleasure and pain at once -- overloads it for a few seconds")
+@tree.command(name="rape", description="pleasure and pain at once -- overloads it for a few seconds")
 async def cmd_overload(interaction: discord.Interaction):
     if not await check_rate_limit(interaction):
         return
