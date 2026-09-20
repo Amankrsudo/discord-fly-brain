@@ -16,10 +16,12 @@ import time
 
 import discord
 from discord import app_commands
+from dotenv import load_dotenv
 
 from fly_controller import FlyController
 from brain_dashboard import render_dashboard
 
+load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), ".env"))
 TOKEN = os.environ.get("DISCORD_TOKEN", "")
 SPRITE_DIR = os.path.join(os.path.dirname(__file__), "sprites")
 WEIGHTS_PATH = os.path.join(os.path.dirname(__file__), "group_weights.json")
