@@ -57,6 +57,45 @@ def test_associative_learning_strengthens_reward_and_threat_links():
     assert memory.association_strength("scare", "threat", now=now) > 0.0
 
 
+def test_positive_valence_creates_only_positive_association():
+    memory = MemorySystem()
+    memory.record_event("food", valence=1.0, intensity=1.0)
+
+    assert memory.associations["food"]["reward"] > 0.0
+    assert "threat" not in memory.associations["food"]
+
+
+def test_negative_valence_creates_only_negative_association():
+    memory = MemorySystem()
+    memory.record_event("scare", valence=-1.0, intensity=1.0)
+
+    assert memory.associations["scare"]["threat"] > 0.0
+    assert "reward" not in memory.associations["scare"]
+
+
+def test_zero_valence_creates_no_association():
+    memory = MemorySystem()
+    memory.record_event("ambient", valence=0.0, intensity=1.0)
+
+    assert "ambient" not in memory.associations
+    assert "reward" not in memory.associations
+    assert "threat" not in memory.associations
+
+
+def test_neutral_event_does_not_change_either_association_direction():
+    memory = MemorySystem()
+    memory.record_event("food", valence=1.0, intensity=1.0)
+    memory.record_event("scare", valence=-1.0, intensity=1.0)
+    before_reward = memory.associations["food"]["reward"]
+    before_threat = memory.associations["scare"]["threat"]
+
+    memory.record_event("ambient", valence=0.0, intensity=1.0)
+
+    assert memory.associations["food"]["reward"] == before_reward
+    assert memory.associations["scare"]["threat"] == before_threat
+    assert "ambient" not in memory.associations
+
+
 def test_reward_memories_influence_feeding_related_drive():
     brain = GroupBrain(WEIGHTS_PATH)
     brain.memory.record_event("food", valence=1.0, intensity=1.0, context={"source": "feed"})

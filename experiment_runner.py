@@ -116,10 +116,12 @@ class ExperimentRunner:
     def _reset_momentary(brains, stimulus):
         momentary = {"touch", "foodNearby", "foodContact", "dangerOdor", "wind", "nociception"}
         if isinstance(stimulus, dict) and "flies" in stimulus:
-            for values in stimulus["flies"].values():
+            for fly_id, values in stimulus["flies"].items():
+                brain = brains.get(fly_id)
+                if brain is None:
+                    continue
                 for key in momentary.intersection(values):
-                    for brain in brains.values():
-                        brain.stimulate[key] = False
+                    brain.stimulate[key] = False
             return
         for brain in brains.values():
             for key in momentary.intersection(stimulus):

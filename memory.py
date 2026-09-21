@@ -89,12 +89,13 @@ class MemorySystem:
 
         # deterministic association mapping; these are not forced behaviors,
         # only learned strengths that can bias the pre-existing decision system.
-        self.associations.setdefault(event_type, {})
-        if event_valence >= 0.0:
+        if event_valence > 0.0:
+            self.associations.setdefault(event_type, {})
             self.associations[event_type]["reward"] = self.associations[event_type].get("reward", 0.0) + max(0.05, strength)
             self.associations.setdefault("reward", {})
             self.associations["reward"][event_type] = self.associations["reward"].get(event_type, 0.0) + max(0.05, strength)
-        else:
+        elif event_valence < 0.0:
+            self.associations.setdefault(event_type, {})
             self.associations[event_type]["threat"] = self.associations[event_type].get("threat", 0.0) + max(0.05, strength)
             self.associations.setdefault("threat", {})
             self.associations["threat"][event_type] = self.associations["threat"].get(event_type, 0.0) + max(0.05, strength)

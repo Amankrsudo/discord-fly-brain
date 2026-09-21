@@ -5,6 +5,7 @@ import pytest
 
 from experiment_runner import DEFAULT_MAX_STEPS, DEFAULT_MAX_TRIALS, ExperimentRunner
 from fly_controller import FlyController
+from social_simulation import MultiFlySimulation
 
 
 WEIGHTS_PATH = "group_weights.json"
@@ -112,3 +113,20 @@ def test_controller_runs_experiment_without_changing_normal_state(tmp_path):
         assert controller.brain.tick_count == before
 
     asyncio.run(exercise())
+
+
+def test_per_fly_momentary_reset_preserves_non_target_stimulus():
+    runner = _runner()
+    simulation = MultiFlySimulation(WEIGHTS_PATH)
+    first = simulation.add_fly(position=(0, 0))
+    second = simulation.add_fly(position=(2, 0))
+    brains = simulation.flies
+    brains[second].stimulate["touch"] = True
+    stimulus = {"flies": {first: {"foodNearby": True}}}
+
+    runner._apply_stimulus(brains, stimulus)
+    simulation.step()
+    runner._reset_momentary(brains, stimulus)
+
+    assert brains[first].stimulate["foodNearby"] is False
+    assert brains[second].stimulate["touch"] is True
