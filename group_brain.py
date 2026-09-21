@@ -128,6 +128,11 @@ class GroupBrain:
         self.fear_event_cooldown = 0
         self.threat_signal = 0.0
         self.memory = MemorySystem()
+        self.light_state = {
+            "intensity": 0.0,
+            "preferred": 0.6,
+            "phototaxis_bias": 0.0,
+        }
 
     # ---- persistence ----
     def save(self, path: str):
@@ -148,6 +153,7 @@ class GroupBrain:
             "longest_idle_seconds": self.longest_idle_seconds,
             "fear_event_cooldown": self.fear_event_cooldown,
             "memory": self.memory.to_dict() if self.memory else {"version": 1, "events": [], "associations": {}, "habituation": {}, "sensitization": {}},
+            "light_state": self.light_state,
         }
         tmp = path + ".tmp"
         with open(tmp, "w") as f:
@@ -179,6 +185,12 @@ class GroupBrain:
         b.longest_idle_seconds = data.get("longest_idle_seconds", 0.0)
         b.fear_event_cooldown = data.get("fear_event_cooldown", 0)
         b.memory = MemorySystem.from_dict(data.get("memory"))
+        saved_light = data.get("light_state", {})
+        b.light_state = {
+            "intensity": float(saved_light.get("intensity", 0.0)),
+            "preferred": max(0.0, min(1.0, float(saved_light.get("preferred", 0.6)))),
+            "phototaxis_bias": float(saved_light.get("phototaxis_bias", 0.0)),
+        }
         return b
 
     # ---- core propagation: dendriteAccumulate / dendriteAccumulateScaled ----
@@ -291,10 +303,46 @@ class GroupBrain:
         self.next_state[pre] = 0.0
 
     # ---- drives: exact constants from BRAIN.updateDrives ----
+    def _update_light_state(self):
+        light_level = max(0.0, min(1.0, float(self.stimulate.get("lightLevel", 0.0))))
+        self.light_state["intensity"] = light_level
+
+        memory_bias = self.memory.light_association_bias()
+        reward_bias = memory_bias["reward"]
+        threat_bias = memory_bias["threat"]
+        habituation = memory_bias["habituation"]
+
+        preferred = self.light_state["preferred"]
+        delta = light_level - preferred
+        base = -delta * 0.9
+        if abs(delta) < 0.08:
+            base = 0.0
+
+        internal_gain = 0.12 * self.drives["hunger"] + 0.08 * self.drives["curiosity"] - 0.20 * self.drives["fear"]
+        fear_penalty = max(0.0, self.drives["fear"] - 0.45) * 0.75 + max(0.0, threat_bias * 0.8)
+        phototaxis = base + reward_bias - threat_bias + internal_gain - fear_penalty
+        if self.drives["fatigue"] > 0.7:
+            phototaxis *= 0.6
+        if habituation > 0.35:
+            phototaxis *= (1.0 - habituation)
+
+        if abs(delta) < 0.08 and reward_bias <= 0.05 and threat_bias <= 0.05 and internal_gain < 0.08:
+            phototaxis = 0.0
+
+        if reward_bias > threat_bias:
+            preferred += (light_level - preferred) * 0.06 + reward_bias * 0.02
+        elif threat_bias > reward_bias:
+            preferred -= (preferred - light_level) * 0.05 + threat_bias * 0.03
+
+        self.light_state["preferred"] = max(0.0, min(1.0, preferred))
+        self.light_state["phototaxis_bias"] = max(-1.0, min(1.0, phototaxis))
+
     def _update_drives(self):
         d = self.drives
         self.fear_event_cooldown = max(0, self.fear_event_cooldown - 1)
         self.threat_signal *= THREAT_SIGNAL_DECAY
+
+        self._update_light_state()
 
         memory_bias = self.memory.drive_biases()
         d["hunger"] += memory_bias["hunger"] * 0.3
@@ -376,6 +424,15 @@ class GroupBrain:
         if s["lightLevel"] > 0.2:
             self._accumulate("VIS_R1R6", s["lightLevel"])
             self._accumulate("VIS_R7R8", s["lightLevel"] * 0.7)
+
+        if s["lightLevel"] > 0.05:
+            light_valence = 0.0
+            if s["foodContact"] or self.is_feeding or self.current_behavior == "feed":
+                light_valence = 1.0
+            elif self.drives["fear"] > 0.5 or s["dangerOdor"] or s["nociception"] or self.current_behavior in {"startle", "fly"}:
+                light_valence = -1.0
+            self.memory.record_event("light", valence=light_valence, intensity=s["lightLevel"],
+                                    context={"source": "ambient", "light_level": round(s["lightLevel"], 2)})
         if s["temperature"] > 0.65:
             self.external_stimulate("THERMO_WARM", (s["temperature"] - 0.5) * 2)
         elif s["temperature"] < 0.35:
@@ -517,8 +574,10 @@ class GroupBrain:
         if d["fatigue"] > rest_threshold:
             return "rest"
         total_walk = a.get("walkLeft", 0) + a.get("walkRight", 0)
-        if self.stimulate["lightLevel"] > BEHAVIOR_THRESHOLDS["phototaxisLight"] and \
-           d["curiosity"] > 0.2 and total_walk > 3 and defensive_level < FEAR_HIGH_THRESHOLD:
+        phototaxis_strength = self.light_state.get("phototaxis_bias", 0.0)
+        if (phototaxis_strength > 0.25 or (
+                self.stimulate["lightLevel"] > BEHAVIOR_THRESHOLDS["phototaxisLight"] and
+                d["curiosity"] > 0.2 and total_walk > 3)) and defensive_level < FEAR_HIGH_THRESHOLD:
             return "phototaxis"
         if total_walk > BEHAVIOR_THRESHOLDS["walk"] and d["curiosity"] > BEHAVIOR_THRESHOLDS["exploreCuriosity"] and \
            defensive_level < FEAR_HIGH_THRESHOLD:

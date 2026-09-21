@@ -101,3 +101,115 @@ def test_memory_persistence_reload_round_trip(tmp_path):
 
     assert restored.memory is not None
     assert restored.memory.recent_strength("food") > 0.0
+
+
+def test_light_intensity_and_preferred_light_bounds():
+    brain = GroupBrain(WEIGHTS_PATH)
+    brain.stimulate["lightLevel"] = 1.5
+    brain._update_light_state()
+    assert 0.0 <= brain.light_state["intensity"] <= 1.0
+    brain.light_state["preferred"] = 2.0
+    brain._update_light_state()
+    assert 0.0 <= brain.light_state["preferred"] <= 1.0
+
+
+def test_positive_phototaxis_when_light_is_below_preferred():
+    brain = GroupBrain(WEIGHTS_PATH)
+    brain.stimulate["lightLevel"] = 0.2
+    brain.light_state["preferred"] = 0.6
+    brain._update_light_state()
+    assert brain.light_state["phototaxis_bias"] > 0.0
+
+
+def test_negative_phototaxis_when_light_above_preferred():
+    brain = GroupBrain(WEIGHTS_PATH)
+    brain.stimulate["lightLevel"] = 0.9
+    brain.light_state["preferred"] = 0.2
+    brain._update_light_state()
+    assert brain.light_state["phototaxis_bias"] < 0.0
+
+
+def test_neutral_response_near_preferred_light():
+    brain = GroupBrain(WEIGHTS_PATH)
+    brain.stimulate["lightLevel"] = 0.6
+    brain.light_state["preferred"] = 0.6
+    brain._update_light_state()
+    assert abs(brain.light_state["phototaxis_bias"]) < 0.2
+
+
+def test_light_reward_association_increases_positive_phototaxis():
+    brain = GroupBrain(WEIGHTS_PATH)
+    brain.memory.record_event("light", valence=1.0, intensity=0.7, context={"source": "feed"})
+    brain.stimulate["lightLevel"] = 0.2
+    brain.light_state["preferred"] = 0.6
+    brain._update_light_state()
+    assert brain.light_state["phototaxis_bias"] > 0.3
+
+
+def test_light_threat_association_increases_avoidance():
+    brain = GroupBrain(WEIGHTS_PATH)
+    brain.memory.record_event("light", valence=-1.0, intensity=0.9, context={"source": "scare"})
+    brain.stimulate["lightLevel"] = 0.8
+    brain.light_state["preferred"] = 0.2
+    brain._update_light_state()
+    assert brain.light_state["phototaxis_bias"] < -0.2
+
+
+def test_habituation_reduces_repeated_harmless_light_response():
+    brain = GroupBrain(WEIGHTS_PATH)
+    for _ in range(8):
+        brain.memory.record_event("light", valence=0.0, intensity=0.5, context={"source": "ambient"})
+    bias = brain.memory.light_association_bias()
+    assert bias["habituation"] > 0.0
+
+
+def test_memory_decay_affects_light_response():
+    brain = GroupBrain(WEIGHTS_PATH)
+    brain.memory.record_event("light", valence=1.0, intensity=0.7, context={"source": "feed"}, timestamp=0)
+    before = brain.memory.light_association_bias(now=0)
+    brain.memory.decay(dt=50.0, now=50.0)
+    after = brain.memory.light_association_bias(now=50.0)
+    assert after["reward"] <= before["reward"]
+
+
+def test_internal_hunger_and_fear_prime_light_bias():
+    brain = GroupBrain(WEIGHTS_PATH)
+    brain.drives["hunger"] = 0.9
+    brain.drives["fear"] = 0.2
+    brain.stimulate["lightLevel"] = 0.2
+    brain.light_state["preferred"] = 0.6
+    brain._update_light_state()
+    assert brain.light_state["phototaxis_bias"] > 0.0
+
+    brain.drives["fear"] = 0.9
+    brain.drives["hunger"] = 0.1
+    brain.memory.record_event("light", valence=-1.0, intensity=0.9, context={"source": "scare"})
+    brain._update_light_state()
+    assert brain.light_state["phototaxis_bias"] < 0.0
+
+
+def test_light_state_persistence_round_trip(tmp_path):
+    brain = GroupBrain(WEIGHTS_PATH)
+    brain.light_state["preferred"] = 0.75
+    brain.light_state["phototaxis_bias"] = 0.42
+    checkpoint = tmp_path / "light_state.json"
+
+    brain.save(str(checkpoint))
+    restored = GroupBrain.load(WEIGHTS_PATH, str(checkpoint))
+
+    assert restored.light_state["preferred"] == pytest.approx(0.75)
+    assert restored.light_state["phototaxis_bias"] == pytest.approx(0.42)
+
+
+def test_old_state_without_light_state_still_loads():
+    checkpoint = "tests/_tmp_old_light_state.json"
+    with open(checkpoint, "w") as handle:
+        json.dump({"drives": {"hunger": 0.3, "fear": 0.1}}, handle)
+    try:
+        restored = GroupBrain.load(WEIGHTS_PATH, checkpoint)
+        assert 0.0 <= restored.light_state["preferred"] <= 1.0
+        assert 0.0 <= restored.light_state["intensity"] <= 1.0
+    finally:
+        import os
+        if os.path.exists(checkpoint):
+            os.remove(checkpoint)

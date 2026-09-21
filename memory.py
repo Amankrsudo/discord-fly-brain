@@ -215,6 +215,18 @@ class MemorySystem:
             "groom": min(0.08, threat_score * 0.02),
         }
 
+    def light_association_bias(self, now=None):
+        if now is None:
+            now = time.time()
+        reward_bias = min(1.0, self.association_strength("light", "reward", now=now, max_age=180.0) * 0.08)
+        threat_bias = min(1.0, self.association_strength("light", "threat", now=now, max_age=180.0) * 0.08)
+        habituation = self.habituation_factor("light", now=now, max_age=120.0)
+        return {
+            "reward": max(0.0, reward_bias * (1.0 - habituation)),
+            "threat": max(0.0, threat_bias * (1.0 - habituation)),
+            "habituation": habituation,
+        }
+
     def summary(self, now=None, limit=10):
         if now is None:
             now = time.time()
