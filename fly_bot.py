@@ -460,6 +460,27 @@ async def cmd_memory(interaction: discord.Interaction):
     await interaction.response.send_message(content=content)
 
 
+@tree.command(name="decision", description="inspect the fly's competing behavior drives")
+async def cmd_decision(interaction: discord.Interaction):
+    async with fly.lock:
+        fly.brain.evaluate_behavior()
+        decision = fly.brain.decision_summary()
+    scores = decision.get("competing_scores", {})
+    ranked = sorted(scores.items(), key=lambda item: (-item[1], item[0]))[:3]
+    top = ", ".join(f"{name}={score:.2f}" for name, score in ranked) or "no scores yet"
+    winner = decision.get("current_behavior", "idle")
+    parts = decision.get("drive_contributions", {}).get(winner, {})
+    contributions = sorted(parts.items(), key=lambda item: -abs(item[1]))[:4]
+    drivers = ", ".join(f"{name}={value:+.2f}" for name, value in contributions) or "none"
+    content = (f"**decision** behavior={winner} score={decision.get('winning_score', 0.0):.2f}\n"
+               f"runner-up={decision.get('runner_up_behavior', 'idle')} "
+               f"score={decision.get('runner_up_score', 0.0):.2f} "
+               f"margin={decision.get('decision_margin', 0.0):.2f}\n"
+               f"top: {top}\n"
+               f"drivers: {drivers}")
+    await interaction.response.send_message(content=content)
+
+
 REACTION_STIMULI = {
     "🔥": ("burn", lambda: fly.stimulate_flag(temperature=0.9)),
     "🧊": ("freeze", lambda: fly.stimulate_flag(temperature=0.1)),

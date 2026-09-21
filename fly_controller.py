@@ -175,4 +175,5 @@ class FlyController:
             # cascaded, independent of whether the coarser label caught it
             "fired": sorted(all_fired if all_fired is not None else b.last_fired),
             "stimuli": dict(b.stimulate),
+            "decision": b.decision_summary(),
         }

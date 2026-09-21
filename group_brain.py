@@ -85,6 +85,9 @@ BEHAVIOR_THRESHOLDS = {
 # near-instant command burst or the 2s-per-tick background loop.
 COOLDOWN_SECONDS = {"startle": 2.0, "fly": 1.0, "groom": 3.0, "feed": 1.0}
 HISTORY_MAX = 50  # rolling log, not a database -- oldest entries drop off
+DECISION_BEHAVIORS = ("startle", "fly", "feed", "groom", "rest",
+                      "phototaxis", "explore", "walk", "idle")
+DECISION_SWITCH_MARGIN = 0.12
 
 
 class GroupBrain:
@@ -101,7 +104,7 @@ class GroupBrain:
         self.next_state = {g: 0.0 for g in self.groups}
 
         self.drives = {"hunger": 0.3, "fear": 0.0, "fatigue": 0.0,
-                "curiosity": 0.5, "groom": 0.1,
+            "curiosity": 0.5, "groom": 0.1, "mating": 0.0,
                 "positive_valence": 0.0, "aversive_valence": 0.0}
         self.stimulate = {
             "touch": False, "touchLocation": None,
@@ -128,6 +131,16 @@ class GroupBrain:
         self.fear_event_cooldown = 0
         self.threat_signal = 0.0
         self.memory = MemorySystem()
+        self.last_decision = {
+            "current_behavior": "idle",
+            "winning_behavior": "idle",
+            "winning_score": 0.0,
+            "runner_up_behavior": "idle",
+            "runner_up_score": 0.0,
+            "decision_margin": 0.0,
+            "competing_scores": {},
+            "drive_contributions": {},
+        }
         self.light_state = {
             "intensity": 0.0,
             "preferred": 0.6,
@@ -349,6 +362,7 @@ class GroupBrain:
         d["fear"] += memory_bias["fear"] * 0.5
         d["curiosity"] += memory_bias["curiosity"] * 0.5
         d["groom"] += memory_bias["groom"] * 0.4
+        d["mating"] += memory_bias.get("mating", 0.0) * 0.3
 
         d["hunger"] += 0.005
         if self.is_feeding or self.stimulate["foodContact"]:
@@ -375,6 +389,7 @@ class GroupBrain:
             d["groom"] += 0.2
         if self.is_grooming:
             d["groom"] -= 0.5
+        d["mating"] *= 0.995
 
         for k in d:
             d[k] = max(0.0, min(1.0, d[k]))
@@ -548,40 +563,143 @@ class GroupBrain:
             self.first_seen.add(key)
             self.log_event(description)
 
-    def _select_behavior(self, has_nearby_food=False):
+    @staticmethod
+    def _bounded_score(value):
+        return max(0.0, min(1.0, float(value)))
+
+    def _decision_scores(self, has_nearby_food=False):
         a, d = self.last_accum, self.drives
-        defensive_level = max(d["fear"], d["aversive_valence"])
+        memory_bias = self.memory.drive_biases()
+        light_bias = self.memory.light_association_bias()
+        phototaxis = max(-1.0, min(1.0, self.light_state.get("phototaxis_bias", 0.0)))
+        total_walk = a.get("walkLeft", 0.0) + a.get("walkRight", 0.0)
+        food_context = bool(has_nearby_food or self.stimulate.get("foodNearby"))
 
-        def cooling(name):
-            return self.cooldown_until.get(name, -1) > time.time()
+        motors = {
+            "startle": min(1.0, a.get("startle", 0.0) / BEHAVIOR_THRESHOLDS["startle"]),
+            "fly": min(1.0, a.get("flight", 0.0) / BEHAVIOR_THRESHOLDS["fly"]),
+            "feed": min(1.0, a.get("feed", 0.0) / BEHAVIOR_THRESHOLDS["feed"]),
+            "groom": min(1.0, a.get("groom", 0.0) / BEHAVIOR_THRESHOLDS["groom"]),
+            "walk": min(1.0, total_walk / BEHAVIOR_THRESHOLDS["walk"]),
+        }
+        contributions = {
+            "startle": {
+                "motor": motors["startle"] * 0.8,
+                "fear": d["fear"] * 0.25,
+                "aversive_valence": d["aversive_valence"] * 0.2,
+            },
+            "fly": {
+                "motor": motors["fly"] * 0.65,
+                "fear": d["fear"] * 0.28,
+                "aversive_valence": d["aversive_valence"] * 0.38,
+                "threat_memory": memory_bias.get("fear", 0.0) * 0.22,
+                "light_avoidance": max(0.0, -phototaxis) * 0.35,
+            },
+            "feed": {
+                "motor": motors["feed"] * 0.25,
+                "hunger": d["hunger"] * 0.65,
+                "food_context": 0.2 if food_context else 0.0,
+                "positive_valence": d["positive_valence"] * 0.3,
+                "food_memory": memory_bias.get("hunger", 0.0) * 0.25,
+                "light_reward": light_bias["reward"] * 0.2,
+                "fear": -d["fear"] * 0.65,
+                "aversive_valence": -d["aversive_valence"] * 0.4,
+                "fatigue": -d["fatigue"] * 0.2,
+            },
+            "groom": {
+                "motor": motors["groom"] * 0.3,
+                "groom": d["groom"] * 0.55,
+                "fear": -d["fear"] * 0.6,
+                "aversive_valence": -d["aversive_valence"] * 0.3,
+                "fatigue": -d["fatigue"] * 0.15,
+            },
+            "rest": {
+                "fatigue": d["fatigue"] * 0.8,
+                "fear": -d["fear"] * 0.55,
+                "aversive_valence": -d["aversive_valence"] * 0.3,
+            },
+            "phototaxis": {
+                "light_preference": max(0.0, phototaxis) * 0.45,
+                "light_reward": light_bias["reward"] * 0.2,
+                "curiosity": d["curiosity"] * 0.25,
+                "mating": d.get("mating", 0.0) * 0.12,
+                "fear": -d["fear"] * 0.5,
+                "aversive_valence": -d["aversive_valence"] * 0.3,
+                "fatigue": -d["fatigue"] * 0.25,
+            },
+            "explore": {
+                "motor": motors["walk"] * 0.35,
+                "curiosity": d["curiosity"] * 0.35,
+                "novelty_memory": memory_bias.get("curiosity", 0.0) * 0.18,
+                "positive_valence": d["positive_valence"] * 0.18,
+                "mating": d.get("mating", 0.0) * 0.15,
+                "fear": -d["fear"] * 0.5,
+                "aversive_valence": -d["aversive_valence"] * 0.3,
+                "fatigue": -d["fatigue"] * 0.25,
+            },
+            "walk": {
+                "motor": motors["walk"] * 0.45,
+                "curiosity": d["curiosity"] * 0.3,
+                "hunger": d["hunger"] * 0.1,
+                "light_preference": max(0.0, phototaxis) * 0.1,
+                "mating": d.get("mating", 0.0) * 0.12,
+                "fear": -d["fear"] * 0.45,
+                "aversive_valence": -d["aversive_valence"] * 0.25,
+                "fatigue": -d["fatigue"] * 0.2,
+            },
+            "idle": {
+                "baseline": 0.18,
+                "fear": d["fear"] * 0.25,
+                "aversive_valence": d["aversive_valence"] * 0.2,
+                "fatigue": d["fatigue"] * 0.1,
+                "hunger": -d["hunger"] * 0.1,
+                "curiosity": -d["curiosity"] * 0.1,
+            },
+        }
+        scores = {name: self._bounded_score(sum(parts.values()))
+                  for name, parts in contributions.items()}
+        now = time.time()
+        for name in COOLDOWN_SECONDS:
+            if name != self.current_behavior and self.cooldown_until.get(name, -1) > now:
+                scores[name] = 0.0
+        return scores, contributions
 
-        if a.get("startle", 0) > BEHAVIOR_THRESHOLDS["startle"] and not cooling("startle"):
-            return "startle"
-        if a.get("flight", 0) > BEHAVIOR_THRESHOLDS["fly"] and not cooling("fly"):
-            return "fly"
-        if defensive_level >= min(FEAR_HIGH_THRESHOLD, AVERSIVE_HIGH_THRESHOLD) and \
-           a.get("flight", 0) > DEFENSIVE_FLIGHT_THRESHOLD and not cooling("fly"):
-            return "fly"
-        feed_ready = a.get("feed", 0) > BEHAVIOR_THRESHOLDS["feed"] or \
-            (d["hunger"] > 0.7 and self.stimulate["foodNearby"])
-        feed_threshold = max(4.0, BEHAVIOR_THRESHOLDS["feed"] - 4.0 * d["positive_valence"])
-        if feed_ready and has_nearby_food and defensive_level < FEAR_HIGH_THRESHOLD and not cooling("feed"):
-            return "feed"
-        if a.get("groom", 0) > BEHAVIOR_THRESHOLDS["groom"] and \
-           defensive_level < FEAR_HIGH_THRESHOLD and not cooling("groom"):
-            return "groom"
-        rest_threshold = 0.4 if self.stimulate["lightLevel"] == 0 else BEHAVIOR_THRESHOLDS["restFatigue"]
-        if d["fatigue"] > rest_threshold:
-            return "rest"
-        total_walk = a.get("walkLeft", 0) + a.get("walkRight", 0)
-        phototaxis_strength = self.light_state.get("phototaxis_bias", 0.0)
-        if (phototaxis_strength > 0.25 or (
-                self.stimulate["lightLevel"] > BEHAVIOR_THRESHOLDS["phototaxisLight"] and
-                d["curiosity"] > 0.2 and total_walk > 3)) and defensive_level < FEAR_HIGH_THRESHOLD:
-            return "phototaxis"
-        if total_walk > BEHAVIOR_THRESHOLDS["walk"] and d["curiosity"] > BEHAVIOR_THRESHOLDS["exploreCuriosity"] and \
-           defensive_level < FEAR_HIGH_THRESHOLD:
-            return "explore"
-        if total_walk > BEHAVIOR_THRESHOLDS["walk"] and defensive_level < FEAR_HIGH_THRESHOLD:
-            return "walk"
-        return "idle"
+    def _select_behavior(self, has_nearby_food=False):
+        scores, contributions = self._decision_scores(has_nearby_food)
+        ranked = sorted(scores.items(), key=lambda item: (-item[1], DECISION_BEHAVIORS.index(item[0])))
+        winner, winning_score = ranked[0]
+        runner_up, runner_up_score = ranked[1]
+        current = self.current_behavior if self.current_behavior in scores else "idle"
+        if current != winner and scores[current] + DECISION_SWITCH_MARGIN >= winning_score:
+            selected = current
+        else:
+            selected = winner
+        self.last_decision = {
+            "current_behavior": selected,
+            "winning_behavior": winner,
+            "winning_score": round(winning_score, 6),
+            "runner_up_behavior": runner_up,
+            "runner_up_score": round(runner_up_score, 6),
+            "decision_margin": round(max(0.0, winning_score - runner_up_score), 6),
+            "competing_scores": {name: round(scores[name], 6) for name in DECISION_BEHAVIORS},
+            "drive_contributions": {
+                name: {key: round(value, 6) for key, value in parts.items()}
+                for name, parts in contributions.items()
+            },
+        }
+        return selected
+
+    def decision_summary(self):
+        return {
+            "current_behavior": self.last_decision["current_behavior"],
+            "winning_behavior": self.last_decision["winning_behavior"],
+            "winning_score": self.last_decision["winning_score"],
+            "runner_up_behavior": self.last_decision["runner_up_behavior"],
+            "runner_up_score": self.last_decision["runner_up_score"],
+            "decision_margin": self.last_decision["decision_margin"],
+            "competing_scores": dict(self.last_decision["competing_scores"]),
+            "drive_contributions": {
+                name: dict(parts)
+                for name, parts in self.last_decision["drive_contributions"].items()
+            },
+        }
