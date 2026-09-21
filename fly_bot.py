@@ -440,6 +440,26 @@ async def cmd_status(interaction: discord.Interaction):
         await interaction.response.send_message(content=content)
 
 
+@tree.command(name="memory", description="inspect the fly's current memory state")
+async def cmd_memory(interaction: discord.Interaction):
+    async with fly.lock:
+        summary = fly.brain.memory_summary(limit=8)
+    lines = []
+    for event in summary["events"]:
+        lines.append(f"- {event['type']} valence={event['valence']:+.2f} strength={event['strength']:.2f} age={event['age']:.1f}s")
+    if not lines:
+        lines.append("- no recent memories")
+    content = "**memory**\n" + "\n".join(lines)
+    if summary.get("biases"):
+        biases = summary["biases"]
+        content += ("\n\n**biases**: hunger={:.2f} fear={:.2f} curiosity={:.2f} "
+                    "groom={:.2f}").format(biases.get("hunger", 0.0),
+                                            biases.get("fear", 0.0),
+                                            biases.get("curiosity", 0.0),
+                                            biases.get("groom", 0.0))
+    await interaction.response.send_message(content=content)
+
+
 REACTION_STIMULI = {
     "🔥": ("burn", lambda: fly.stimulate_flag(temperature=0.9)),
     "🧊": ("freeze", lambda: fly.stimulate_flag(temperature=0.1)),

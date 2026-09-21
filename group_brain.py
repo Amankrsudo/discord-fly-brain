@@ -26,6 +26,8 @@ import os
 import random
 import time
 
+from memory import MemorySystem
+
 FIRE_THRESHOLD = 22
 MOTOR_NEURON_PREFIX = "MN_"
 
@@ -125,6 +127,7 @@ class GroupBrain:
         self.longest_idle_seconds = 0.0
         self.fear_event_cooldown = 0
         self.threat_signal = 0.0
+        self.memory = MemorySystem()
 
     # ---- persistence ----
     def save(self, path: str):
@@ -144,6 +147,7 @@ class GroupBrain:
             "idle_since": self.idle_since,
             "longest_idle_seconds": self.longest_idle_seconds,
             "fear_event_cooldown": self.fear_event_cooldown,
+            "memory": self.memory.to_dict() if self.memory else {"version": 1, "events": [], "associations": {}, "habituation": {}, "sensitization": {}},
         }
         tmp = path + ".tmp"
         with open(tmp, "w") as f:
@@ -174,6 +178,7 @@ class GroupBrain:
         b.idle_since = data.get("idle_since")
         b.longest_idle_seconds = data.get("longest_idle_seconds", 0.0)
         b.fear_event_cooldown = data.get("fear_event_cooldown", 0)
+        b.memory = MemorySystem.from_dict(data.get("memory"))
         return b
 
     # ---- core propagation: dendriteAccumulate / dendriteAccumulateScaled ----
@@ -237,6 +242,42 @@ class GroupBrain:
             else:
                 self.habituation[g] = v
 
+    def _record_memory_from_stimulus(self):
+        s = self.stimulate
+        memory = self.memory
+
+        if s["foodContact"]:
+            memory.record_event("food", valence=1.0, intensity=1.0, context={"source": "foodContact"})
+        elif s["foodNearby"]:
+            memory.record_event("food", valence=0.6, intensity=0.6, context={"source": "foodNearby"})
+
+        if s["dangerOdor"]:
+            memory.record_event("threat", valence=-1.0, intensity=0.8, context={"source": "dangerOdor"})
+        if s["wind"] and s["windStrength"] > 0.3:
+            memory.record_event("threat", valence=-0.7, intensity=s["windStrength"], context={"source": "wind"})
+        if s["nociception"]:
+            memory.record_event("pain", valence=-1.0, intensity=1.0, context={"source": "nociception"})
+        if s["temperature"] > 0.65:
+            memory.record_event("fire", valence=-1.0, intensity=s["temperature"], context={"source": "heat"})
+        elif s["temperature"] < 0.35:
+            memory.record_event("cold", valence=-0.8, intensity=1.0 - s["temperature"], context={"source": "cold"})
+        if s["touch"]:
+            memory.record_event("touch", valence=-0.3 if s["touchLocation"] in ("head", "thorax") else 0.0,
+                               intensity=0.8, context={"source": "touch", "location": s["touchLocation"]})
+
+        if self.current_behavior == "feed" or self.is_feeding:
+            memory.record_event("reward", valence=1.0, intensity=0.8, context={"source": "feed"})
+        if self.current_behavior in {"startle", "fly"} or self.drives["fear"] > 0.5:
+            memory.record_event("threat", valence=-1.0, intensity=min(1.0, self.drives["fear"] + 0.2),
+                               context={"source": self.current_behavior})
+
+    def memory_summary(self, limit=8):
+        return {"events": self.memory.summary(now=time.time(), limit=limit),
+                "associations": {k: dict(v) for k, v in self.memory.associations.items()},
+                "habituation": dict(self.memory.habituation),
+                "sensitization": dict(self.memory.sensitization),
+                "biases": self.memory.drive_biases()}
+
     def habituation_report(self, threshold: float = 0.05) -> dict:
         """group -> current suppression fraction, using the exact same
         _suppression() external_stimulate() actually gates on -- single-
@@ -254,6 +295,13 @@ class GroupBrain:
         d = self.drives
         self.fear_event_cooldown = max(0, self.fear_event_cooldown - 1)
         self.threat_signal *= THREAT_SIGNAL_DECAY
+
+        memory_bias = self.memory.drive_biases()
+        d["hunger"] += memory_bias["hunger"] * 0.3
+        d["fear"] += memory_bias["fear"] * 0.5
+        d["curiosity"] += memory_bias["curiosity"] * 0.5
+        d["groom"] += memory_bias["groom"] * 0.4
+
         d["hunger"] += 0.005
         if self.is_feeding or self.stimulate["foodContact"]:
             d["hunger"] -= 0.3
@@ -295,6 +343,8 @@ class GroupBrain:
             return
 
         self._update_drives()
+        self._record_memory_from_stimulus()
+        self.memory.decay(dt=1.0)
         d, s = self.drives, self.stimulate
 
         if d["hunger"] > 0.2:
