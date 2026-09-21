@@ -7,7 +7,7 @@ import zlib
 from dashboard_animation import visual_state
 
 
-WIDTH, HEIGHT = 1400, 1220
+WIDTH, HEIGHT = 1400, 1420
 FIRE_THRESHOLD = 22.0
 BG, PANEL, PANEL_ALT = (4, 10, 18), (7, 20, 31), (9, 28, 42)
 CYAN, CYAN_DIM, TEXT, MUTED = (51, 222, 255), (19, 108, 137), (207, 235, 247), (108, 157, 178)
@@ -411,6 +411,21 @@ def _snapshot_light(brain, snapshot):
     return dict(getattr(brain, "light_state", {}))
 
 
+def _snapshot_social(brain, snapshot):
+    social = snapshot.get("social") if isinstance(snapshot, dict) else None
+    if isinstance(social, dict):
+        return social
+    context = dict(getattr(brain, "social_state", {}))
+    return {
+        "count": 1,
+        "current_fly": "fly_01",
+        "current": {"id": "fly_01", "behavior": getattr(brain, "current_behavior", "idle"),
+                     "social": context, "decision": getattr(brain, "decision_summary", lambda: {})()},
+        "agents": [{"id": "fly_01", "behavior": getattr(brain, "current_behavior", "idle"),
+                    "social": context}],
+    }
+
+
 def _association_label(associations, category):
     values = associations.get(category, {}) if isinstance(associations, dict) else {}
     if not values:
@@ -498,6 +513,38 @@ def _decision_panel(image, x, y, width, height, brain, snapshot):
         strongest = sorted(parts.items(), key=lambda item: -abs(float(item[1])))[:2]
         summary = "WHY " + " ".join(f"{key.upper()} {float(value):+.2f}" for key, value in strongest)
         image.text(x + 18, y + 190, summary, ORANGE, 1, 48)
+
+
+def _social_panel(image, x, y, width, height, brain, snapshot):
+    _panel(image, x, y, width, height, "SOCIAL FIELD", MAGENTA)
+    social = _snapshot_social(brain, snapshot)
+    current = social.get("current") or {}
+    context = current.get("social", {})
+    image.text(x + 18, y + 46, "FLIES " + str(social.get("count", 1)), CYAN, 1)
+    image.text(x + 160, y + 46, "CURRENT " + str(social.get("current_fly", "fly_01")).upper(), GREEN, 1)
+    image.text(x + 360, y + 46, "BEHAVIOR " + str(current.get("behavior", "idle")).upper(), ORANGE, 1, 22)
+    nearby = context.get("nearby_flies", [])
+    image.text(x + 18, y + 70, "NEARBY " + str(context.get("nearby_count", len(nearby))), TEXT, 1)
+    image.text(x + 160, y + 70, "PROXIMITY " + f"{float(context.get('proximity', 0.0)):.2f}", BLUE, 1)
+    image.text(x + 340, y + 70, "ACTIVITY " + f"{float(context.get('social_activity', 0.0)):.2f}", ORANGE, 1)
+    image.text(x + 520, y + 70, "CONTACT " + ("YES" if context.get("contact") else "NO"), GREEN, 1)
+    image.text(x + 18, y + 94, "APPROACH " + f"{float(context.get('approach_tendency', 0.0)):.2f}", GREEN, 1)
+    image.text(x + 190, y + 94, "AVOID " + f"{float(context.get('avoidance_tendency', 0.0)):.2f}", MAGENTA, 1)
+    image.text(x + 340, y + 94, "CROWD " + f"{float(context.get('overcrowding', 0.0)):.2f}", PURPLE, 1)
+    image.text(x + 520, y + 94, "FOLLOW " + str(context.get("following_target") or "NONE").upper(), CYAN, 1, 18)
+    if nearby:
+        entries = "  ".join(f"{item.get('id', '?')}:{float(item.get('distance', 0.0)):.1f}"
+                            for item in nearby[:6])
+        image.text(x + 18, y + 120, "NEIGHBORS " + entries, TEXT, 1, 100)
+    else:
+        image.text(x + 18, y + 120, "NEIGHBORS NONE", MUTED, 1)
+    decision = current.get("decision", {})
+    parts = decision.get("drive_contributions", {}).get(str(current.get("behavior", "")).lower(), {})
+    social_parts = [(key, value) for key, value in parts.items()
+                    if "social" in key or "follow" in key or "crowd" in key]
+    summary = "SOCIAL CONTRIBUTION " + " ".join(f"{key.upper()} {float(value):+.2f}"
+                                                for key, value in social_parts[:3])
+    image.text(x + 18, y + 148, summary if social_parts else "SOCIAL CONTRIBUTION NONE", ORANGE, 1, 110)
 
 
 def _hero(image, x, y, states, visual, tick=0):
@@ -603,5 +650,6 @@ def render_dashboard(brain, highlight=None, stimulus_snapshot=None, behavior_sna
     _memory_panel(image, 20, 970, 500, 220, brain, snapshot)
     _sensory_panel(image, 535, 970, 390, 220, brain, snapshot, stimuli)
     _decision_panel(image, 940, 970, 440, 220, brain, snapshot)
-    image.text(20, 1205, "DROSOPHILA SIMULATION / OBSERVE - EXPERIMENT - UNDERSTAND", CYAN_DIM, 1)
+    _social_panel(image, 20, 1210, 1360, 180, brain, snapshot)
+    image.text(20, 1405, "DROSOPHILA SIMULATION / OBSERVE - EXPERIMENT - UNDERSTAND", CYAN_DIM, 1)
     return image

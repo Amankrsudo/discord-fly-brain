@@ -194,6 +194,8 @@ class MemorySystem:
         threat_score = 0.0
         novelty_score = 0.0
         mating_score = 0.0
+        social_reward = 0.0
+        social_threat = 0.0
         for event in self.events:
             age = self._age(event, now)
             if age > 120.0:
@@ -207,17 +209,26 @@ class MemorySystem:
                 novelty_score += strength * 0.3
             if event.get("type") in {"mate", "courtship", "social"}:
                 mating_score += strength * max(0.0, float(event.get("valence", 0.0)) + 0.2)
+            if event.get("type") == "social":
+                if event.get("valence", 0.0) >= 0.0:
+                    social_reward += strength
+                else:
+                    social_threat += strength
 
         hunger_bias = min(0.2, food_score * 0.08)
         fear_bias = min(0.3, threat_score * 0.08 + self.sensitization_factor("threat", now) * 0.12)
         curiosity_bias = min(0.12, novelty_score * 0.06)
         mating_bias = min(0.2, mating_score * 0.08)
+        social_reward_bias = min(0.2, social_reward * 0.08)
+        social_threat_bias = min(0.2, social_threat * 0.08)
         return {
             "hunger": hunger_bias,
             "fear": fear_bias,
             "curiosity": curiosity_bias,
             "groom": min(0.08, threat_score * 0.02),
             "mating": mating_bias,
+            "social_reward": social_reward_bias,
+            "social_threat": social_threat_bias,
         }
 
     def light_association_bias(self, now=None):

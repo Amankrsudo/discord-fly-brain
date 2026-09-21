@@ -121,5 +121,5 @@ def test_dashboard_legacy_brain_without_snapshot_still_renders():
     image = brain_dashboard.render_dashboard(_Brain())
 
     assert image.width == 1400
-    assert image.height == 1220
+    assert image.height == 1420
     assert any(image.pixels)

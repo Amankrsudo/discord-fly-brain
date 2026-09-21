@@ -19,6 +19,7 @@ command-triggered burst never interleave mid-update.
 
 import asyncio
 from group_brain import GroupBrain
+from social_simulation import MultiFlySimulation
 
 BACKGROUND_TICK_INTERVAL = 2.0   # seconds between idle background ticks
 COMMAND_TICKS = 6                # ticks run immediately after a command fires
@@ -34,6 +35,8 @@ class FlyController:
         purpose: this file doesn't know discord.py exists."""
         self.checkpoint_path = checkpoint_path
         self.brain = GroupBrain.load(weights_path, checkpoint_path)
+        self.social_simulation = MultiFlySimulation(weights_path)
+        self.social_simulation.add_existing("fly_01", self.brain)
         self.lock = asyncio.Lock()
         self._ticks_since_save = 0
         self.on_event = on_event
@@ -52,7 +55,10 @@ class FlyController:
             prev_hunger_high = self.brain.drives["hunger"] > 0.8
             prev_fatigue_high = self.brain.drives["fatigue"] > 0.7
 
-            self.brain.tick()
+            if self.social_simulation.agent_count > 1:
+                self.social_simulation.step()
+            else:
+                self.brain.tick()
             behavior = self.brain.evaluate_behavior()  # was only called on commands before --
             # spontaneous transitions from background tonic activity were
             # invisible until someone happened to run a command
@@ -163,6 +169,21 @@ class FlyController:
             self.brain.save(self.checkpoint_path)
             return self._snapshot(all_fired=fired)
 
+    async def add_fly(self, fly_id=None, position=None):
+        async with self.lock:
+            return self.social_simulation.add_fly(fly_id=fly_id, position=position)
+
+    async def remove_fly(self, fly_id):
+        if fly_id == "fly_01":
+            raise ValueError("the primary fly cannot be removed")
+        async with self.lock:
+            self.social_simulation.remove_fly(fly_id)
+
+    async def step_social(self, ticks=1):
+        async with self.lock:
+            self.social_simulation.step(ticks=ticks)
+            return self.social_simulation.snapshot(current_fly="fly_01")
+
     def _snapshot(self, has_nearby_food=False, all_fired=None, arc=None):
         b = self.brain
         final_behavior = arc[-1] if arc else b.evaluate_behavior(has_nearby_food=has_nearby_food)
@@ -180,4 +201,5 @@ class FlyController:
             "threat_signal": b.threat_signal,
             "memory": b.memory_summary(limit=4),
             "decision": b.decision_summary(),
+            "social": self.social_simulation.snapshot(current_fly="fly_01"),
         }

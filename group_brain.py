@@ -86,7 +86,8 @@ BEHAVIOR_THRESHOLDS = {
 COOLDOWN_SECONDS = {"startle": 2.0, "fly": 1.0, "groom": 3.0, "feed": 1.0}
 HISTORY_MAX = 50  # rolling log, not a database -- oldest entries drop off
 DECISION_BEHAVIORS = ("startle", "fly", "feed", "groom", "rest",
-                      "phototaxis", "explore", "walk", "idle")
+                      "phototaxis", "approach_social", "follow",
+                      "avoid_social", "separate", "explore", "walk", "idle")
 DECISION_SWITCH_MARGIN = 0.12
 
 
@@ -131,6 +132,13 @@ class GroupBrain:
         self.fear_event_cooldown = 0
         self.threat_signal = 0.0
         self.memory = MemorySystem()
+        self.social_state = {
+            "nearby_flies": [], "nearby_count": 0, "nearest_fly": None,
+            "nearest_distance": None, "proximity": 0.0,
+            "approach_tendency": 0.0, "avoidance_tendency": 0.0,
+            "social_activity": 0.0, "contact": False,
+            "overcrowding": 0.0, "following_target": None,
+        }
         self.last_decision = {
             "current_behavior": "idle",
             "winning_behavior": "idle",
@@ -150,7 +158,14 @@ class GroupBrain:
     # ---- persistence ----
     def save(self, path: str):
         import json as _json
-        data = {
+        data = self.state_dict()
+        tmp = path + ".tmp"
+        with open(tmp, "w") as f:
+            _json.dump(data, f)
+        os.replace(tmp, path)  # atomic -- a crash mid-write can't corrupt the real file
+
+    def state_dict(self):
+        return {
             "this_state": self.this_state,
             "next_state": self.next_state,
             "drives": self.drives,
@@ -168,10 +183,35 @@ class GroupBrain:
             "memory": self.memory.to_dict() if self.memory else {"version": 1, "events": [], "associations": {}, "habituation": {}, "sensitization": {}},
             "light_state": self.light_state,
         }
-        tmp = path + ".tmp"
-        with open(tmp, "w") as f:
-            _json.dump(data, f)
-        os.replace(tmp, path)  # atomic -- a crash mid-write can't corrupt the real file
+
+    @classmethod
+    def from_state_dict(cls, weights_path: str, data: dict) -> "GroupBrain":
+        b = cls(weights_path)
+        b._apply_state_dict(data)
+        return b
+
+    def _apply_state_dict(self, data):
+        self.this_state.update({k: v for k, v in data.get("this_state", {}).items() if k in self.this_state})
+        self.next_state.update({k: v for k, v in data.get("next_state", {}).items() if k in self.next_state})
+        self.drives.update(data.get("drives", {}))
+        self.stimulate.update(data.get("stimulate", {}))
+        self.tick_count = data.get("tick_count", 0)
+        self.cooldown_until = data.get("cooldown_until", {})
+        self.current_behavior = data.get("current_behavior", "idle")
+        self.habituation = data.get("habituation", {})
+        self.overload_until_time = data.get("overload_until_time", 0.0)
+        self.history = data.get("history", [])
+        self.first_seen = set(data.get("first_seen", []))
+        self.idle_since = data.get("idle_since")
+        self.longest_idle_seconds = data.get("longest_idle_seconds", 0.0)
+        self.fear_event_cooldown = data.get("fear_event_cooldown", 0)
+        self.memory = MemorySystem.from_dict(data.get("memory"))
+        saved_light = data.get("light_state", {})
+        self.light_state = {
+            "intensity": float(saved_light.get("intensity", 0.0)),
+            "preferred": max(0.0, min(1.0, float(saved_light.get("preferred", 0.6)))),
+            "phototaxis_bias": float(saved_light.get("phototaxis_bias", 0.0)),
+        }
 
     @classmethod
     def load(cls, weights_path: str, checkpoint_path: str) -> "GroupBrain":
@@ -183,27 +223,7 @@ class GroupBrain:
             data = _json.load(f)
         # merge rather than overwrite -- if the group list ever changes
         # (new weights file), old/missing keys shouldn't crash this
-        b.this_state.update({k: v for k, v in data.get("this_state", {}).items() if k in b.this_state})
-        b.next_state.update({k: v for k, v in data.get("next_state", {}).items() if k in b.next_state})
-        b.drives.update(data.get("drives", {}))
-        b.stimulate.update(data.get("stimulate", {}))
-        b.tick_count = data.get("tick_count", 0)
-        b.cooldown_until = data.get("cooldown_until", {})
-        b.current_behavior = data.get("current_behavior", "idle")
-        b.habituation = data.get("habituation", {})
-        b.overload_until_time = data.get("overload_until_time", 0.0)
-        b.history = data.get("history", [])
-        b.first_seen = set(data.get("first_seen", []))
-        b.idle_since = data.get("idle_since")
-        b.longest_idle_seconds = data.get("longest_idle_seconds", 0.0)
-        b.fear_event_cooldown = data.get("fear_event_cooldown", 0)
-        b.memory = MemorySystem.from_dict(data.get("memory"))
-        saved_light = data.get("light_state", {})
-        b.light_state = {
-            "intensity": float(saved_light.get("intensity", 0.0)),
-            "preferred": max(0.0, min(1.0, float(saved_light.get("preferred", 0.6)))),
-            "phototaxis_bias": float(saved_light.get("phototaxis_bias", 0.0)),
-        }
+        b._apply_state_dict(data)
         return b
 
     # ---- core propagation: dendriteAccumulate / dendriteAccumulateScaled ----
@@ -310,6 +330,14 @@ class GroupBrain:
         mechanic. Only includes groups above `threshold`."""
         return {g: self._suppression(g) for g in self.habituation
                 if self._suppression(g) >= threshold}
+
+    def set_social_context(self, context=None):
+        if not context:
+            return
+        self.social_state = {
+            **self.social_state,
+            **dict(context),
+        }
 
     def _fire(self, pre):
         self._accumulate(pre)
@@ -572,6 +600,9 @@ class GroupBrain:
         memory_bias = self.memory.drive_biases()
         light_bias = self.memory.light_association_bias()
         phototaxis = max(-1.0, min(1.0, self.light_state.get("phototaxis_bias", 0.0)))
+        social = self.social_state
+        social_reward = memory_bias.get("social_reward", 0.0)
+        social_threat = memory_bias.get("social_threat", 0.0)
         total_walk = a.get("walkLeft", 0.0) + a.get("walkRight", 0.0)
         food_context = bool(has_nearby_food or self.stimulate.get("foodNearby"))
 
@@ -627,6 +658,35 @@ class GroupBrain:
                 "aversive_valence": -d["aversive_valence"] * 0.3,
                 "fatigue": -d["fatigue"] * 0.25,
             },
+            "approach_social": {
+                "social_attraction": social.get("approach_tendency", 0.0) * 0.65,
+                "social_memory": social_reward * 0.25,
+                "mating": d.get("mating", 0.0) * 0.25,
+                "curiosity": d["curiosity"] * 0.12,
+                "positive_valence": d["positive_valence"] * 0.1,
+                "fear": -d["fear"] * 0.6,
+                "fatigue": -d["fatigue"] * 0.15,
+            },
+            "follow": {
+                "social_attraction": social.get("approach_tendency", 0.0) * 0.35,
+                "social_activity": social.get("social_activity", 0.0) * 0.5,
+                "following_signal": 0.2 if social.get("following_target") else 0.0,
+                "curiosity": d["curiosity"] * 0.15,
+                "fear": -d["fear"] * 0.55,
+                "fatigue": -d["fatigue"] * 0.2,
+            },
+            "avoid_social": {
+                "social_threat": social.get("avoidance_tendency", 0.0) * 0.7,
+                "social_memory": social_threat * 0.3,
+                "fear": d["fear"] * 0.35,
+                "aversive_valence": d["aversive_valence"] * 0.25,
+            },
+            "separate": {
+                "overcrowding": social.get("overcrowding", 0.0) * 0.75,
+                "social_threat": social.get("avoidance_tendency", 0.0) * 0.25,
+                "fear": d["fear"] * 0.15,
+                "fatigue": -d["fatigue"] * 0.1,
+            },
             "explore": {
                 "motor": motors["walk"] * 0.35,
                 "curiosity": d["curiosity"] * 0.35,
@@ -658,6 +718,9 @@ class GroupBrain:
         }
         scores = {name: self._bounded_score(sum(parts.values()))
                   for name, parts in contributions.items()}
+        if not social.get("nearby_count"):
+            for name in ("approach_social", "follow", "avoid_social", "separate"):
+                scores[name] = 0.0
         now = time.time()
         for name in COOLDOWN_SECONDS:
             if name != self.current_behavior and self.cooldown_until.get(name, -1) > now:

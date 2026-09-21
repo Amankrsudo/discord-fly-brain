@@ -11,6 +11,7 @@ _PACK_NAMES = (os.path.join("dashboard assets", "fly_behavior_assets_codex_v2"),
 # labels are future-ready only; no command forces any of them.
 BEHAVIOR_ASSETS = {
     "idle": "idle", "walk": "walk", "explore": "walk", "phototaxis": "walk",
+    "approach_social": "walk", "follow": "walk", "avoid_social": "scare", "separate": "walk",
     "feed": "feed", "groom": "groom", "startle": "scare", "fly": "takeoff",
     "rest": "sleep", "overload": "overload", "mate": "mate", "land": "land",
     "happy": "happy", "hurt": "hurt", "dead": "dead", "confused": "confused",
