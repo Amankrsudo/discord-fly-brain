@@ -484,6 +484,28 @@ async def cmd_decision(interaction: discord.Interaction):
     await interaction.response.send_message(content=content)
 
 
+@tree.command(name="experiment", description="run a bounded developer experiment")
+@app_commands.describe(name="habituation, sensitization, phototaxis, competing_drives, or social",
+                       steps="1 to 120 steps", trials="1 to 10 trials")
+async def cmd_experiment(interaction: discord.Interaction, name: str = "phototaxis",
+                         steps: int = 20, trials: int = 1):
+    if name not in fly.experiment_runner.available_experiments():
+        await interaction.response.send_message(
+            "unknown experiment; use habituation, sensitization, phototaxis, "
+            "competing_drives, or social", ephemeral=True)
+        return
+    await interaction.response.defer()
+    result = await fly.run_experiment(name, steps=steps, trials=trials, seed=0)
+    summary = result["summary"]
+    behaviors = ", ".join(f"{key}={value}" for key, value in summary.get("behavior_counts", {}).items()) or "none"
+    content = (f"**experiment** {result['name']} trials={summary['total_trials']} "
+               f"steps={summary['total_steps']}\n"
+               f"behaviors: {behaviors}\n"
+               f"transitions={summary['transition_count']} "
+               f"mean_margin={summary['mean_decision_margin']:.3f}")
+    await interaction.followup.send(content=content)
+
+
 REACTION_STIMULI = {
     "🔥": ("burn", lambda: fly.stimulate_flag(temperature=0.9)),
     "🧊": ("freeze", lambda: fly.stimulate_flag(temperature=0.1)),

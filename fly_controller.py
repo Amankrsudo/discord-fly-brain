@@ -20,6 +20,7 @@ command-triggered burst never interleave mid-update.
 import asyncio
 from group_brain import GroupBrain
 from social_simulation import MultiFlySimulation
+from experiment_runner import ExperimentRunner
 
 BACKGROUND_TICK_INTERVAL = 2.0   # seconds between idle background ticks
 COMMAND_TICKS = 6                # ticks run immediately after a command fires
@@ -37,6 +38,7 @@ class FlyController:
         self.brain = GroupBrain.load(weights_path, checkpoint_path)
         self.social_simulation = MultiFlySimulation(weights_path)
         self.social_simulation.add_existing("fly_01", self.brain)
+        self.experiment_runner = ExperimentRunner(weights_path)
         self.lock = asyncio.Lock()
         self._ticks_since_save = 0
         self.on_event = on_event
@@ -183,6 +185,18 @@ class FlyController:
         async with self.lock:
             self.social_simulation.step(ticks=ticks)
             return self.social_simulation.snapshot(current_fly="fly_01")
+
+    async def run_experiment(self, name, steps=20, trials=1, seed=0):
+        steps = max(1, min(120, int(steps)))
+        trials = max(1, min(10, int(trials)))
+        async with self.lock:
+            return await asyncio.to_thread(
+                self.experiment_runner.run_named,
+                name,
+                steps,
+                trials,
+                seed,
+            )
 
     def _snapshot(self, has_nearby_food=False, all_fired=None, arc=None):
         b = self.brain

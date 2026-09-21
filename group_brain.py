@@ -182,6 +182,7 @@ class GroupBrain:
             "fear_event_cooldown": self.fear_event_cooldown,
             "memory": self.memory.to_dict() if self.memory else {"version": 1, "events": [], "associations": {}, "habituation": {}, "sensitization": {}},
             "light_state": self.light_state,
+            "social_state": self.social_state,
         }
 
     @classmethod
@@ -212,6 +213,8 @@ class GroupBrain:
             "preferred": max(0.0, min(1.0, float(saved_light.get("preferred", 0.6)))),
             "phototaxis_bias": float(saved_light.get("phototaxis_bias", 0.0)),
         }
+        if isinstance(data.get("social_state"), dict):
+            self.social_state.update(data["social_state"])
 
     @classmethod
     def load(cls, weights_path: str, checkpoint_path: str) -> "GroupBrain":
