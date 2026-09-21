@@ -175,5 +175,9 @@ class FlyController:
             # cascaded, independent of whether the coarser label caught it
             "fired": sorted(all_fired if all_fired is not None else b.last_fired),
             "stimuli": dict(b.stimulate),
+            "light_state": dict(b.light_state),
+            "light_memory": b.memory.light_association_bias(),
+            "threat_signal": b.threat_signal,
+            "memory": b.memory_summary(limit=4),
             "decision": b.decision_summary(),
         }

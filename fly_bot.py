@@ -148,9 +148,11 @@ def overload_file():
     return discord.File(OVERLOAD_GIF_PATH, filename="overload.gif")
 
 
-def dashboard_file(fired=None, stimuli=None, behavior=None, visual_override=None) -> discord.File:
+def dashboard_file(fired=None, stimuli=None, behavior=None, visual_override=None,
+                   brain_snapshot=None) -> discord.File:
     img = render_dashboard(fly.brain, highlight=fired, stimulus_snapshot=stimuli,
-                           behavior_snapshot=behavior, visual_override=visual_override)
+                           behavior_snapshot=behavior, visual_override=visual_override,
+                           snapshot=brain_snapshot)
     buf = io.BytesIO()
     img.save(buf, format="PNG")
     buf.seek(0)
@@ -191,7 +193,7 @@ async def vitals_loop():
                    f"fatigue={d['fatigue']:.2f} curiosity={d['curiosity']:.2f} "
                    f"groom={d['groom']:.2f}")
         try:
-            await msg.edit(content=content, attachments=[dashboard_file()])
+            await msg.edit(content=content, attachments=[dashboard_file(brain_snapshot=snap)])
         except discord.HTTPException:
             pass
 
@@ -209,7 +211,8 @@ async def _reply(interaction: discord.Interaction, command: str, snapshot: dict)
     behavior = next((item for item in behavior_arc if item != "idle"), behavior_arc[-1])
     files = [dashboard_file(fired=snapshot["fired"], stimuli=snapshot.get("stimuli"),
                             behavior=behavior,
-                            visual_override=VISUAL_COMMAND_OVERRIDES.get(command))]
+                            visual_override=VISUAL_COMMAND_OVERRIDES.get(command),
+                            brain_snapshot=snapshot)]
     if command == "overload":
         overload_gif = overload_file()
         if overload_gif is not None:
@@ -433,7 +436,7 @@ async def cmd_status(interaction: discord.Interaction):
     if hab:
         parts = ", ".join(f"{g} {int(v*100)}%" for g, v in sorted(hab.items(), key=lambda x: -x[1]))
         content += f"\ndesensitized: {parts}"
-    files = [dashboard_file()]
+    files = [dashboard_file(brain_snapshot=snap)]
     if files:
         await interaction.response.send_message(content=content, files=files)
     else:
@@ -542,7 +545,7 @@ async def cmd_setchannel(interaction: discord.Interaction):
                f"hunger={d['hunger']:.2f} fear={d['fear']:.2f} "
                f"fatigue={d['fatigue']:.2f} curiosity={d['curiosity']:.2f} "
                f"groom={d['groom']:.2f}")
-    msg = await channel.send(content=content, file=dashboard_file())
+    msg = await channel.send(content=content, file=dashboard_file(brain_snapshot=snap))
     try:
         await msg.pin()
     except discord.HTTPException:

@@ -7,7 +7,7 @@ import zlib
 from dashboard_animation import visual_state
 
 
-WIDTH, HEIGHT = 1400, 1000
+WIDTH, HEIGHT = 1400, 1220
 FIRE_THRESHOLD = 22.0
 BG, PANEL, PANEL_ALT = (4, 10, 18), (7, 20, 31), (9, 28, 42)
 CYAN, CYAN_DIM, TEXT, MUTED = (51, 222, 255), (19, 108, 137), (207, 235, 247), (108, 157, 178)
@@ -37,7 +37,7 @@ FONT = {
     "8": ("01110", "10001", "10001", "01110", "10001", "10001", "01110"), "9": ("01110", "10001", "10001", "01111", "00001", "00001", "01110"),
     "_": ("00000", "00000", "00000", "00000", "00000", "00000", "11111"), "-": ("00000", "00000", "00000", "11111", "00000", "00000", "00000"),
     ".": ("00000", "00000", "00000", "00000", "00000", "01100", "01100"), ":": ("00000", "01100", "01100", "00000", "01100", "01100", "00000"),
-    "/": ("00001", "00010", "00100", "01000", "10000", "00000", "00000"), ",": ("00000", "00000", "00000", "00000", "01100", "01100", "01000"),
+    "/": ("00001", "00010", "00100", "01000", "10000", "00000", "00000"), ",": ("00000", "00000", "00000", "00000", "01100", "01100", "01000"), "+": ("00000", "00100", "00100", "11111", "00100", "00100", "00000"),
     " ": ("00000",) * 7,
 }
 
@@ -374,6 +374,132 @@ def _meter(image, x, y, name, value, color):
     image.text(x + 238, y, f"{value:.2f}", color, 1)
 
 
+def _signed_meter(image, x, y, name, value, color):
+    value = max(-1.0, min(1.0, float(value)))
+    image.text(x, y, name, TEXT, 1)
+    image.rectangle(x + 92, y, 136, 10, (18, 37, 54))
+    center = x + 160
+    image.line(center, y, center, y + 10, MUTED)
+    length = int(66 * abs(value))
+    if value >= 0:
+        image.rectangle(center, y + 1, length, 8, color)
+    else:
+        image.rectangle(center - length, y + 1, length, 8, color)
+    image.text(x + 238, y, f"{value:+.2f}", color, 1)
+
+
+def _snapshot_memory(brain, snapshot):
+    memory = snapshot.get("memory") if isinstance(snapshot, dict) else None
+    if isinstance(memory, dict):
+        return memory
+    summary = getattr(brain, "memory_summary", None)
+    return summary(limit=4) if callable(summary) else {}
+
+
+def _snapshot_decision(brain, snapshot):
+    decision = snapshot.get("decision") if isinstance(snapshot, dict) else None
+    if isinstance(decision, dict):
+        return decision
+    summary = getattr(brain, "decision_summary", None)
+    return summary() if callable(summary) else {}
+
+
+def _snapshot_light(brain, snapshot):
+    light = snapshot.get("light_state") if isinstance(snapshot, dict) else None
+    if isinstance(light, dict):
+        return light
+    return dict(getattr(brain, "light_state", {}))
+
+
+def _association_label(associations, category):
+    values = associations.get(category, {}) if isinstance(associations, dict) else {}
+    if not values:
+        return "NONE"
+    key, value = max(values.items(), key=lambda item: float(item[1]))
+    return f"{key.upper()} {float(value):.2f}"
+
+
+def _memory_panel(image, x, y, width, height, brain, snapshot):
+    _panel(image, x, y, width, height, "MEMORY", PURPLE)
+    memory = _snapshot_memory(brain, snapshot)
+    events = memory.get("events", []) if isinstance(memory, dict) else []
+    image.text(x + 18, y + 48, "RECENT", CYAN, 1)
+    if events:
+        for index, event in enumerate(events[:3]):
+            label = f"{event.get('type', 'UNKNOWN')} {event.get('valence', 0.0):+.2f} S{event.get('strength', 0.0):.2f}"
+            image.text(x + 18, y + 67 + index * 18, label, TEXT, 1, 43)
+    else:
+        image.text(x + 18, y + 67, "NO RECENT MEMORIES", MUTED, 1)
+    associations = memory.get("associations", {}) if isinstance(memory, dict) else {}
+    image.text(x + 18, y + 128, "POSITIVE: " + _association_label(associations, "reward"), GREEN, 1, 55)
+    image.text(x + 18, y + 149, "NEGATIVE: " + _association_label(associations, "threat"), MAGENTA, 1, 55)
+    habituation = memory.get("habituation", {}) if isinstance(memory, dict) else {}
+    sensitization = memory.get("sensitization", {}) if isinstance(memory, dict) else {}
+    image.text(x + 18, y + 183, "HAB " + str(len(habituation)) + "  SENS " + str(len(sensitization)), PURPLE, 1)
+
+
+def _sensory_panel(image, x, y, width, height, brain, snapshot, stimuli):
+    _panel(image, x, y, width, height, "SENSORY / LIGHT", BLUE)
+    light = _snapshot_light(brain, snapshot)
+    intensity = float(light.get("intensity", stimuli.get("lightLevel", 0.0)))
+    preferred = float(light.get("preferred", 0.6))
+    phototaxis = float(light.get("phototaxis_bias", 0.0))
+    relation = "NEAR PREFERENCE"
+    if intensity < preferred - 0.08:
+        relation = "BELOW PREFERENCE"
+    elif intensity > preferred + 0.08:
+        relation = "ABOVE PREFERENCE"
+    _meter(image, x + 18, y + 48, "LIGHT", intensity, BLUE)
+    _meter(image, x + 18, y + 68, "PREFERRED", preferred, CYAN)
+    _signed_meter(image, x + 18, y + 88, "PHOTOTAXIS", phototaxis, ORANGE)
+    light_bias = snapshot.get("light_memory", {})
+    if not light_bias and hasattr(brain, "memory"):
+        light_bias = brain.memory.light_association_bias()
+    image.text(x + 18, y + 110, relation, ORANGE, 1, 49)
+    image.text(x + 18, y + 131, "LIGHT REWARD " + f"{light_bias.get('reward', 0.0):.2f}", GREEN, 1)
+    image.text(x + 18, y + 149, "LIGHT THREAT " + f"{light_bias.get('threat', 0.0):.2f}", MAGENTA, 1)
+    temperature = stimuli.get("temperature", 0.5)
+    thermal = "WARM" if temperature > 0.65 else "COOL" if temperature < 0.35 else "NEUTRAL"
+    threat = snapshot.get("threat_signal", 0.0)
+    food = "CONTACT" if stimuli.get("foodContact") else "NEARBY" if stimuli.get("foodNearby") else "NONE"
+    danger = "YES" if stimuli.get("dangerOdor") else "NO"
+    pain = "YES" if stimuli.get("nociception") else "NO"
+    image.text(x + 18, y + 171, "THERMAL " + thermal, ORANGE, 1)
+    image.text(x + 18, y + 189, "FOOD " + food + " DANGER " + danger + " PAIN " + pain, TEXT, 1, 55)
+    image.text(x + 210, y + 171, "THREAT " + f"{float(threat):.2f}", MAGENTA, 1)
+
+
+def _decision_panel(image, x, y, width, height, brain, snapshot):
+    _panel(image, x, y, width, height, "DECISION COMPETITION", GREEN)
+    decision = _snapshot_decision(brain, snapshot)
+    current = str(decision.get("current_behavior", getattr(brain, "current_behavior", "idle"))).upper()
+    winning = float(decision.get("winning_score", 0.0))
+    runner = str(decision.get("runner_up_behavior", "NONE")).upper()
+    runner_score = float(decision.get("runner_up_score", 0.0))
+    margin = float(decision.get("decision_margin", 0.0))
+    confidence = "CONFLICT" if margin < 0.12 else "CONFIDENT"
+    confidence_color = MAGENTA if confidence == "CONFLICT" else GREEN
+    image.text(x + 18, y + 46, current, confidence_color, 2, 13)
+    image.text(x + 150, y + 51, f"SCORE {winning:.2f}", TEXT, 1)
+    image.text(x + 18, y + 70, "RUNNER " + runner + f" {runner_score:.2f}", MUTED, 1, 39)
+    image.text(x + 225, y + 70, confidence, confidence_color, 1)
+    image.text(x + 18, y + 88, "MARGIN " + f"{margin:.2f}", CYAN, 1)
+    scores = decision.get("competing_scores", {}) if isinstance(decision, dict) else {}
+    ranked = sorted(scores.items(), key=lambda item: (-float(item[1]), item[0]))[:4]
+    for index, (name, score) in enumerate(ranked):
+        bar_y = y + 108 + index * 18
+        value = max(0.0, min(1.0, float(score)))
+        image.text(x + 18, bar_y, name.upper(), TEXT, 1, 12)
+        image.rectangle(x + 94, bar_y, 170, 8, (18, 37, 54))
+        image.rectangle(x + 95, bar_y + 1, int(168 * value), 6, GREEN if name.upper() == current else CYAN_DIM)
+        image.text(x + 272, bar_y, f"{value:.2f}", GREEN if name.upper() == current else MUTED, 1)
+    parts = decision.get("drive_contributions", {}).get(current.lower(), {})
+    if parts:
+        strongest = sorted(parts.items(), key=lambda item: -abs(float(item[1])))[:2]
+        summary = "WHY " + " ".join(f"{key.upper()} {float(value):+.2f}" for key, value in strongest)
+        image.text(x + 18, y + 190, summary, ORANGE, 1, 48)
+
+
 def _hero(image, x, y, states, visual, tick=0):
     image.rectangle(x + 10, y + 40, 555, 500, (5, 16, 26))
     for xx in range(x + 25, x + 565, 44): image.line(xx, y + 45, xx, y + 535, (8, 43, 58))
@@ -412,9 +538,10 @@ def _hero(image, x, y, states, visual, tick=0):
 
 
 def render_dashboard(brain, highlight=None, stimulus_snapshot=None, behavior_snapshot=None,
-                     visual_override=None):
+                     visual_override=None, snapshot=None):
     """Render a live GroupBrain state; the result supports ``.save(..., 'PNG')``."""
     image = DashboardImage()
+    snapshot = snapshot if isinstance(snapshot, dict) else {}
     states, drives = dict(getattr(brain, "this_state", {})), dict(getattr(brain, "drives", {}))
     groups, stimuli = list(getattr(brain, "groups", sorted(states))), dict(getattr(brain, "stimulate", {}))
     motor = dict(getattr(brain, "last_accum", {}))
@@ -435,11 +562,16 @@ def render_dashboard(brain, highlight=None, stimulus_snapshot=None, behavior_sna
     _panel(image, 900, 18, 480, 88, "SYSTEM"); image.text(922, 57, "TICK: " + str(tick), CYAN, 2); image.text(1120, 57, "LIVE", GREEN, 2); image.text(922, 82, "BEHAVIOR: " + behavior, MUTED, 1, 34)
 
     _panel(image, 20, 124, 280, 590, "DRIVES AND STATE")
-    for index, (name, key, color) in enumerate((("HUNGER", "hunger", MAGENTA), ("FEAR", "fear", PURPLE), ("FATIGUE", "fatigue", BLUE), ("CURIOSITY", "curiosity", ORANGE), ("GROOMING", "groom", GREEN), ("REWARD", "positive_valence", GREEN), ("AVERSIVE", "aversive_valence", MAGENTA))): _meter(image, 40, 172 + index * 48, name, drives.get(key, 0), color)
-    image.line(38, 515, 282, 515, CYAN_DIM); image.text(40, 532, "LIVE INPUTS", CYAN, 1)
+    for index, (name, key, color) in enumerate((("HUNGER", "hunger", MAGENTA), ("FEAR", "fear", PURPLE), ("FATIGUE", "fatigue", BLUE), ("CURIOSITY", "curiosity", ORANGE), ("GROOMING", "groom", GREEN), ("MATING", "mating", ORANGE), ("REWARD", "positive_valence", GREEN), ("AVERSIVE", "aversive_valence", MAGENTA))): _meter(image, 40, 168 + index * 36, name, drives.get(key, 0), color)
+    positive = float(drives.get("positive_valence", 0.0))
+    aversive = float(drives.get("aversive_valence", 0.0))
+    valence_label = "REWARDING" if positive > aversive else "AVERSIVE" if aversive > positive else "NEUTRAL"
+    valence_color = GREEN if valence_label == "REWARDING" else MAGENTA if valence_label == "AVERSIVE" else MUTED
+    image.text(40, 447, "VALENCE " + valence_label, valence_color, 1)
+    image.line(38, 465, 282, 465, CYAN_DIM); image.text(40, 480, "LIVE INPUTS", CYAN, 1)
     inputs = (("LIGHT", stimuli.get("lightLevel", "N/A")), ("TEMP", stimuli.get("temperature", "N/A")), ("WIND", stimuli.get("windStrength", 0.0) if stimuli.get("wind") else 0.0), ("FOOD", 1.0 if stimuli.get("foodContact") or stimuli.get("foodNearby") else 0.0), ("THREAT", 1.0 if stimuli.get("dangerOdor") or stimuli.get("nociception") else 0.0))
-    for index, (name, value) in enumerate(inputs): image.text(40, 558 + index * 29, name, MUTED, 1); image.text(160, 558 + index * 29, f"{value:.2f}" if isinstance(value, (int, float)) else "N/A", TEXT, 1)
-    image.text(40, 680, "STIMULUS", CYAN, 1); image.text(40, 700, _stimulus(stimuli, fired), ORANGE, 1, 30)
+    for index, (name, value) in enumerate(inputs): image.text(40, 503 + index * 24, name, MUTED, 1); image.text(160, 503 + index * 24, f"{value:.2f}" if isinstance(value, (int, float)) else "N/A", TEXT, 1)
+    image.text(40, 635, "STIMULUS", CYAN, 1); image.text(40, 655, _stimulus(stimuli, fired), ORANGE, 1, 30)
 
     _panel(image, 315, 124, 575, 590, "NEURAL FIELD"); _hero(image, 315, 124, states, visual, tick)
     for index, action in enumerate(("IDLE", "WALK", "FEED", "GROOM", "SCARE", "BURN", "SHOCK", "SLEEP")):
@@ -467,5 +599,9 @@ def render_dashboard(brain, highlight=None, stimulus_snapshot=None, behavior_sna
         for index, event in enumerate(reversed(history)): image.text(44, 862 + index * 18, f"T{event.get('tick', '?')}: {event.get('event', '')}", TEXT, 1, 110)
     else: image.text(44, 862, "NO RECORDED EVENTS", MUTED, 1)
     _panel(image, 855, 732, 525, 220, "LIVE READOUT"); image.text(878, 776, "ACTIVE GROUPS: " + str(sum(1 for value in states.values() if value > 0)), GREEN, 1); image.text(878, 802, "FIRING GROUPS: " + str(len(fired)), ORANGE, 1); image.text(878, 828, "HABITUATION: " + str(len(getattr(brain, "habituation", {}))) + " PATHWAYS", PURPLE, 1); image.text(878, 870, "LIVE DATA ONLY - NO SYNTHETIC METRICS", MUTED, 1)
-    image.text(20, 975, "DROSOPHILA SIMULATION / OBSERVE - EXPERIMENT - UNDERSTAND", CYAN_DIM, 1)
+
+    _memory_panel(image, 20, 970, 500, 220, brain, snapshot)
+    _sensory_panel(image, 535, 970, 390, 220, brain, snapshot, stimuli)
+    _decision_panel(image, 940, 970, 440, 220, brain, snapshot)
+    image.text(20, 1205, "DROSOPHILA SIMULATION / OBSERVE - EXPERIMENT - UNDERSTAND", CYAN_DIM, 1)
     return image
