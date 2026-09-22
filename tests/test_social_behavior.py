@@ -111,6 +111,36 @@ def test_social_state_persistence_round_trip(tmp_path):
     assert restored.flies["fly_01"].memory.events
 
 
+def test_next_id_survives_round_trip_and_add_fly_after_restore(tmp_path):
+    simulation = MultiFlySimulation(WEIGHTS_PATH)
+    simulation.add_fly(position=(0, 0))
+    simulation.add_fly(position=(2, 0))
+    checkpoint = tmp_path / "next-id.json"
+
+    simulation.save(str(checkpoint))
+    restored = MultiFlySimulation.load(WEIGHTS_PATH, str(checkpoint))
+
+    assert restored._next_id == simulation._next_id
+    assert restored._next_id == 3
+
+    new_id = restored.add_fly(position=(4, 0))
+    assert new_id == "fly_03"
+    assert sorted(restored.flies) == ["fly_01", "fly_02", "fly_03"]
+
+
+def test_missing_next_id_defaults_and_add_fly_still_correct(tmp_path):
+    checkpoint = tmp_path / "legacy.json"
+    checkpoint.write_text(json.dumps({
+        "version": 1,
+        "agents": [{"id": "fly_01", "position": [0.0, 0.0], "brain": {}}],
+    }))
+
+    restored = MultiFlySimulation.load(WEIGHTS_PATH, str(checkpoint))
+
+    assert restored._next_id == 1
+    assert restored.add_fly(position=(2, 0)) == "fly_02"
+
+
 def test_legacy_single_fly_checkpoint_remains_loadable(tmp_path):
     brain = GroupBrain(WEIGHTS_PATH)
     checkpoint = tmp_path / "legacy.json"
