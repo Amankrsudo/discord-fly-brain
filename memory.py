@@ -39,7 +39,10 @@ class MemorySystem:
 
     @classmethod
     def from_dict(cls, data):
-        if not data:
+        # A non-dict checkpoint fragment (None, empty, list, string, number)
+        # carries no usable memory state; return a fresh system so the rest of
+        # the brain's persisted state is preserved instead of crashing the load.
+        if not isinstance(data, dict):
             return cls()
         version = data.get("version", 1)
         if version != cls.MEMORY_VERSION:

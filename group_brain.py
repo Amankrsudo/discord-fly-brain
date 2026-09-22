@@ -222,8 +222,18 @@ class GroupBrain:
         if not os.path.exists(checkpoint_path):
             return b
         import json as _json
-        with open(checkpoint_path) as f:
-            data = _json.load(f)
+        try:
+            with open(checkpoint_path) as f:
+                data = _json.load(f)
+        except (ValueError, OSError) as exc:
+            # Corrupt or truncated JSON is unrecoverable: the bytes cannot be
+            # parsed into any structured state, so fail loudly with the path
+            # named rather than silently discarding the saved brain.
+            raise ValueError(f"corrupt checkpoint at {checkpoint_path}: {exc}") from exc
+        # A parseable checkpoint whose top level is not a dictionary carries no
+        # usable state; treat it the same as a missing file and return fresh.
+        if not isinstance(data, dict):
+            return b
         # merge rather than overwrite -- if the group list ever changes
         # (new weights file), old/missing keys shouldn't crash this
         b._apply_state_dict(data)

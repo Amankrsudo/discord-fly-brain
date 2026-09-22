@@ -203,9 +203,20 @@ class MultiFlySimulation:
         simulation = cls(weights_path)
         if not os.path.exists(path):
             return simulation
-        with open(path) as handle:
-            data = json.load(handle)
-        for item in data.get("agents", []):
+        try:
+            with open(path) as handle:
+                data = json.load(handle)
+        except (ValueError, OSError) as exc:
+            raise ValueError(f"corrupt checkpoint at {path}: {exc}") from exc
+        # A parseable checkpoint whose top level is not a dictionary carries no
+        # usable fly state; return an empty simulation (same as a missing file).
+        if not isinstance(data, dict):
+            return simulation
+        agents = data.get("agents", [])
+        # A malformed agents field (not a list) carries no usable fly state.
+        if not isinstance(agents, list):
+            agents = []
+        for item in agents:
             brain = GroupBrain.from_state_dict(weights_path, item.get("brain", {}))
             simulation.add_existing(item["id"], brain, item.get("position", (0.0, 0.0)))
         simulation._next_id = max(simulation._next_id, int(data.get("next_id", 1)))
