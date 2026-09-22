@@ -153,6 +153,35 @@ class ExperimentRunner:
             },
         }
 
+    @staticmethod
+    def _behavior_durations(observations):
+        active = {}
+        durations = {}
+
+        def flush(fly_id):
+            behavior, length = active.pop(fly_id)
+            durations.setdefault(fly_id, {}).setdefault(behavior, []).append(length)
+
+        for observation in observations:
+            present = set()
+            for agent in observation["agents"]:
+                fly_id = agent["id"]
+                behavior = agent["behavior"]
+                present.add(fly_id)
+                current = active.get(fly_id)
+                if current and current[0] == behavior:
+                    active[fly_id] = (behavior, current[1] + 1)
+                else:
+                    if current:
+                        flush(fly_id)
+                    active[fly_id] = (behavior, 1)
+            for fly_id in set(active) - present:
+                flush(fly_id)
+        for fly_id in list(active):
+            flush(fly_id)
+        return {fly_id: dict(sorted(by_behavior.items()))
+                for fly_id, by_behavior in sorted(durations.items())}
+
     def _run_trial(self, name, config, trial_index, seed):
         simulation, brains = self._new_agents(config)
         observations = []
@@ -219,7 +248,7 @@ class ExperimentRunner:
         return {
             "total_steps": len(observations),
             "behavior_counts": dict(sorted(behaviors.items())),
-            "behavior_durations": dict(sorted(behaviors.items())),
+            "behavior_durations": ExperimentRunner._behavior_durations(observations),
             "transition_count": len(transitions),
             "mean_decision_margin": sum(margins) / len(margins) if margins else 0.0,
             "mean_response_latency": sum(response_values) / len(response_values) if response_values else None,
@@ -261,6 +290,8 @@ class ExperimentRunner:
             "total_trials": len(trials),
             "total_steps": sum(summary["total_steps"] for summary in summaries),
             "behavior_counts": dict(sorted(behavior_counts.items())),
+            "behavior_durations": ExperimentRunner._merge_behavior_durations(
+                summary.get("behavior_durations", {}) for summary in summaries),
             "transition_count": transitions,
             "drive_statistics": drive_statistics,
             "mean_decision_margin": sum(summary["mean_decision_margin"] for summary in summaries) / len(summaries),
@@ -272,6 +303,17 @@ class ExperimentRunner:
                 "max_bias": max(summary["phototaxis"]["max_bias"] for summary in summaries),
             },
         }
+
+    @staticmethod
+    def _merge_behavior_durations(durations_by_trial):
+        merged = {}
+        for durations in durations_by_trial:
+            for fly_id, by_behavior in durations.items():
+                target = merged.setdefault(fly_id, {})
+                for behavior, runs in by_behavior.items():
+                    target.setdefault(behavior, []).extend(runs)
+        return {fly_id: dict(sorted(by_behavior.items()))
+                for fly_id, by_behavior in sorted(merged.items())}
 
 
 def _mean_optional(values):

@@ -175,3 +175,93 @@ def test_dashboard_renders_social_snapshot_fields(monkeypatch):
     assert any("CURRENT FLY_01" in value for value in captured)
     assert any("NEARBY 1" in value for value in captured)
     assert any("SOCIAL CONTRIBUTION" in value for value in captured)
+
+
+def _social_events(brain, event_type="social"):
+    return [event for event in brain.memory.events
+            if event.get("type") == event_type]
+
+
+def test_positive_social_approach_records_positive_valence():
+    simulation = MultiFlySimulation(WEIGHTS_PATH)
+    first = simulation.add_fly(position=(0, 0))
+    simulation.add_fly(position=(1, 0))
+    brain = simulation.flies[first]
+    brain.drives.update({"curiosity": 0.9, "mating": 0.9, "fear": 0.0})
+
+    simulation.step()
+
+    events = _social_events(brain)
+    assert events
+    assert events[-1]["valence"] > 0.0
+    assert brain.memory.drive_biases()["social_reward"] > 0.0
+    assert brain.memory.drive_biases()["social_threat"] == 0.0
+
+
+def test_avoidance_with_contact_does_not_create_positive_reward():
+    simulation = MultiFlySimulation(WEIGHTS_PATH)
+    first = simulation.add_fly(position=(0, 0))
+    second = simulation.add_fly(position=(0.5, 0))
+    brain = simulation.flies[first]
+    brain.drives.update({"fear": 0.9, "mating": 0.8, "curiosity": 0.8})
+    simulation.flies[second].drives["fear"] = 1.0
+    simulation.flies[second].drives["aversive_valence"] = 1.0
+    brain.set_social_context(simulation._social_context(first))
+
+    # Force the aversive social behavior outcome and record memory with contact.
+    brain.current_behavior = "avoid_social"
+    context = simulation._social_context(first)
+    assert context["contact"] is True
+    simulation._record_social_memory(first, context)
+
+    events = _social_events(brain)
+    assert events
+    assert events[-1]["valence"] < 0.0
+    assert brain.memory.drive_biases()["social_threat"] > 0.0
+    assert brain.memory.drive_biases()["social_reward"] == 0.0
+
+
+def test_neutral_contact_creates_no_reward_or_threat_association():
+    simulation = MultiFlySimulation(WEIGHTS_PATH)
+    first = simulation.add_fly(position=(0, 0))
+    simulation.add_fly(position=(0.5, 0))
+    brain = simulation.flies[first]
+
+    # No active social behavior: neutral physical contact.
+    brain.current_behavior = "idle"
+    context = simulation._social_context(first)
+    assert context["contact"] is True
+    simulation._record_social_memory(first, context)
+
+    events = _social_events(brain)
+    assert events
+    assert events[-1]["valence"] == 0.0
+    biases = brain.memory.drive_biases()
+    assert biases["social_reward"] == 0.0
+    assert biases["social_threat"] == 0.0
+    assert "social" not in brain.memory.associations
+
+
+def test_repeated_negative_social_interactions_bias_future_behavior():
+    simulation = MultiFlySimulation(WEIGHTS_PATH)
+    first = simulation.add_fly(position=(0, 0))
+    second = simulation.add_fly(position=(0.5, 0))
+    brain = simulation.flies[first]
+    brain.drives.update({"fear": 0.9, "mating": 0.8, "curiosity": 0.8})
+    simulation.flies[second].drives["fear"] = 1.0
+    simulation.flies[second].drives["aversive_valence"] = 1.0
+
+    for _ in range(5):
+        context = simulation._social_context(first)
+        brain.set_social_context(context)
+        brain.current_behavior = "avoid_social"
+        simulation._record_social_memory(first, context)
+
+    biases = brain.memory.drive_biases()
+    assert biases["social_threat"] > 0.0
+    assert biases["social_reward"] == 0.0
+    # The learned threat must push the decision competition toward avoidance.
+    context = simulation._social_context(first)
+    brain.set_social_context(context)
+    scores, _ = brain._decision_scores()
+    assert scores["avoid_social"] >= scores["approach_social"]

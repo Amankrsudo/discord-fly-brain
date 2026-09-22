@@ -15,6 +15,16 @@ def _runner():
     return ExperimentRunner(WEIGHTS_PATH)
 
 
+def _behavior_observations(sequence):
+    return [{"step": index, "agents": [{
+        "id": "fly_01", "behavior": behavior,
+        "drives": {}, "decision": {"decision_margin": 0.0},
+        "social": {"nearby_count": 0, "contact": False},
+        "light": {"phototaxis_bias": 0.0},
+        "memory": {"habituation": {}, "sensitization": {}},
+    }]} for index, behavior in enumerate(sequence)]
+
+
 def test_experiment_runs_are_deterministic_and_json_serializable():
     runner = _runner()
     first = runner.run_named("phototaxis", steps=8, trials=2, seed=17)
@@ -130,3 +140,86 @@ def test_per_fly_momentary_reset_preserves_non_target_stimulus():
 
     assert brains[first].stimulate["foodNearby"] is False
     assert brains[second].stimulate["touch"] is True
+
+
+def test_behavior_durations_capture_consecutive_runs_and_flush_final_run():
+    runner = _runner()
+    sequence = ["idle", "idle", "feed", "feed", "feed", "idle", "idle"]
+    observations = _behavior_observations(sequence)
+
+    durations = runner._behavior_durations(observations)
+    summary = runner._summarize_trial(
+        observations,
+        [{"step": 2, "fly_id": "fly_01", "from": "idle", "to": "feed"},
+         {"step": 5, "fly_id": "fly_01", "from": "feed", "to": "idle"}],
+        {},
+    )
+
+    assert durations == {"fly_01": {"feed": [3], "idle": [2, 2]}}
+    assert summary["behavior_counts"] == {"feed": 3, "idle": 4}
+    assert summary["behavior_durations"] != summary["behavior_counts"]
+    assert summary["transition_count"] == 2
+
+
+def test_behavior_duration_aggregation_keeps_runs_separate_across_trials():
+    runner = _runner()
+    first = {"fly_01": {"idle": [2], "feed": [3]}}
+    second = {"fly_01": {"idle": [1], "feed": [2]}}
+
+    merged = runner._merge_behavior_durations([first, second])
+
+    assert merged == {"fly_01": {"feed": [3, 2], "idle": [2, 1]}}
+    assert merged["fly_01"]["idle"] != [3]
+
+
+def _multi_fly_observations(sequence_by_fly):
+    observations = []
+    for step, behaviors in enumerate(sequence_by_fly):
+        agents = []
+        for fly_id, behavior in behaviors:
+            agents.append({
+                "id": fly_id, "behavior": behavior,
+                "drives": {}, "decision": {"decision_margin": 0.0},
+                "social": {"nearby_count": 0, "contact": False},
+                "light": {"phototaxis_bias": 0.0},
+                "memory": {"habituation": {}, "sensitization": {}},
+            })
+        observations.append({"step": step, "agents": agents})
+    return observations
+
+
+def test_behavior_durations_are_independent_across_multiple_flies():
+    runner = _runner()
+    # fly_01: idle, idle, feed, feed, walk  (final run flushed at end)
+    # fly_02: walk, walk, walk, idle         (final run flushed at end)
+    sequence = [
+        [("fly_01", "idle"),  ("fly_02", "walk")],
+        [("fly_01", "idle"),  ("fly_02", "walk")],
+        [("fly_01", "feed"), ("fly_02", "walk")],
+        [("fly_01", "feed"), ("fly_02", "idle")],
+        [("fly_01", "walk"), ("fly_02", "idle")],
+    ]
+    observations = _multi_fly_observations(sequence)
+
+    durations = runner._behavior_durations(observations)
+
+    assert durations == {
+        "fly_01": {"feed": [2], "idle": [2], "walk": [1]},
+        "fly_02": {"walk": [3], "idle": [2]},
+    }
+    # Durations are run lengths, not per-step counts (which would be 5 each).
+    assert durations["fly_01"]["walk"] == [1]
+    assert durations["fly_02"]["walk"] == [3]
+
+
+def test_behavior_durations_never_equal_behavior_counts_for_runs():
+    runner = _runner()
+    sequence = ["feed", "feed", "feed", "feed", "idle"]
+    observations = _behavior_observations(sequence)
+
+    durations = runner._behavior_durations(observations)
+
+    assert durations == {"fly_01": {"feed": [4], "idle": [1]}}
+    # Counts would be {"feed": 4, "idle": 1}; durations are run-length lists.
+    assert durations["fly_01"]["feed"] == [4]
+    assert durations["fly_01"]["feed"] != [1, 1, 1, 1]

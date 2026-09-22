@@ -112,12 +112,23 @@ class MultiFlySimulation:
         behavior = brain.current_behavior
         if not context.get("nearby_count"):
             return
-        if behavior in {"approach_social", "follow"} or context.get("contact"):
+        # Valence must reflect the fly's ACTUAL social outcome (the behavior it
+        # chose), not mere physical contact. Contact during avoidance/separation
+        # is aversive, not rewarding; contact with no active social behavior is
+        # neutral. The decision competition in group_brain selects the behavior
+        # and is left untouched here.
+        if behavior in {"approach_social", "follow"}:
             brain.memory.record_event("social", valence=0.7, intensity=context["proximity"],
                                       context={"source": behavior, "target": context.get("nearest_fly")})
         elif behavior in {"avoid_social", "separate"}:
             brain.memory.record_event("social", valence=-0.7, intensity=context["avoidance_tendency"],
                                       context={"source": behavior, "target": context.get("nearest_fly")})
+        elif context.get("contact"):
+            # Neutral contact (no active social behavior): remember it, but as
+            # a zero-valence event so it creates neither a reward nor a threat
+            # association.
+            brain.memory.record_event("social", valence=0.0, intensity=context["proximity"],
+                                      context={"source": "contact", "target": context.get("nearest_fly")})
 
     def _move_agents(self):
         for fly_id in sorted(self.flies):
