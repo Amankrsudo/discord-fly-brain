@@ -141,6 +141,20 @@ def test_missing_next_id_defaults_and_add_fly_still_correct(tmp_path):
     assert restored.add_fly(position=(2, 0)) == "fly_02"
 
 
+def test_multifly_load_ignores_unknown_version_field(tmp_path):
+    checkpoint = tmp_path / "v99.json"
+    checkpoint.write_text(json.dumps({
+        "version": 99,
+        "next_id": 3,
+        "agents": [{"id": "fly_01", "position": [0.0, 0.0], "brain": {}}],
+    }))
+
+    restored = MultiFlySimulation.load(WEIGHTS_PATH, str(checkpoint))
+
+    assert sorted(restored.flies) == ["fly_01"]
+    assert restored._next_id == 3
+
+
 def test_legacy_single_fly_checkpoint_remains_loadable(tmp_path):
     brain = GroupBrain(WEIGHTS_PATH)
     checkpoint = tmp_path / "legacy.json"

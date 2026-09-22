@@ -252,3 +252,25 @@ def test_old_state_without_light_state_still_loads():
         import os
         if os.path.exists(checkpoint):
             os.remove(checkpoint)
+
+
+def test_memory_from_dict_accepts_future_version_and_loads_state():
+    data = {
+        "version": 99,
+        "events": [{"type": "food", "valence": 1.0}],
+        "associations": {"food": {"reward": 0.5}},
+        "habituation": {"light": 0.1},
+        "sensitization": {"scare": 0.2},
+    }
+    memory = MemorySystem.from_dict(data)
+
+    assert len(memory.events) == 1
+    assert memory.associations == {"food": {"reward": 0.5}}
+    assert memory.habituation == {"light": 0.1}
+    assert memory.sensitization == {"scare": 0.2}
+
+
+def test_memory_from_dict_treats_missing_version_as_current():
+    memory = MemorySystem.from_dict({"events": [{"type": "food", "valence": 1.0}]})
+
+    assert len(memory.events) == 1
