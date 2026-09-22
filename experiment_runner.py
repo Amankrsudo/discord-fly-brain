@@ -224,7 +224,27 @@ class ExperimentRunner:
         behaviors = Counter()
         drive_values = {}
         margins = []
-        response_values = list(first_response.values())
+        # Stimulus onset is the first observation whose per-step stimulus dict is
+        # non-empty. Latency is measured relative to that onset, so a fly that
+        # was already non-idle before onset is not counted as a stimulus response.
+        stimulus_onset = None
+        for observation in observations:
+            if observation.get("stimulus"):
+                stimulus_onset = observation["step"]
+                break
+
+        fly_ids = sorted({agent["id"] for observation in observations
+                          for agent in observation["agents"]})
+        response_latencies = {}
+        valid_latencies = []
+        for fly_id in fly_ids:
+            first_step = first_response.get(fly_id)
+            if stimulus_onset is None or first_step is None or first_step < stimulus_onset:
+                response_latencies[fly_id] = None
+            else:
+                latency = int(first_step - stimulus_onset)
+                response_latencies[fly_id] = latency
+                valid_latencies.append(latency)
         social_counts = Counter()
         photo_values = []
         for observation in observations:
@@ -251,7 +271,8 @@ class ExperimentRunner:
             "behavior_durations": ExperimentRunner._behavior_durations(observations),
             "transition_count": len(transitions),
             "mean_decision_margin": sum(margins) / len(margins) if margins else 0.0,
-            "mean_response_latency": sum(response_values) / len(response_values) if response_values else None,
+            "mean_response_latency": sum(valid_latencies) / len(valid_latencies) if valid_latencies else None,
+            "response_latencies": dict(sorted(response_latencies.items())),
             "drive_statistics": drives,
             "social_interactions": dict(social_counts),
             "phototaxis": {
@@ -272,9 +293,12 @@ class ExperimentRunner:
         summaries = [trial["summary"] for trial in trials]
         behavior_counts = Counter()
         transitions = 0
+        responding_trials = 0
         for summary in summaries:
             behavior_counts.update(summary["behavior_counts"])
             transitions += summary["transition_count"]
+            if summary.get("mean_response_latency") is not None:
+                responding_trials += 1
         drive_statistics = {}
         drive_names = sorted({name for summary in summaries
                               for name in summary.get("drive_statistics", {})})
@@ -293,6 +317,7 @@ class ExperimentRunner:
             "behavior_durations": ExperimentRunner._merge_behavior_durations(
                 summary.get("behavior_durations", {}) for summary in summaries),
             "transition_count": transitions,
+            "responding_trials": responding_trials,
             "drive_statistics": drive_statistics,
             "mean_decision_margin": sum(summary["mean_decision_margin"] for summary in summaries) / len(summaries),
             "mean_response_latency": _mean_optional(summary["mean_response_latency"] for summary in summaries),

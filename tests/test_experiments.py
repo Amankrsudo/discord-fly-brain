@@ -16,13 +16,96 @@ def _runner():
 
 
 def _behavior_observations(sequence):
-    return [{"step": index, "agents": [{
+    return [{"step": index, "stimulus": {}, "agents": [{
         "id": "fly_01", "behavior": behavior,
         "drives": {}, "decision": {"decision_margin": 0.0},
         "social": {"nearby_count": 0, "contact": False},
         "light": {"phototaxis_bias": 0.0},
         "memory": {"habituation": {}, "sensitization": {}},
     }]} for index, behavior in enumerate(sequence)]
+
+
+def _behavior_observations_with_stimulus(sequence, stimuli):
+    return [{"step": index, "stimulus": dict(stimuli[index] if index < len(stimuli) else {}),
+             "agents": [{
+                 "id": "fly_01", "behavior": behavior,
+                 "drives": {}, "decision": {"decision_margin": 0.0},
+                 "social": {"nearby_count": 0, "contact": False},
+                 "light": {"phototaxis_bias": 0.0},
+                 "memory": {"habituation": {}, "sensitization": {}},
+             }]} for index, behavior in enumerate(sequence)]
+
+
+def test_response_latency_is_offset_from_stimulus_onset_not_absolute_step():
+    runner = _runner()
+    # dangerOdor begins at step 3; steps 0-2 are empty.
+    stimuli = [{}, {}, {}, {"dangerOdor": True}, {"dangerOdor": True}]
+    observations = _behavior_observations_with_stimulus(
+        ["idle", "idle", "idle", "walk", "walk"], stimuli)
+
+    summary = runner._summarize_trial(observations, [], {"fly_01": 3})
+
+    assert summary["mean_response_latency"] == 0
+    assert summary["response_latencies"] == {"fly_01": 0}
+
+
+def test_response_latency_excludes_fly_already_non_idle_before_onset():
+    runner = _runner()
+    # Fly is already walking at step 0; stimulus onset is step 2.
+    observations = _behavior_observations_with_stimulus(
+        ["walk", "walk", "feed", "feed", "feed"],
+        [{}, {}, {"dangerOdor": True}, {"dangerOdor": True}, {"dangerOdor": True}])
+
+    summary = runner._summarize_trial(observations, [], {"fly_01": 0})
+
+    assert summary["mean_response_latency"] is None
+    assert summary["response_latencies"] == {"fly_01": None}
+
+
+def test_response_latency_onset_at_step_zero_is_finite():
+    runner = _runner()
+    observations = _behavior_observations_with_stimulus(
+        ["idle", "walk", "walk", "walk", "walk"],
+        [{"dangerOdor": True}] * 5)
+
+    summary = runner._summarize_trial(observations, [], {"fly_01": 1})
+
+    assert summary["mean_response_latency"] == 1
+    assert summary["response_latencies"] == {"fly_01": 1}
+
+
+def test_response_latency_is_none_without_explicit_stimulus_onset():
+    runner = _runner()
+    observations = _behavior_observations(["idle", "walk", "walk", "walk", "walk"])
+
+    summary = runner._summarize_trial(observations, [], {"fly_01": 1})
+
+    assert summary["mean_response_latency"] is None
+    assert summary["response_latencies"] == {"fly_01": None}
+
+
+def test_response_latency_aggregation_exposes_responding_trials():
+    runner = _runner()
+    responding = runner._summarize_trial(
+        _behavior_observations_with_stimulus(
+            ["idle", "walk", "walk", "walk", "walk"],
+            [{"dangerOdor": True}] * 5),
+        [], {"fly_01": 1})
+    non_responding = runner._summarize_trial(
+        _behavior_observations(["idle", "idle", "idle", "idle", "idle"]),
+        [], {})
+    summary = runner._summarize_trials([
+        {"summary": responding, "total_steps": 5, "transition_count": 0,
+         "behavior_counts": {}, "behavior_durations": {}, "drive_statistics": {},
+         "mean_decision_margin": 0.0, "social_interactions": {}, "phototaxis": {}},
+        {"summary": non_responding, "total_steps": 5, "transition_count": 0,
+         "behavior_counts": {}, "behavior_durations": {}, "drive_statistics": {},
+         "mean_decision_margin": 0.0, "social_interactions": {}, "phototaxis": {}},
+    ])
+
+    assert summary["total_trials"] == 2
+    assert summary["responding_trials"] == 1
+    assert summary["mean_response_latency"] == 1
 
 
 def test_experiment_runs_are_deterministic_and_json_serializable():
