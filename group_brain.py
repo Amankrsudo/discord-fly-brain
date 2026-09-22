@@ -22,6 +22,7 @@ a flat tick count rather than the exact reference values.
 """
 
 import json
+import math
 import os
 import random
 import time
@@ -89,6 +90,17 @@ DECISION_BEHAVIORS = ("startle", "fly", "feed", "groom", "rest",
                       "phototaxis", "approach_social", "follow",
                       "avoid_social", "separate", "explore", "walk", "idle")
 DECISION_SWITCH_MARGIN = 0.12
+
+
+def _is_finite_number(value):
+    """True only for real, finite numbers -- never booleans.
+
+    Booleans are excluded because a persisted ``true``/``false`` must not be
+    silently coerced to ``1.0``/``0.0``; they are invalid persisted values.
+    """
+    return isinstance(value, (int, float)) \
+        and not isinstance(value, bool) \
+        and math.isfinite(float(value))
 
 
 class GroupBrain:
@@ -194,13 +206,48 @@ class GroupBrain:
     def _apply_state_dict(self, data):
         self.this_state.update({k: v for k, v in data.get("this_state", {}).items() if k in self.this_state})
         self.next_state.update({k: v for k, v in data.get("next_state", {}).items() if k in self.next_state})
-        self.drives.update(data.get("drives", {}))
+        # Known drives are clamped to [0, 1] when finite, or restored to the
+        # fresh default when non-finite/non-numeric. Unknown drive keys are
+        # preserved verbatim to keep the existing merge behavior.
+        loaded_drives = data.get("drives", {})
+        if isinstance(loaded_drives, dict):
+            for name in list(self.drives):
+                if name in loaded_drives:
+                    value = loaded_drives[name]
+                    self.drives[name] = (max(0.0, min(1.0, float(value)))
+                                         if _is_finite_number(value) else self.drives[name])
+            for name, value in loaded_drives.items():
+                if name not in self.drives:
+                    self.drives[name] = value
         self.stimulate.update(data.get("stimulate", {}))
         self.tick_count = data.get("tick_count", 0)
-        self.cooldown_until = data.get("cooldown_until", {})
+        # cooldown_until: a dict of finite numeric wall-clock timestamps. Non-dict
+        # or entries with non-finite/non-numeric values are dropped; a dropped
+        # entry and the -1 default in _select_behavior are equivalent.
+        loaded_cooldown = data.get("cooldown_until", {})
+        if isinstance(loaded_cooldown, dict):
+            self.cooldown_until = {
+                name: float(value) for name, value in loaded_cooldown.items()
+                if _is_finite_number(value)
+            }
+        else:
+            self.cooldown_until = {}
         self.current_behavior = data.get("current_behavior", "idle")
-        self.habituation = data.get("habituation", {})
-        self.overload_until_time = data.get("overload_until_time", 0.0)
+        # habituation: finite non-negative values kept verbatim (bounded to 0.85
+        # downstream); negatives clamped to 0.0; non-finite/non-numeric dropped.
+        loaded_habituation = data.get("habituation", {})
+        if isinstance(loaded_habituation, dict):
+            self.habituation = {
+                name: max(0.0, float(value)) for name, value in loaded_habituation.items()
+                if _is_finite_number(value)
+            }
+        else:
+            self.habituation = {}
+        # overload_until_time: a legitimate future wall-clock timestamp is valid
+        # behavior, so finite values are preserved verbatim; non-finite/non-numeric
+        # is replaced with 0.0 (not overloaded) rather than capped.
+        overload_value = data.get("overload_until_time", 0.0)
+        self.overload_until_time = float(overload_value) if _is_finite_number(overload_value) else 0.0
         self.history = data.get("history", [])
         self.first_seen = set(data.get("first_seen", []))
         self.idle_since = data.get("idle_since")
@@ -213,6 +260,18 @@ class GroupBrain:
             "preferred": max(0.0, min(1.0, float(saved_light.get("preferred", 0.6)))),
             "phototaxis_bias": float(saved_light.get("phototaxis_bias", 0.0)),
         }
+        # this_state / next_state: known group values must be finite numbers;
+        # non-finite/non-numeric replaced with 0.0. Unknown groups are dropped
+        # by the existing `if k in self.<field>` filter. Negative finite values
+        # are deliberately NOT clamped in this pass.
+        for field in ("this_state", "next_state"):
+            loaded = data.get(field, {})
+            if not isinstance(loaded, dict):
+                continue
+            target = getattr(self, field)
+            for key, value in loaded.items():
+                if key in target:
+                    target[key] = float(value) if _is_finite_number(value) else 0.0
         if isinstance(data.get("social_state"), dict):
             self.social_state.update(data["social_state"])
 
