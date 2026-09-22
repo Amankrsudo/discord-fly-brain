@@ -1,6 +1,7 @@
 """Deterministic, dependency-light experiments over the existing fly systems."""
 
 import json
+import os
 import random
 from collections import Counter
 from copy import deepcopy
@@ -58,8 +59,13 @@ class ExperimentRunner:
         return json.dumps(result, sort_keys=True, **kwargs)
 
     def save_json(self, result, path):
-        with open(path, "w", encoding="utf-8") as handle:
+        # Write to a sibling temp file first and atomically rename it into place
+        # only after the dump completes. A crash or interruption mid-write can
+        # therefore never truncate or corrupt the existing target file.
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as handle:
             json.dump(result, handle, indent=2, sort_keys=True)
+        os.replace(tmp, path)
 
     def _scenario(self, name, steps):
         steps = max(1, min(DEFAULT_MAX_STEPS, int(steps)))

@@ -120,6 +120,61 @@ def test_experiment_runs_are_deterministic_and_json_serializable():
     assert first["trials"][0]["fly_ids"] == ["fly_01"]
 
 
+def test_save_json_writes_valid_json_and_leaves_no_tmp_file(tmp_path):
+    runner = _runner()
+    result = runner.run_named("habituation", steps=8, trials=1, seed=1)
+    target = tmp_path / "result.json"
+
+    runner.save_json(result, str(target))
+
+    loaded = json.loads(target.read_text())
+    assert loaded == result
+    assert not (tmp_path / "result.json.tmp").exists()
+
+
+def test_save_json_is_atomic_when_write_to_tmp_fails(tmp_path, monkeypatch):
+    import builtins
+
+    runner = _runner()
+    result = runner.run_named("habituation", steps=8, trials=1, seed=1)
+    target = tmp_path / "result.json"
+    target.write_text(json.dumps({"preserved": True}))
+    original = target.read_text()
+    tmp_target = tmp_path / "result.json.tmp"
+
+    real_open = builtins.open
+
+    class _BoomMidWrite:
+        def __init__(self, real):
+            self._real = real
+            self._written = 0
+
+        def write(self, data):
+            self._written += len(data)
+            if self._written > 100:
+                raise OSError("simulated mid-write crash")
+            return self._real.write(data)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            self._real.close()
+            return False
+
+    def fake_open(path, *args, **kwargs):
+        if str(path) == str(tmp_target):
+            return _BoomMidWrite(real_open(path, *args, **kwargs))
+        return real_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "open", fake_open)
+
+    with pytest.raises(OSError):
+        runner.save_json(result, str(target))
+
+    assert target.read_text() == original
+
+
 def test_habituation_experiment_records_actual_habituation():
     result = _runner().run_named("habituation", steps=8, seed=1)
     memory = result["trials"][0]["summary"]["memory_changes"]
