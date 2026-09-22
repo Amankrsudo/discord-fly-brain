@@ -187,11 +187,19 @@ class GroupBrain:
             "current_behavior": self.current_behavior,
             "habituation": self.habituation,
             "overload_until_time": self.overload_until_time,
-            "history": self.history,
-            "first_seen": list(self.first_seen),
+"history": self.history,
+            "first_seen": sorted(self.first_seen),
             "idle_since": self.idle_since,
             "longest_idle_seconds": self.longest_idle_seconds,
             "fear_event_cooldown": self.fear_event_cooldown,
+            # Decision hysteresis inputs: without these the restored brain loses its
+            # recent motor readout and group firing, so _decision_scores() no longer
+            # reproduces the prior behavior and the DECISION_SWITCH_MARGIN retention
+            # check immediately flips to a fresh "idle" selection.
+            "last_accum": dict(self.last_accum),
+            "last_fired": sorted(self.last_fired),
+            "last_fired_strengths": dict(self.last_fired_strengths),
+            "threat_signal": self.threat_signal,
             "memory": self.memory.to_dict() if self.memory else {"version": 1, "events": [], "associations": {}, "habituation": {}, "sensitization": {}},
             "light_state": self.light_state,
             "social_state": self.social_state,
@@ -253,6 +261,17 @@ class GroupBrain:
         self.idle_since = data.get("idle_since")
         self.longest_idle_seconds = data.get("longest_idle_seconds", 0.0)
         self.fear_event_cooldown = data.get("fear_event_cooldown", 0)
+        # Decision hysteresis inputs. Legacy checkpoints without these keys fall
+        # back to fresh defaults (empty motor readout, no fired groups, no threat
+        # signal), which is the same state a freshly constructed brain starts in.
+        loaded_last_accum = data.get("last_accum", {})
+        self.last_accum = dict(loaded_last_accum) if isinstance(loaded_last_accum, dict) else {}
+        loaded_last_fired = data.get("last_fired", [])
+        self.last_fired = set(loaded_last_fired) if isinstance(loaded_last_fired, (list, set, tuple)) else set()
+        loaded_strengths = data.get("last_fired_strengths", {})
+        self.last_fired_strengths = dict(loaded_strengths) if isinstance(loaded_strengths, dict) else {}
+        threat = data.get("threat_signal", 0.0)
+        self.threat_signal = float(threat) if _is_finite_number(threat) else 0.0
         self.memory = MemorySystem.from_dict(data.get("memory"))
         saved_light = data.get("light_state", {})
         self.light_state = {

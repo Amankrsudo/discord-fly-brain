@@ -176,6 +176,28 @@ def test_decision_and_new_drive_state_round_trip(tmp_path):
     assert restored.decision_summary()["current_behavior"] == "idle"
 
 
+def test_decision_hysteresis_survives_checkpoint_round_trip(tmp_path):
+    brain = _brain()
+    brain.current_behavior = "feed"
+    brain.drives["hunger"] = 0.9
+    brain.stimulate["foodNearby"] = True
+    brain.last_accum = {"feed": 0.4, "walkLeft": 0.4, "walkRight": 0.4}
+    brain._select_behavior(has_nearby_food=True)
+
+    assert brain.decision_summary()["current_behavior"] == "feed"
+
+    checkpoint = tmp_path / "hysteresis.json"
+    brain.save(str(checkpoint))
+    restored = GroupBrain.load(WEIGHTS_PATH, str(checkpoint))
+
+    assert restored.current_behavior == "feed"
+    assert restored.last_accum == {"feed": 0.4, "walkLeft": 0.4, "walkRight": 0.4}
+    # Hysteresis: the restored brain must retain its recent behavior decision
+    # rather than immediately flipping to a fresh "idle" selection.
+    assert restored._select_behavior(has_nearby_food=True) == "feed"
+    assert restored.decision_summary()["current_behavior"] == "feed"
+
+
 def test_old_checkpoint_without_mating_or_decision_state_loads(tmp_path):
     checkpoint = tmp_path / "old-state.json"
     checkpoint.write_text(json.dumps({
