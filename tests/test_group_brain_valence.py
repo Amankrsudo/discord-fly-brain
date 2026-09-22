@@ -214,3 +214,133 @@ def test_checkpoint_preserves_ambient_stimulus_state(tmp_path):
     restored = GroupBrain.load(WEIGHTS_PATH, str(checkpoint))
 
     assert restored.stimulate["lightLevel"] == 0.0
+
+
+def test_checkpoint_preserves_tick_count(tmp_path):
+    brain = _brain()
+    brain.tick_count = 42
+    checkpoint = tmp_path / "state.json"
+
+    brain.save(str(checkpoint))
+    restored = GroupBrain.load(WEIGHTS_PATH, str(checkpoint))
+
+    assert restored.tick_count == 42
+
+
+def test_checkpoint_preserves_this_state_and_next_state_values(tmp_path):
+    brain = _brain()
+    group = next(iter(brain.this_state))
+    brain.this_state[group] = 5.0
+    brain.next_state[group] = 7.0
+    checkpoint = tmp_path / "state.json"
+
+    brain.save(str(checkpoint))
+    restored = GroupBrain.load(WEIGHTS_PATH, str(checkpoint))
+
+    assert restored.this_state[group] == 5.0
+    assert restored.next_state[group] == 7.0
+
+
+def test_checkpoint_preserves_cooldown_until(tmp_path):
+    brain = _brain()
+    brain.cooldown_until["feed"] = 1e9
+    checkpoint = tmp_path / "state.json"
+
+    brain.save(str(checkpoint))
+    restored = GroupBrain.load(WEIGHTS_PATH, str(checkpoint))
+
+    assert restored.cooldown_until.get("feed") == 1e9
+
+
+def test_checkpoint_preserves_habituation(tmp_path):
+    brain = _brain()
+    brain.habituation["light"] = 0.5
+    checkpoint = tmp_path / "state.json"
+
+    brain.save(str(checkpoint))
+    restored = GroupBrain.load(WEIGHTS_PATH, str(checkpoint))
+
+    assert restored.habituation.get("light") == 0.5
+
+
+def test_checkpoint_preserves_history(tmp_path):
+    brain = _brain()
+    brain.history = [{"tick": 1, "event": "stim"}]
+    checkpoint = tmp_path / "state.json"
+
+    brain.save(str(checkpoint))
+    restored = GroupBrain.load(WEIGHTS_PATH, str(checkpoint))
+
+    assert restored.history == [{"tick": 1, "event": "stim"}]
+
+
+def test_checkpoint_preserves_first_seen(tmp_path):
+    brain = _brain()
+    brain.first_seen = {"A", "B"}
+    checkpoint = tmp_path / "state.json"
+
+    brain.save(str(checkpoint))
+    restored = GroupBrain.load(WEIGHTS_PATH, str(checkpoint))
+
+    assert restored.first_seen == {"A", "B"}
+
+
+def test_checkpoint_preserves_idle_since(tmp_path):
+    brain = _brain()
+    brain.idle_since = 1000.0
+    checkpoint = tmp_path / "state.json"
+
+    brain.save(str(checkpoint))
+    restored = GroupBrain.load(WEIGHTS_PATH, str(checkpoint))
+
+    assert restored.idle_since == 1000.0
+
+
+def test_checkpoint_preserves_longest_idle_seconds(tmp_path):
+    brain = _brain()
+    brain.longest_idle_seconds = 9.5
+    checkpoint = tmp_path / "state.json"
+
+    brain.save(str(checkpoint))
+    restored = GroupBrain.load(WEIGHTS_PATH, str(checkpoint))
+
+    assert restored.longest_idle_seconds == 9.5
+
+
+def test_checkpoint_preserves_fear_event_cooldown(tmp_path):
+    brain = _brain()
+    brain.fear_event_cooldown = 7
+    checkpoint = tmp_path / "state.json"
+
+    brain.save(str(checkpoint))
+    restored = GroupBrain.load(WEIGHTS_PATH, str(checkpoint))
+
+    assert restored.fear_event_cooldown == 7
+
+
+def test_checkpoint_preserves_multiple_stimulate_fields(tmp_path):
+    brain = _brain()
+    brain.stimulate["foodNearby"] = True
+    brain.stimulate["windStrength"] = 0.7
+    brain.stimulate["temperature"] = 0.3
+    checkpoint = tmp_path / "state.json"
+
+    brain.save(str(checkpoint))
+    restored = GroupBrain.load(WEIGHTS_PATH, str(checkpoint))
+
+    assert restored.stimulate["foodNearby"] is True
+    assert restored.stimulate["windStrength"] == 0.7
+    assert restored.stimulate["temperature"] == 0.3
+
+
+def test_checkpoint_preserves_groupbrain_social_state(tmp_path):
+    brain = _brain()
+    brain.social_state["nearby_count"] = 3
+    brain.social_state["contact"] = True
+    checkpoint = tmp_path / "state.json"
+
+    brain.save(str(checkpoint))
+    restored = GroupBrain.load(WEIGHTS_PATH, str(checkpoint))
+
+    assert restored.social_state["nearby_count"] == 3
+    assert restored.social_state["contact"] is True
