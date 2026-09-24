@@ -15,12 +15,15 @@ Two stimulation paths, matching what was actually confirmed to exist:
 
 A lock guards every mutation so the always-on background tick and a
 command-triggered burst never interleave mid-update.
+
+Optional: BiologicalBrain (3.0) runs alongside GroupBrain (2.0) when enabled.
 """
 
 import asyncio
 from group_brain import GroupBrain
 from social_simulation import MultiFlySimulation
 from experiment_runner import ExperimentRunner
+from biological_brain import BiologicalBrain, BiologicalMode
 
 BACKGROUND_TICK_INTERVAL = 2.0   # seconds between idle background ticks
 COMMAND_TICKS = 6                # ticks run immediately after a command fires
@@ -29,11 +32,14 @@ SAVE_EVERY_N_TICKS = 15          # ~30s at the default interval
 
 class FlyController:
     def __init__(self, weights_path="group_weights.json", checkpoint_path="fly_state.json",
-                 on_event=None):
+                 on_event=None, biological_mode: BiologicalMode = BiologicalMode.LEGACY_2_0):
         """on_event: optional async callback(event: dict), called OUTSIDE the
         lock whenever something notable happens on its own, unprompted --
         this is what powers ambient posts. Kept decoupled from Discord on
-        purpose: this file doesn't know discord.py exists."""
+        purpose: this file doesn't know discord.py exists.
+        
+        biological_mode: Operating mode for the biological layer (3.0).
+        Defaults to LEGACY_2_0 for full backward compatibility."""
         self.checkpoint_path = checkpoint_path
         self.brain = GroupBrain.load(weights_path, checkpoint_path)
         self.social_simulation = MultiFlySimulation(weights_path)
@@ -42,6 +48,9 @@ class FlyController:
         self.lock = asyncio.Lock()
         self._ticks_since_save = 0
         self.on_event = on_event
+        
+        # 3.0 Biological layer (runs alongside 2.0, disabled by default)
+        self.biological_brain = BiologicalBrain(mode=biological_mode)
 
     async def background_loop(self):
         while True:
@@ -61,6 +70,12 @@ class FlyController:
                 self.social_simulation.step()
             else:
                 self.brain.tick()
+            
+            # 3.0: Step biological brain with current sensory input
+            biological_signals = {}
+            if self.biological_brain.mode != BiologicalMode.LEGACY_2_0:
+                biological_signals = self.biological_brain.step(dict(self.brain.stimulate))
+            
             behavior = self.brain.evaluate_behavior()  # was only called on commands before --
             # spontaneous transitions from background tonic activity were
             # invisible until someone happened to run a command
@@ -90,14 +105,20 @@ class FlyController:
                 self.brain.stimulate[k] = v
             all_fired = set()
             arc = []
+            biological_signals = {}
             for _ in range(COMMAND_TICKS):
                 self.brain.tick()
+                
+                # 3.0: Step biological brain
+                if self.biological_brain.mode != BiologicalMode.LEGACY_2_0:
+                    biological_signals = self.biological_brain.step(dict(self.brain.stimulate))
+                
                 all_fired |= self.brain.last_fired
                 b = self.brain.evaluate_behavior()
                 if not arc or arc[-1] != b:
                     arc.append(b)
             self.brain.save(self.checkpoint_path)
-            return self._snapshot(all_fired=all_fired, arc=arc)
+            return self._snapshot(all_fired=all_fired, arc=arc, biological_signals=biological_signals)
 
     async def stimulate_flag(self, **flags):
         """Set real stimulate-dict flags, run a burst of ticks so they
@@ -115,8 +136,14 @@ class FlyController:
             fed = bool(flags.get("foodContact") or flags.get("foodNearby"))
             all_fired = set()
             arc = []
+            biological_signals = {}
             for _ in range(COMMAND_TICKS):
                 self.brain.tick()
+                
+                # 3.0: Step biological brain
+                if self.biological_brain.mode != BiologicalMode.LEGACY_2_0:
+                    biological_signals = self.biological_brain.step(dict(self.brain.stimulate))
+                
                 all_fired |= self.brain.last_fired
                 b = self.brain.evaluate_behavior(has_nearby_food=fed)
                 if not arc or arc[-1] != b:
@@ -131,6 +158,7 @@ class FlyController:
             self.brain.save(self.checkpoint_path)
             snapshot = self._snapshot(has_nearby_food=fed, all_fired=all_fired, arc=arc)
             snapshot["stimuli"] = stimulus_snapshot
+            snapshot["biological_signals"] = biological_signals
             return snapshot
 
     async def trigger_group(self, group_name, pulses=3):
@@ -141,15 +169,26 @@ class FlyController:
         async with self.lock:
             all_fired = set()
             arc = []
+            biological_signals = {}
             for _ in range(pulses):
                 self.brain.external_stimulate(group_name)
                 self.brain.tick()
+                
+                # 3.0: Step biological brain
+                if self.biological_brain.mode != BiologicalMode.LEGACY_2_0:
+                    biological_signals = self.biological_brain.step(dict(self.brain.stimulate))
+                
                 all_fired |= self.brain.last_fired
                 b = self.brain.evaluate_behavior()
                 if not arc or arc[-1] != b:
                     arc.append(b)
             for _ in range(COMMAND_TICKS - pulses):
                 self.brain.tick()
+                
+                # 3.0: Step biological brain
+                if self.biological_brain.mode != BiologicalMode.LEGACY_2_0:
+                    biological_signals = self.biological_brain.step(dict(self.brain.stimulate))
+                
                 all_fired |= self.brain.last_fired
                 b = self.brain.evaluate_behavior()
                 if not arc or arc[-1] != b:
@@ -160,6 +199,7 @@ class FlyController:
             # that real, momentary input for the response dashboard only.
             if group_name == "NOCI":
                 snapshot["stimuli"]["nociception"] = True
+            snapshot["biological_signals"] = biological_signals
             return snapshot
 
     async def overload(self):
@@ -167,9 +207,17 @@ class FlyController:
         full freeze (see GroupBrain.tick()/trigger_overload())."""
         async with self.lock:
             self.brain.trigger_overload()
+            
+            # 3.0: Step biological brain
+            biological_signals = {}
+            if self.biological_brain.mode != BiologicalMode.LEGACY_2_0:
+                biological_signals = self.biological_brain.step(dict(self.brain.stimulate))
+            
             fired = set(self.brain.last_fired)
             self.brain.save(self.checkpoint_path)
-            return self._snapshot(all_fired=fired)
+            snapshot = self._snapshot(all_fired=fired)
+            snapshot["biological_signals"] = biological_signals
+            return snapshot
 
     async def add_fly(self, fly_id=None, position=None):
         async with self.lock:
@@ -198,10 +246,10 @@ class FlyController:
                 seed,
             )
 
-    def _snapshot(self, has_nearby_food=False, all_fired=None, arc=None):
+    def _snapshot(self, has_nearby_food=False, all_fired=None, arc=None, biological_signals=None):
         b = self.brain
         final_behavior = arc[-1] if arc else b.evaluate_behavior(has_nearby_food=has_nearby_food)
-        return {
+        snapshot = {
             "behavior": final_behavior,
             "behavior_arc": arc if arc else [final_behavior],
             "drives": dict(b.drives),
@@ -217,3 +265,6 @@ class FlyController:
             "decision": b.decision_summary(),
             "social": self.social_simulation.snapshot(current_fly="fly_01"),
         }
+        if biological_signals:
+            snapshot["biological_signals"] = biological_signals
+        return snapshot

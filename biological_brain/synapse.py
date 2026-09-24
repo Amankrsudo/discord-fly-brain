@@ -1,0 +1,32 @@
+"""Synapse model for Biological Brain 3.0."""
+
+from dataclasses import dataclass
+from enum import Enum
+
+
+class Sign(Enum):
+    """Synaptic sign: excitatory or inhibitory."""
+    EXCITATORY = 1
+    INHIBITORY = -1
+
+
+@dataclass
+class Synapse:
+    """Biological connection between neurons."""
+    source: str
+    target: str
+    weight: float = 1.0
+    sign: Sign = Sign.EXCITATORY
+    delay: int = 1
+    neurotransmitter: str = "unknown"
+    enabled: bool = True
+
+    def effective_weight(self) -> float:
+        """Get the signed weight for propagation."""
+        if not self.enabled:
+            return 0.0
+        return self.weight * self.sign.value
+
+    def __post_init__(self):
+        if isinstance(self.sign, str):
+            self.sign = Sign[self.sign.upper()]
