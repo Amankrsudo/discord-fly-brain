@@ -30,3 +30,5 @@ class Synapse:
     def __post_init__(self):
         if isinstance(self.sign, str):
             self.sign = Sign[self.sign.upper()]
+        if self.delay < 1:
+            raise ValueError(f"Synapse delay must be >= 1, got {self.delay}")

@@ -1,0 +1,513 @@
+{
+  "circuit": {
+    "name": "escape_core",
+    "version": "3.0B.1",
+    "description": "Core Drosophila short-mode escape pathway: LC4/LPLC2 -> GF -> TTMn/PSI/DLMn",
+    "dt_ms_per_tick": 1.0,
+    "metadata": {
+      "evidence_classification": {
+        "DIRECTLY_MEASURED": "Electrophysiology + EM reconstruction in same specimen",
+        "CONNECTOME_DERIVED": "Synapse counts from EM connectome (FlyWire/MANC)",
+        "INFERRED": "Model fit to behavioral/physiological data",
+        "APPROXIMATION": "Simplified or calibrated for LIF voltage-based simulation"
+      },
+      "sources": [
+        "FlyWire_FAFB_v783",
+        "MANC_v1",
+        "Ache2019_CurrBio",
+        "Cheong2026_eLife",
+        "vonReyn2014_CurrBio",
+        "King1980_JNeurocytol",
+        "Tanouye1980_JNeurophysiol",
+        "eNeuro2019_model",
+        "Kennedy2018_eNeuro",
+        "Dombrovski2023_Nature",
+        "Azevedo2024_Nature",
+        "Allen2007_JCompNeurol",
+        "Phelan1996_Neuron"
+      ]
+    },
+    "neurons": [
+      {
+        "id": "LC4_L",
+        "type": "LC4",
+        "cell_type": "sensory",
+        "hemisphere": "L",
+        "brain_region": "optic_glomerulus_LC4",
+        "neurotransmitter": "ACh",
+        "biophysics": {
+          "V_rest": -70.0,
+          "V_threshold": -50.0,
+          "V_reset": -75.0,
+          "tau_m": 15.0,
+          "refractory_period_ticks": 2
+        },
+        "evidence": {
+          "biophysics": "APPROXIMATION",
+          "identity": "DIRECTLY_MEASURED",
+          "source": "Ache2019_CurrBio, Klapoetke2017"
+        }
+      },
+      {
+        "id": "LC4_R",
+        "type": "LC4",
+        "cell_type": "sensory",
+        "hemisphere": "R",
+        "brain_region": "optic_glomerulus_LC4",
+        "neurotransmitter": "ACh",
+        "biophysics": {
+          "V_rest": -70.0,
+          "V_threshold": -50.0,
+          "V_reset": -75.0,
+          "tau_m": 15.0,
+          "refractory_period_ticks": 2
+        },
+        "evidence": {
+          "biophysics": "APPROXIMATION",
+          "identity": "DIRECTLY_MEASURED",
+          "source": "Ache2019_CurrBio, Klapoetke2017"
+        }
+      },
+      {
+        "id": "LPLC2_L",
+        "type": "LPLC2",
+        "cell_type": "sensory",
+        "hemisphere": "L",
+        "brain_region": "optic_glomerulus_LPLC2",
+        "neurotransmitter": "ACh",
+        "biophysics": {
+          "V_rest": -70.0,
+          "V_threshold": -50.0,
+          "V_reset": -75.0,
+          "tau_m": 15.0,
+          "refractory_period_ticks": 2
+        },
+        "evidence": {
+          "biophysics": "APPROXIMATION",
+          "identity": "DIRECTLY_MEASURED",
+          "source": "Ache2019_CurrBio, Klapoetke2017"
+        }
+      },
+      {
+        "id": "LPLC2_R",
+        "type": "LPLC2",
+        "cell_type": "sensory",
+        "hemisphere": "R",
+        "brain_region": "optic_glomerulus_LPLC2",
+        "neurotransmitter": "ACh",
+        "biophysics": {
+          "V_rest": -70.0,
+          "V_threshold": -50.0,
+          "V_reset": -75.0,
+          "tau_m": 15.0,
+          "refractory_period_ticks": 2
+        },
+        "evidence": {
+          "biophysics": "APPROXIMATION",
+          "identity": "DIRECTLY_MEASURED",
+          "source": "Ache2019_CurrBio, Klapoetke2017"
+        }
+      },
+      {
+        "id": "GF_L",
+        "type": "GiantFiber",
+        "cell_type": "DN",
+        "hemisphere": "L",
+        "brain_region": "brain_dendrite_OLG->VNC_LTct",
+        "neurotransmitter": "ACh+Electrical",
+        "biophysics": {
+          "V_rest": -65.0,
+          "V_threshold": -45.0,
+          "V_reset": -65.0,
+          "tau_m": 5.0,
+          "refractory_period_ticks": 5
+        },
+        "evidence": {
+          "biophysics": "DIRECTLY_MEASURED",
+          "identity": "DIRECTLY_MEASURED",
+          "threshold": "INFERRED",
+          "tau_m": "INFERRED",
+          "refractory_period": "INFERRED",
+          "source": "Allen2007_JCompNeurol, eNeuro2019_model, King1980_JNeurocytol"
+        }
+      },
+      {
+        "id": "GF_R",
+        "type": "GiantFiber",
+        "cell_type": "DN",
+        "hemisphere": "R",
+        "brain_region": "brain_dendrite_OLG->VNC_LTct",
+        "neurotransmitter": "ACh+Electrical",
+        "biophysics": {
+          "V_rest": -65.0,
+          "V_threshold": -45.0,
+          "V_reset": -65.0,
+          "tau_m": 5.0,
+          "refractory_period_ticks": 5
+        },
+        "evidence": {
+          "biophysics": "DIRECTLY_MEASURED",
+          "identity": "DIRECTLY_MEASURED",
+          "threshold": "INFERRED",
+          "tau_m": "INFERRED",
+          "refractory_period": "INFERRED",
+          "source": "Allen2007_JCompNeurol, eNeuro2019_model, King1980_JNeurocytol"
+        }
+      },
+      {
+        "id": "TTMn_L",
+        "type": "TTMn",
+        "cell_type": "MN",
+        "hemisphere": "L",
+        "brain_region": "VNC_LTct_T2",
+        "neurotransmitter": "ACh",
+        "biophysics": {
+          "V_rest": -70.0,
+          "V_threshold": -55.0,
+          "V_reset": -75.0,
+          "tau_m": 10.0,
+          "refractory_period_ticks": 2
+        },
+        "evidence": {
+          "biophysics": "APPROXIMATION",
+          "identity": "DIRECTLY_MEASURED",
+          "target_muscle": "TTM",
+          "source": "Azevedo2024_Nature, MANC_v1"
+        }
+      },
+      {
+        "id": "TTMn_R",
+        "type": "TTMn",
+        "cell_type": "MN",
+        "hemisphere": "R",
+        "brain_region": "VNC_LTct_T2",
+        "neurotransmitter": "ACh",
+        "biophysics": {
+          "V_rest": -70.0,
+          "V_threshold": -55.0,
+          "V_reset": -75.0,
+          "tau_m": 10.0,
+          "refractory_period_ticks": 2
+        },
+        "evidence": {
+          "biophysics": "APPROXIMATION",
+          "identity": "DIRECTLY_MEASURED",
+          "target_muscle": "TTM",
+          "source": "Azevedo2024_Nature, MANC_v1"
+        }
+      },
+      {
+        "id": "PSI_L",
+        "type": "PSI",
+        "cell_type": "IN",
+        "hemisphere": "L",
+        "brain_region": "VNC_LTct",
+        "neurotransmitter": "ACh",
+        "biophysics": {
+          "V_rest": -70.0,
+          "V_threshold": -55.0,
+          "V_reset": -75.0,
+          "tau_m": 15.0,
+          "refractory_period_ticks": 2
+        },
+        "evidence": {
+          "biophysics": "APPROXIMATION",
+          "identity": "DIRECTLY_MEASURED",
+          "source": "King1980_JNeurocytol, MANC_v1"
+        }
+      },
+      {
+        "id": "PSI_R",
+        "type": "PSI",
+        "cell_type": "IN",
+        "hemisphere": "R",
+        "brain_region": "VNC_LTct",
+        "neurotransmitter": "ACh",
+        "biophysics": {
+          "V_rest": -70.0,
+          "V_threshold": -55.0,
+          "V_reset": -75.0,
+          "tau_m": 15.0,
+          "refractory_period_ticks": 2
+        },
+        "evidence": {
+          "biophysics": "APPROXIMATION",
+          "identity": "DIRECTLY_MEASURED",
+          "source": "King1980_JNeurocytol, MANC_v1"
+        }
+      },
+      {
+        "id": "DLMn_L",
+        "type": "DLMn",
+        "cell_type": "MN",
+        "hemisphere": "L",
+        "brain_region": "VNC_WTct",
+        "neurotransmitter": "ACh",
+        "biophysics": {
+          "V_rest": -70.0,
+          "V_threshold": -55.0,
+          "V_reset": -75.0,
+          "tau_m": 10.0,
+          "refractory_period_ticks": 2
+        },
+        "evidence": {
+          "biophysics": "APPROXIMATION",
+          "identity": "DIRECTLY_MEASURED",
+          "target_muscle": "DLM",
+          "source": "Azevedo2024_Nature, MANC_v1"
+        }
+      },
+      {
+        "id": "DLMn_R",
+        "type": "DLMn",
+        "cell_type": "MN",
+        "hemisphere": "R",
+        "brain_region": "VNC_WTct",
+        "neurotransmitter": "ACh",
+        "biophysics": {
+          "V_rest": -70.0,
+          "V_threshold": -55.0,
+          "V_reset": -75.0,
+          "tau_m": 10.0,
+          "refractory_period_ticks": 2
+        },
+        "evidence": {
+          "biophysics": "APPROXIMATION",
+          "identity": "DIRECTLY_MEASURED",
+          "target_muscle": "DLM",
+          "source": "Azevedo2024_Nature, MANC_v1"
+        }
+      }
+    ],
+    "synapses": [
+      {
+        "pre": "LC4_L",
+        "post": "GF_L",
+        "type": "chemical",
+        "neurotransmitter": "ACh",
+        "sign": "excitatory",
+        "weight_mV": 15.0,
+        "delay_ticks": 1,
+        "synapse_count_em": 2290,
+        "synapse_count_note": "population sum across 71 LC4 neurons per hemisphere; weight calibrated for single-tick threshold crossing",
+        "evidence": ["DIRECTLY_MEASURED", "APPROXIMATION"]
+      },
+      {
+        "pre": "LC4_R",
+        "post": "GF_R",
+        "type": "chemical",
+        "neurotransmitter": "ACh",
+        "sign": "excitatory",
+        "weight_mV": 15.0,
+        "delay_ticks": 1,
+        "synapse_count_em": 2290,
+        "synapse_count_note": "population sum across 71 LC4 neurons per hemisphere",
+        "evidence": ["DIRECTLY_MEASURED", "APPROXIMATION"]
+      },
+      {
+        "pre": "LPLC2_L",
+        "post": "GF_L",
+        "type": "chemical",
+        "neurotransmitter": "ACh",
+        "sign": "excitatory",
+        "weight_mV": 10.0,
+        "delay_ticks": 1,
+        "synapse_count_em": 1443,
+        "synapse_count_note": "population sum across 85 LPLC2 neurons per hemisphere; weight proportional to synapse count ratio",
+        "evidence": ["DIRECTLY_MEASURED", "APPROXIMATION"]
+      },
+      {
+        "pre": "LPLC2_R",
+        "post": "GF_R",
+        "type": "chemical",
+        "neurotransmitter": "ACh",
+        "sign": "excitatory",
+        "weight_mV": 10.0,
+        "delay_ticks": 1,
+        "synapse_count_em": 1443,
+        "synapse_count_note": "population sum across 85 LPLC2 neurons per hemisphere",
+        "evidence": ["DIRECTLY_MEASURED", "APPROXIMATION"]
+      },
+      {
+        "pre": "GF_L",
+        "post": "TTMn_L",
+        "type": "electrical",
+        "neurotransmitter": "ShakB",
+        "sign": "excitatory",
+        "weight_mV": 17.0,
+        "delay_ticks": 1,
+        "gap_junction_conductance_us": 135,
+        "weight_calibration": "W = (V_thresh - V_rest) / exp(-dt/tau_m) = 15.0 / exp(-1/10) = 16.58 -> rounded to 17.0 for single-tick threshold crossing",
+        "evidence": ["INFERRED", "APPROXIMATION"]
+      },
+      {
+        "pre": "TTMn_L",
+        "post": "GF_L",
+        "type": "electrical",
+        "neurotransmitter": "ShakB",
+        "sign": "excitatory",
+        "weight_mV": 17.0,
+        "delay_ticks": 1,
+        "gap_junction_conductance_us": 135,
+        "weight_calibration": "bidirectional pair of GF_L->TTMn_L",
+        "evidence": ["INFERRED", "APPROXIMATION"]
+      },
+      {
+        "pre": "GF_L",
+        "post": "PSI_L",
+        "type": "electrical",
+        "neurotransmitter": "ShakB",
+        "sign": "excitatory",
+        "weight_mV": 16.5,
+        "delay_ticks": 1,
+        "gap_junction_conductance_us": 135,
+        "weight_calibration": "W = 15.0 / exp(-1/15) = 16.03 -> rounded to 16.5",
+        "evidence": ["INFERRED", "APPROXIMATION"]
+      },
+      {
+        "pre": "PSI_L",
+        "post": "GF_L",
+        "type": "electrical",
+        "neurotransmitter": "ShakB",
+        "sign": "excitatory",
+        "weight_mV": 16.5,
+        "delay_ticks": 1,
+        "gap_junction_conductance_us": 135,
+        "weight_calibration": "bidirectional pair of GF_L->PSI_L",
+        "evidence": ["INFERRED", "APPROXIMATION"]
+      },
+      {
+        "pre": "GF_R",
+        "post": "TTMn_R",
+        "type": "electrical",
+        "neurotransmitter": "ShakB",
+        "sign": "excitatory",
+        "weight_mV": 17.0,
+        "delay_ticks": 1,
+        "gap_junction_conductance_us": 135,
+        "weight_calibration": "W = 15.0 / exp(-1/10) = 16.58 -> rounded to 17.0",
+        "evidence": ["INFERRED", "APPROXIMATION"]
+      },
+      {
+        "pre": "TTMn_R",
+        "post": "GF_R",
+        "type": "electrical",
+        "neurotransmitter": "ShakB",
+        "sign": "excitatory",
+        "weight_mV": 17.0,
+        "delay_ticks": 1,
+        "gap_junction_conductance_us": 135,
+        "weight_calibration": "bidirectional pair of GF_R->TTMn_R",
+        "evidence": ["INFERRED", "APPROXIMATION"]
+      },
+      {
+        "pre": "GF_R",
+        "post": "PSI_R",
+        "type": "electrical",
+        "neurotransmitter": "ShakB",
+        "sign": "excitatory",
+        "weight_mV": 16.5,
+        "delay_ticks": 1,
+        "gap_junction_conductance_us": 135,
+        "weight_calibration": "W = 15.0 / exp(-1/15) = 16.03 -> rounded to 16.5",
+        "evidence": ["INFERRED", "APPROXIMATION"]
+      },
+      {
+        "pre": "PSI_R",
+        "post": "GF_R",
+        "type": "electrical",
+        "neurotransmitter": "ShakB",
+        "sign": "excitatory",
+        "weight_mV": 16.5,
+        "delay_ticks": 1,
+        "gap_junction_conductance_us": 135,
+        "weight_calibration": "bidirectional pair of GF_R->PSI_R",
+        "evidence": ["INFERRED", "APPROXIMATION"]
+      },
+      {
+        "pre": "GF_L",
+        "post": "TTMn_L",
+        "type": "chemical",
+        "neurotransmitter": "ACh",
+        "sign": "excitatory",
+        "weight_mV": 5.0,
+        "delay_ticks": 2,
+        "synapse_count_em": 30,
+        "synapse_count_note": "minimum 30 synapses (>=1% TTMn input threshold from MANC); weight insufficient to fire TTMn alone, adds to electrical component",
+        "evidence": ["CONNECTOME_DERIVED", "APPROXIMATION"]
+      },
+      {
+        "pre": "GF_L",
+        "post": "PSI_L",
+        "type": "chemical",
+        "neurotransmitter": "ACh",
+        "sign": "excitatory",
+        "weight_mV": 5.0,
+        "delay_ticks": 2,
+        "synapse_count_em": 30,
+        "synapse_count_note": "minimum 30 synapses (>=1% PSI input threshold); weight insufficient to fire PSI alone",
+        "evidence": ["CONNECTOME_DERIVED", "APPROXIMATION"]
+      },
+      {
+        "pre": "GF_R",
+        "post": "TTMn_R",
+        "type": "chemical",
+        "neurotransmitter": "ACh",
+        "sign": "excitatory",
+        "weight_mV": 5.0,
+        "delay_ticks": 2,
+        "synapse_count_em": 30,
+        "synapse_count_note": "minimum 30 synapses (>=1% TTMn input threshold from MANC)",
+        "evidence": ["CONNECTOME_DERIVED", "APPROXIMATION"]
+      },
+      {
+        "pre": "GF_R",
+        "post": "PSI_R",
+        "type": "chemical",
+        "neurotransmitter": "ACh",
+        "sign": "excitatory",
+        "weight_mV": 5.0,
+        "delay_ticks": 2,
+        "synapse_count_em": 30,
+        "synapse_count_note": "minimum 30 synapses (>=1% PSI input threshold)",
+        "evidence": ["CONNECTOME_DERIVED", "APPROXIMATION"]
+      },
+      {
+        "pre": "PSI_L",
+        "post": "DLMn_R",
+        "type": "chemical",
+        "neurotransmitter": "ACh",
+        "sign": "excitatory",
+        "weight_mV": 17.0,
+        "delay_ticks": 2,
+        "synapse_count_note": "PSI crosses midline to contralateral DLMn (King & Wyman 1980); 5 DLMn targets collapsed to 1",
+        "evidence": ["DIRECTLY_MEASURED", "APPROXIMATION"]
+      },
+      {
+        "pre": "PSI_R",
+        "post": "DLMn_L",
+        "type": "chemical",
+        "neurotransmitter": "ACh",
+        "sign": "excitatory",
+        "weight_mV": 17.0,
+        "delay_ticks": 2,
+        "synapse_count_note": "PSI crosses midline to contralateral DLMn (King & Wyman 1980); 5 DLMn targets collapsed to 1",
+        "evidence": ["DIRECTLY_MEASURED", "APPROXIMATION"]
+      }
+    ],
+    "circuit_io": {
+      "inputs": ["LC4_L", "LC4_R", "LPLC2_L", "LPLC2_R"],
+      "outputs": ["TTMn_L", "TTMn_R", "DLMn_L", "DLMn_R"],
+      "signal_mapping": {
+        "escape_signal": ["TTMn_L", "TTMn_R"],
+        "flight_signal": ["DLMn_L", "DLMn_R"],
+        "threat_signal": ["GF_L", "GF_R"]
+      },
+      "sensory_mapping": {
+        "looming_stimulus_L": ["LC4_L", "LPLC2_L"],
+        "looming_stimulus_R": ["LC4_R", "LPLC2_R"],
+        "looming_stimulus_front": ["LC4_L", "LC4_R", "LPLC2_L", "LPLC2_R"]
+      }
+    }
+  }
+}

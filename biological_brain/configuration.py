@@ -11,7 +11,7 @@ class BiologicalMode(Enum):
 
 
 BIOLOGICAL_CIRCUITS = {
-    "startle": False,
+    "escape": False,
     "feeding": False,
     "phototaxis": False,
 }

@@ -43,6 +43,17 @@ class Circuit:
         """Get a neuron by ID."""
         return self.neurons.get(neuron_id)
 
+    def get_synapse(self, source_id: str, target_id: str) -> Optional[Synapse]:
+        """Get a synapse by source and target ID (returns first match)."""
+        for syn in self.synapses:
+            if syn.source == source_id and syn.target == target_id:
+                return syn
+        return None
+
+    def get_synapses(self, source_id: str, target_id: str) -> List[Synapse]:
+        """Get all synapses between source and target."""
+        return [syn for syn in self.synapses if syn.source == source_id and syn.target == target_id]
+
     def get_inputs(self) -> List[str]:
         """Get input neuron IDs."""
         return self.input_neurons.copy()

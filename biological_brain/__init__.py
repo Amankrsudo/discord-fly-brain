@@ -1,5 +1,7 @@
 """Biological Brain 3.0 - Public API."""
 
+import json
+import os
 from dataclasses import dataclass, field
 from typing import Dict, Optional
 from .configuration import BiologicalMode, BIOLOGICAL_CIRCUITS
@@ -8,6 +10,33 @@ from .neuron import Neuron
 from .synapse import Synapse, Sign
 from .neural_engine import NeuralEngine
 from .signals import SignalTranslator
+
+
+CIRCUIT_DIR = os.path.join(os.path.dirname(__file__), "data")
+
+
+# APPROXIMATION: Looming input currents calibrated for simultaneous VP firing.
+# Spec §7.1 defines LC4=3.0, LPLC2=2.0 (ratio matching synapse counts), but these
+# drive VPs to threshold at different ticks (~8 vs ~16). GF requires both LC4 and
+# LPLC2 input simultaneously (Ache 2019 summation model). Equal currents (5.0)
+# ensure both VPs fire at the same tick, enabling GF threshold crossing.
+# The synapse-count ratio is already encoded in VP->GF weights (15.0:10.0).
+LOOMING_MAP = {
+    "loomingLeft":  {"LC4_L": 5.0, "LPLC2_L": 5.0},
+    "loomingRight": {"LC4_R": 5.0, "LPLC2_R": 5.0},
+    "loomingFront": {"LC4_L": 3.0, "LC4_R": 3.0, "LPLC2_L": 3.0, "LPLC2_R": 3.0},
+}
+
+# APPROXIMATION: Fallback 2.0 stimulus currents calibrated for bilateral VP activation.
+# Nociception maps to all 4 VPs with equal current (5.0) to ensure simultaneous
+# bilateral GF firing. Spec §7.2 suggested 4.0/2.0 but asymmetric VP currents
+# prevent GF summation on each hemisphere.
+FALLBACK_MAP = {
+    "lightLevel":   {"LC4_L": 1.5, "LC4_R": 1.5},
+    "nociception":  {"LC4_L": 5.0, "LC4_R": 5.0, "LPLC2_L": 5.0, "LPLC2_R": 5.0},
+    "dangerOdor":   {"LC4_L": 2.0, "LC4_R": 2.0},
+    "touch":        {"LC4_L": 1.0, "LC4_R": 1.0},
+}
 
 
 @dataclass
@@ -26,60 +55,70 @@ class BiologicalBrain:
 
     def _build_circuits(self) -> None:
         """Construct circuits enabled in BIOLOGICAL_CIRCUITS."""
-        if BIOLOGICAL_CIRCUITS.get("startle"):
-            circuit = self._build_startle_circuit()
-            self.circuits["startle"] = circuit
-            self.engines["startle"] = NeuralEngine(circuit)
-            self.translators["startle"] = SignalTranslator(circuit)
+        if BIOLOGICAL_CIRCUITS.get("escape"):
+            circuit = self._build_escape_circuit()
+            self.circuits["escape_core"] = circuit
+            self.engines["escape_core"] = NeuralEngine(circuit)
+            self.translators["escape_core"] = SignalTranslator(circuit)
 
-    def _build_startle_circuit(self) -> Circuit:
-        """Minimal startle circuit scaffold for 3.0A.
+    def _build_escape_circuit(self) -> Circuit:
+        """Load escape circuit from JSON data file.
         
-        ~10 neurons, fully inspectable, maps to 2.0 threat/escape pathways.
+        Implements the core visual-to-motor escape pathway:
+        LC4/LPLC2 -> GF -> TTMn/PSI -> DLMn
         """
-        c = Circuit(name="startle")
+        filepath = os.path.join(CIRCUIT_DIR, "escape_circuit.json")
+        with open(filepath) as f:
+            data = json.load(f)
         
-        # Sensory entry points (map to 2.0 stimulate keys)
-        c.add_neuron(Neuron(
-            "VIS_LC_BIO", cell_type="LC", brain_region="VIS",
-            neurotransmitter="acetylcholine", threshold=1.0
-        ))
-        c.add_neuron(Neuron(
-            "NOCI_BIO", cell_type="nociceptor", brain_region="SEZ",
-            neurotransmitter="glutamate", threshold=1.0
-        ))
+        circuit_def = data["circuit"]
+        c = Circuit(name=circuit_def["name"])
         
-        # Interneurons
-        c.add_neuron(Neuron(
-            "THREAT_BIO", cell_type="interneuron", brain_region="MB",
-            neurotransmitter="dopamine", threshold=1.5
-        ))
+        for nd in circuit_def["neurons"]:
+            bp = nd["biophysics"]
+            neuron = Neuron(
+                neuron_id=nd["id"],
+                cell_type=nd.get("cell_type", "unknown"),
+                brain_region=nd.get("brain_region", "unknown"),
+                neurotransmitter=nd.get("neurotransmitter", "unknown"),
+                resting_potential=bp["V_rest"],
+                threshold=bp["V_threshold"],
+                reset_potential=bp["V_reset"],
+                tau_m=bp["tau_m"],
+                refractory_period=bp["refractory_period_ticks"],
+            )
+            c.add_neuron(neuron)
         
-        # Descending neurons (outputs)
-        c.add_neuron(Neuron(
-            "DN_STARTLE_BIO", cell_type="DN", brain_region="GNG",
-            neurotransmitter="glutamate", threshold=2.0
-        ))
-        c.add_neuron(Neuron(
-            "DN_FLIGHT_BIO", cell_type="DN", brain_region="GNG",
-            neurotransmitter="glutamate", threshold=2.5
-        ))
+        for sd in circuit_def["synapses"]:
+            src = sd["pre"]
+            tgt = sd["post"]
+            bio_sig = sd["sign"]
+            sign = Sign.EXCITATORY if bio_sig == "excitatory" else Sign.INHIBITORY
+            
+            if sd.get("type") == "electrical":
+                c.add_synapse(Synapse(
+                    source=src, target=tgt,
+                    weight=sd["weight_mV"], sign=sign,
+                    delay=sd["delay_ticks"],
+                    neurotransmitter="ShakB",
+                ))
+                c.add_synapse(Synapse(
+                    source=tgt, target=src,
+                    weight=sd["weight_mV"], sign=sign,
+                    delay=sd["delay_ticks"],
+                    neurotransmitter="ShakB",
+                ))
+            else:
+                c.add_synapse(Synapse(
+                    source=src, target=tgt,
+                    weight=sd["weight_mV"], sign=sign,
+                    delay=sd["delay_ticks"],
+                    neurotransmitter=sd.get("neurotransmitter", "unknown"),
+                ))
         
-        # Define I/O
-        c.input_neurons = ["VIS_LC_BIO", "NOCI_BIO"]
-        c.output_neurons = ["DN_STARTLE_BIO", "DN_FLIGHT_BIO", "THREAT_BIO"]
-        
-        # Connections (weights inspired by group_weights.json, scaled for bio dynamics)
-        # VIS_LC -> DN_STARTLE (strong, fast)
-        c.connect("VIS_LC_BIO", "DN_STARTLE_BIO", weight=1.2, sign=Sign.EXCITATORY, delay=1)
-        # VIS_LC -> THREAT (moderate)
-        c.connect("VIS_LC_BIO", "THREAT_BIO", weight=0.8, sign=Sign.EXCITATORY, delay=1)
-        # NOCI -> DN_STARTLE (very strong)
-        c.connect("NOCI_BIO", "DN_STARTLE_BIO", weight=1.5, sign=Sign.EXCITATORY, delay=1)
-        # NOCI -> THREAT (strong)
-        c.connect("NOCI_BIO", "THREAT_BIO", weight=1.0, sign=Sign.EXCITATORY, delay=1)
-        # THREAT -> DN_FLIGHT (moderate, delayed)
-        c.connect("THREAT_BIO", "DN_FLIGHT_BIO", weight=0.9, sign=Sign.EXCITATORY, delay=2)
+        io = circuit_def["circuit_io"]
+        c.input_neurons = io["inputs"]
+        c.output_neurons = io["outputs"]
         
         return c
 
@@ -109,20 +148,37 @@ class BiologicalBrain:
     def _map_sensory_input(self, stimulate: Dict) -> Dict[str, float]:
         """Translate 2.0 stimulate dict to biological input neuron currents.
         
-        Multiple stimuli targeting the same neuron are combined by taking the maximum.
+        Three tiers:
+        1. Biological-specific looming keys (loomingLeft/Right/Front) - direct VP drive
+        2. Fallback to existing 2.0 stimulus keys mapped to VP activation
+        3. 2.0 keys (lightLevel, nociception, dangerOdor, touch) as additional proxy triggers
+        
+        Multiple stimuli targeting the same neuron are summed.
         """
-        mapping = {
-            "lightLevel": {"VIS_LC_BIO": stimulate.get("lightLevel", 0.0) * 2.0},
-            "nociception": {"NOCI_BIO": 3.0 if stimulate.get("nociception") else 0.0},
-            "dangerOdor": {"NOCI_BIO": 2.0 if stimulate.get("dangerOdor") else 0.0},
-            "touch": {"NOCI_BIO": 1.5 if stimulate.get("touch") else 0.0},
-            "temperature": {},  # Handled separately if needed
-        }
         merged = {}
-        for v in mapping.values():
-            for neuron_id, current in v.items():
-                if current > 0:
-                    merged[neuron_id] = max(merged.get(neuron_id, 0.0), current)
+        
+        for key, targets in LOOMING_MAP.items():
+            if key in stimulate and stimulate[key]:
+                current = stimulate[key] if isinstance(stimulate[key], (int, float)) else 1.0
+                for neuron_id, base_current in targets.items():
+                    effective = base_current * current
+                    if effective > 0:
+                        merged[neuron_id] = merged.get(neuron_id, 0.0) + effective
+        
+        for key, targets in FALLBACK_MAP.items():
+            if key in stimulate and stimulate[key]:
+                for neuron_id, base_current in targets.items():
+                    effective = base_current * (stimulate[key] if isinstance(stimulate[key], (int, float)) else 1.0)
+                    if effective > 0:
+                        merged[neuron_id] = merged.get(neuron_id, 0.0) + effective
+        
+        for key, value in stimulate.items():
+            if key not in LOOMING_MAP and key not in FALLBACK_MAP and isinstance(value, (int, float)) and value > 0:
+                for engine in self.engines.values():
+                    if key in engine.circuit.neurons:
+                        merged[key] = merged.get(key, 0.0) + value
+                        break
+        
         return merged
 
     def reset(self) -> None:

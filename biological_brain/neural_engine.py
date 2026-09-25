@@ -34,10 +34,10 @@ class NeuralEngine:
         Returns:
             Mapping of output neuron ID -> membrane potential
         """
-        # 1. Inject sensory current into input neurons
+        # 1. Inject sensory current into input neurons (blocked during refractory)
         for neuron_id, current in sensory_input.items():
             neuron = self.circuit.neurons.get(neuron_id)
-            if neuron:
+            if neuron and not neuron.is_refractory():
                 neuron.membrane_potential += current
 
         # 2. Process scheduled spikes from previous ticks
@@ -72,6 +72,8 @@ class NeuralEngine:
         for syn in self._synapses_by_source.get(source_id, []):
             if not syn.enabled:
                 continue
+            if syn.delay < 1:
+                raise ValueError(f"Synapse delay must be >= 1, got {syn.delay}")
             target_tick = self.current_tick + syn.delay
             effective_weight = syn.effective_weight()
             self.spike_queue[target_tick].append((
@@ -94,6 +96,8 @@ class NeuralEngine:
                     "potential": n.membrane_potential,
                     "refractory": n.refractory_remaining,
                     "threshold": n.threshold,
+                    "resting_potential": n.resting_potential,
+                    "reset_potential": n.reset_potential,
                 }
                 for nid, n in self.circuit.neurons.items()
             },
