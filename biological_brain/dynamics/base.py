@@ -85,7 +85,7 @@ class DynamicsModelFactory:
         """Create a dynamics model instance by name.
 
         Args:
-            name: Model identifier (e.g. "lif_voltage")
+            name: Model identifier (e.g. "lif_voltage", "conductance_v0")
 
         Returns:
             A DynamicsModel instance
@@ -94,9 +94,11 @@ class DynamicsModelFactory:
             ValueError: If the model name is unknown
         """
         from .lif_voltage import LIFVoltageModel
+        from .conductance import ConductanceDynamicsModel
 
         registry = {
             "lif_voltage": LIFVoltageModel,
+            "conductance_v0": ConductanceDynamicsModel,
         }
 
         if name not in registry:
@@ -111,7 +113,9 @@ class DynamicsModelFactory:
     def available_models() -> list:
         """Return list of available model names."""
         from .lif_voltage import LIFVoltageModel
+        from .conductance import ConductanceDynamicsModel
 
         return list({
             "lif_voltage": LIFVoltageModel,
+            "conductance_v0": ConductanceDynamicsModel,
         }.keys())

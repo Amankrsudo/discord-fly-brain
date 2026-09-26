@@ -10,7 +10,7 @@ from .neuron import Neuron
 from .synapse import Synapse, Sign
 from .neural_engine import NeuralEngine
 from .signals import SignalTranslator
-from .dynamics import DynamicsModel, LIFVoltageModel, MODEL_NAME_LIF_VOLTAGE
+from .dynamics import DynamicsModel, LIFVoltageModel, ConductanceDynamicsModel, MODEL_NAME_LIF_VOLTAGE, MODEL_NAME_CONDUCTANCE_V0
 
 
 CIRCUIT_DIR = os.path.join(os.path.dirname(__file__), "data")
@@ -194,5 +194,7 @@ __all__ = [
     "SignalTranslator",
     "DynamicsModel",
     "LIFVoltageModel",
+    "ConductanceDynamicsModel",
     "MODEL_NAME_LIF_VOLTAGE",
+    "MODEL_NAME_CONDUCTANCE_V0",
 ]

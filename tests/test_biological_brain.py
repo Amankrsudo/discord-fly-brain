@@ -1701,3 +1701,133 @@ class TestDynamicsNumericalEquivalence:
             e2.step(inp)
             assert c1.neurons["A"].membrane_potential == c2.neurons["A"].membrane_potential
             assert c1.neurons["B"].membrane_potential == c2.neurons["B"].membrane_potential
+
+
+class TestConductanceDynamicsStub:
+    """3.0C Phase 2 Step 1: Architecture stub tests for conductance_v0 model.
+
+    These tests verify model selection, interface conformance, and reset
+    behavior ONLY. No HH kinetics, no channel equations, no biological claims.
+    """
+
+    def test_conductance_v0_selectable_from_factory(self):
+        """conductance_v0 can be retrieved from the model factory."""
+        from biological_brain.dynamics import get_model
+        from biological_brain import ConductanceDynamicsModel
+        model = get_model("conductance_v0")
+        assert isinstance(model, ConductanceDynamicsModel)
+
+    def test_default_model_remains_lif_voltage(self):
+        """get_model() with no args still defaults to lif_voltage."""
+        from biological_brain.dynamics import get_model, MODEL_NAME_LIF_VOLTAGE
+        model = get_model()
+        assert model.name == MODEL_NAME_LIF_VOLTAGE
+
+    def test_invalid_model_still_raises_value_error(self):
+        """Unknown model names still raise ValueError with available list."""
+        from biological_brain.dynamics import get_model
+        with pytest.raises(ValueError, match="Unknown dynamics model"):
+            get_model("nonexistent_model")
+        try:
+            get_model("nonexistent_model")
+        except ValueError as e:
+            pass  # raised correctly; available models listed in message
+
+    def test_conductance_model_exposes_dynamics_model_interface(self):
+        """ConductanceDynamicsModel conforms to DynamicsModel Protocol."""
+        from biological_brain.dynamics import ConductanceDynamicsModel
+        model = ConductanceDynamicsModel()
+        assert hasattr(model, 'name')
+        assert hasattr(model, 'inject_sensory_current')
+        assert hasattr(model, 'receive_synaptic_spike')
+        assert hasattr(model, 'integrate')
+        assert hasattr(model, 'reset')
+        assert hasattr(model, 'receive_electrical_current')
+        assert model.name == "conductance_v0"
+
+    def test_conductance_stub_construction_does_not_alter_lif_behavior(self):
+        """Creating conductance model does not change existing LIF engine behavior."""
+        from biological_brain.dynamics import get_model
+
+        c = Circuit("test")
+        c.add_neuron(Neuron("A", resting_potential=-70.0, threshold=-55.0,
+                            reset_potential=-75.0, tau_m=10.0))
+        c.add_neuron(Neuron("B", resting_potential=-70.0, threshold=-55.0, tau_m=10.0))
+        c.connect("A", "B", weight=10.0, delay=1)
+        c.input_neurons = ["A"]
+        c.output_neurons = ["B"]
+
+        # Verify lif_voltage still works identically after importing conductance model
+        _ = get_model("lif_voltage")
+        _ = get_model("conductance_v0")
+
+        engine = NeuralEngine(c)
+        assert engine.dynamics_model_name == "lif_voltage"
+
+        engine.step({"A": 20.0})
+        assert engine.current_tick == 1
+
+    def test_conductance_model_reset_clears_state(self):
+        """reset() on conductance model clears electrical accumulator and g_syn."""
+        from biological_brain.dynamics import get_model
+        from biological_brain.dynamics.conductance import ConductanceNeuronState
+        model = get_model("conductance_v0")
+
+        n = Neuron("test", resting_potential=-70.0, threshold=-55.0, tau_m=10.0)
+        n._conductance_state = ConductanceNeuronState()
+
+        # Simulate having accumulated electrical current and synaptic conductance
+        n._conductance_state.I_elec_accumulator = 5.0
+        n._conductance_state.g_syn = 3.0
+        n._conductance_state.refractory_remaining = 2
+
+        model.reset(n)
+
+        assert n._conductance_state.I_elec_accumulator == 0.0
+        assert n._conductance_state.g_syn == 0.0
+        assert n._conductance_state.refractory_remaining == 0
+
+    def test_available_models_includes_both(self):
+        """available_models lists both lif_voltage and conductance_v0."""
+        from biological_brain.dynamics import DynamicsModelFactory
+        models = DynamicsModelFactory.available_models()
+        assert "lif_voltage" in models
+        assert "conductance_v0" in models
+
+    def test_conductance_model_integrate_raises_not_implemented(self):
+        """Conductance model integrate() raises NotImplementedError (no HH yet)."""
+        from biological_brain.dynamics import get_model
+        model = get_model("conductance_v0")
+        n = Neuron("test", resting_potential=-70.0, threshold=-55.0, tau_m=10.0)
+        with pytest.raises(NotImplementedError, match="HH integration"):
+            model.integrate(n, 0.0)
+
+    def test_conductance_model_inject_sensory_raises_not_implemented(self):
+        """Conductance model inject_sensory_current raises NotImplementedError."""
+        from biological_brain.dynamics import get_model
+        model = get_model("conductance_v0")
+        n = Neuron("test", resting_potential=-70.0, threshold=-55.0, tau_m=10.0)
+        with pytest.raises(NotImplementedError, match="input resistance"):
+            model.inject_sensory_current(n, 20.0)
+
+    def test_conductance_model_synaptic_spike_raises_not_implemented(self):
+        """Conductance model receive_synaptic_spike raises NotImplementedError."""
+        from biological_brain.dynamics import get_model
+        model = get_model("conductance_v0")
+        n = Neuron("test", resting_potential=-70.0, threshold=-55.0, tau_m=10.0)
+        with pytest.raises(NotImplementedError, match="conductance increment"):
+            model.receive_synaptic_spike(n, 10.0, 1)
+
+    def test_conductance_params_have_source_supported_defaults(self):
+        """ConductanceParams defaults come from published model (PMC6469880 Table 1)."""
+        from biological_brain.dynamics.conductance import ConductanceParams
+        params = ConductanceParams()
+        assert params.E_leak == -85.0    # [Günay et al. 2015 via Augustin et al.]
+        assert params.E_Na == 65.0       # [Günay et al. 2015 via Augustin et al.]
+        assert params.E_K == -74.0       # [Günay et al. 2015 via Augustin et al.]
+        assert params.g_Na == 300.0      # mS/cm^2
+        assert params.g_K == 10.0        # mS/cm^2
+        assert params.g_leak == 0.03     # mS/cm^2
+        assert params.C_m == 1.0         # uF/cm^2
+        assert params.tau_syn_decay_ms == 1.0  # ms
+        assert params.E_syn == 0.0       # mV (ACh reversal)

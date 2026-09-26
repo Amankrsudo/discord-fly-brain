@@ -11,19 +11,26 @@ APPROXIMATION of real neural dynamics.
 
 from .base import DynamicsModel, DynamicsModelFactory
 from .lif_voltage import LIFVoltageModel
+from .conductance import ConductanceDynamicsModel
 
 __all__ = [
     "DynamicsModel",
     "DynamicsModelFactory",
     "LIFVoltageModel",
+    "ConductanceDynamicsModel",
     "MODEL_NAME_LIF_VOLTAGE",
+    "MODEL_NAME_CONDUCTANCE_V0",
 ]
 
 MODEL_NAME_LIF_VOLTAGE = "lif_voltage"
+MODEL_NAME_CONDUCTANCE_V0 = "conductance_v0"
 
-# Registry of available models (extendable by 3.0C phases)
+# Registry of available models (extendable by 3.0C phases).
+# LIF voltage is the default and must remain numerically unchanged.
+# Conductance is opt-in, architecture-only stub.
 MODELS = {
     MODEL_NAME_LIF_VOLTAGE: LIFVoltageModel,
+    MODEL_NAME_CONDUCTANCE_V0: ConductanceDynamicsModel,
 }
 
 
