@@ -94,27 +94,13 @@ class BiologicalBrain:
             tgt = sd["post"]
             bio_sig = sd["sign"]
             sign = Sign.EXCITATORY if bio_sig == "excitatory" else Sign.INHIBITORY
-            
-            if sd.get("type") == "electrical":
-                c.add_synapse(Synapse(
-                    source=src, target=tgt,
-                    weight=sd["weight_mV"], sign=sign,
-                    delay=sd["delay_ticks"],
-                    neurotransmitter="ShakB",
-                ))
-                c.add_synapse(Synapse(
-                    source=tgt, target=src,
-                    weight=sd["weight_mV"], sign=sign,
-                    delay=sd["delay_ticks"],
-                    neurotransmitter="ShakB",
-                ))
-            else:
-                c.add_synapse(Synapse(
-                    source=src, target=tgt,
-                    weight=sd["weight_mV"], sign=sign,
-                    delay=sd["delay_ticks"],
-                    neurotransmitter=sd.get("neurotransmitter", "unknown"),
-                ))
+
+            c.add_synapse(Synapse(
+                source=src, target=tgt,
+                weight=sd["weight_mV"], sign=sign,
+                delay=sd["delay_ticks"],
+                neurotransmitter=sd.get("neurotransmitter", "unknown"),
+            ))
         
         io = circuit_def["circuit_io"]
         c.input_neurons = io["inputs"]

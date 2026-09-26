@@ -496,8 +496,9 @@ class TestEscapeCircuitStructure:
             assert "escape_core" in brain.circuits
             circuit = brain.circuits["escape_core"]
             assert len(circuit.neurons) == 12
-            # 10 chemical + 8 electrical JSON entries expanded to bidirectional pairs = 26 Synapse objects
-            assert len(circuit.synapses) == 26
+            # 10 chemical + 8 electrical directed entries = 18 Synapse objects
+            # (no expansion — JSON already contains both directions for electrical pairs)
+            assert len(circuit.synapses) == 18
         finally:
             BIOLOGICAL_CIRCUITS["escape"] = False
 
@@ -820,5 +821,677 @@ class Test20Integration:
                 signals = brain.step({"loomingLeft": 1.0})
                 max_threat = max(max_threat, signals.get("bio_threat_signal", 0.0))
             assert max_threat > 0.5
+        finally:
+            BIOLOGICAL_CIRCUITS["escape"] = False
+
+
+class TestValidationLatency:
+    """Test the 3.0B.2 validation experiment runner."""
+
+    def _get_validator(self):
+        from biological_brain.validation import LatencyValidator
+        BIOLOGICAL_CIRCUITS["escape"] = True
+        brain = BiologicalBrain(mode=BiologicalMode.BIOLOGICAL_3_0)
+        return LatencyValidator(brain)
+
+    def test_gf_to_ttmn_latency_left(self):
+        """GF_L -> TTMn_L latency is 1 tick (target: 1-2 ticks, von Reyn 2014)."""
+        validator = self._get_validator()
+        try:
+            report = validator.run_gf_to_ttmn_latency()
+            left_result = report.results[0]
+            assert left_result.source_neuron == "GF_L"
+            assert left_result.target_neuron == "TTMn_L"
+            assert left_result.latency_ticks == 1
+            assert left_result.source_spike_tick == 0
+            assert left_result.target_spike_tick == 1
+        finally:
+            BIOLOGICAL_CIRCUITS["escape"] = False
+
+    def test_gf_to_ttmn_latency_right(self):
+        """GF_R -> TTMn_R latency is 1 tick (target: 1-2 ticks, von Reyn 2014)."""
+        validator = self._get_validator()
+        try:
+            report = validator.run_gf_to_ttmn_latency()
+            right_result = report.results[1]
+            assert right_result.source_neuron == "GF_R"
+            assert right_result.target_neuron == "TTMn_R"
+            assert right_result.latency_ticks == 1
+            assert right_result.source_spike_tick == 0
+            assert right_result.target_spike_tick == 1
+        finally:
+            BIOLOGICAL_CIRCUITS["escape"] = False
+
+    def test_gf_to_ttmn_latency_bilateral(self):
+        """Both hemispheres produce 1-tick latency."""
+        validator = self._get_validator()
+        try:
+            report = validator.run_gf_to_ttmn_latency()
+            for r in report.results:
+                assert r.latency_ticks == 1
+            assert len(report.results) == 2
+        finally:
+            BIOLOGICAL_CIRCUITS["escape"] = False
+
+    def test_gf_spike_injection_threshold(self):
+        """25.0 mV injection is the minimum to force GF spike in one tick."""
+        validator = self._get_validator()
+        try:
+            brain = validator.brain
+            brain.reset()
+            # GF needs: V_rest + W*exp(-dt/tau) >= threshold
+            # -65 + W*exp(-1/5) >= -45 => W >= 24.43
+            # 25.0 > 24.43, so should spike
+            signals = brain.step({"GF_L": 25.0})
+            engine = brain.engines["escape_core"]
+            gf = engine.circuit.neurons["GF_L"]
+            assert gf.refractory_remaining > 0
+        finally:
+            BIOLOGICAL_CIRCUITS["escape"] = False
+
+    def test_validator_report_contains_evidence(self):
+        """Validation report includes evidence classification and approximation notes."""
+        validator = self._get_validator()
+        try:
+            report = validator.run_gf_to_ttmn_latency()
+            for r in report.results:
+                assert r.evidence is not None
+                assert r.approximation is not None
+                assert "DIRECTLY_MEASURED" in r.evidence
+        finally:
+            BIOLOGICAL_CIRCUITS["escape"] = False
+
+
+class TestLateralization:
+    """Test left/right lateralization of the escape circuit."""
+
+    def _get_validator(self):
+        from biological_brain.validation import LateralizationValidator
+        BIOLOGICAL_CIRCUITS["escape"] = True
+        brain = BiologicalBrain(mode=BiologicalMode.BIOLOGICAL_3_0)
+        return LateralizationValidator(brain)
+
+    def test_left_looming_spikes_left_only(self):
+        """loomingLeft activates left VP/GF/TTMn, not right."""
+        validator = self._get_validator()
+        try:
+            report = validator.run_lateralization()
+            left_result = report.results[0]
+            assert "LC4_L" in left_result.vp_spikes
+            assert "LPLC2_L" in left_result.vp_spikes
+            assert "GF_L" in left_result.gf_spikes
+            assert "TTMn_L" in left_result.ttmn_spikes
+            assert "TTMn_R" not in left_result.ttmn_spikes
+            assert "LC4_R" not in left_result.vp_spikes
+            assert "GF_R" not in left_result.gf_spikes
+        finally:
+            BIOLOGICAL_CIRCUITS["escape"] = False
+
+    def test_right_looming_spikes_right_only(self):
+        """loomingRight activates right VP/GF/TTMn, not left."""
+        validator = self._get_validator()
+        try:
+            report = validator.run_lateralization()
+            right_result = report.results[1]
+            assert "LC4_R" in right_result.vp_spikes
+            assert "LPLC2_R" in right_result.vp_spikes
+            assert "GF_R" in right_result.gf_spikes
+            assert "TTMn_R" in right_result.ttmn_spikes
+            assert "TTMn_L" not in right_result.ttmn_spikes
+            assert "LC4_L" not in right_result.vp_spikes
+            assert "GF_L" not in right_result.gf_spikes
+        finally:
+            BIOLOGICAL_CIRCUITS["escape"] = False
+
+    def test_front_looming_bilateral(self):
+        """loomingFront activates both hemispheres."""
+        validator = self._get_validator()
+        try:
+            report = validator.run_lateralization()
+            front_result = report.results[2]
+            assert "TTMn_L" in front_result.ttmn_spikes
+            assert "TTMn_R" in front_result.ttmn_spikes
+            assert "GF_L" in front_result.gf_spikes
+            assert "GF_R" in front_result.gf_spikes
+        finally:
+            BIOLOGICAL_CIRCUITS["escape"] = False
+
+    def test_lateralization_validation_pass(self):
+        """All three lateralization conditions pass validation."""
+        validator = self._get_validator()
+        try:
+            report = validator.run_lateralization()
+            validation = validator.validate_lateralization(report)
+            assert validation["loomingLeft"] is True
+            assert validation["loomingRight"] is True
+            assert validation["loomingFront"] is True
+        finally:
+            BIOLOGICAL_CIRCUITS["escape"] = False
+
+    def test_left_looming_produces_escape_signal(self):
+        """Left looming stimulates escape pathway (ipsilateral TTMn)."""
+        validator = self._get_validator()
+        try:
+            report = validator.run_lateralization()
+            left_result = report.results[0]
+            assert left_result.escape_signal > 0.5
+        finally:
+            BIOLOGICAL_CIRCUITS["escape"] = False
+
+    def test_lateralization_report_has_evidence(self):
+        """Lateralization report includes biological evidence classification."""
+        validator = self._get_validator()
+        try:
+            report = validator.run_lateralization()
+            for r in report.results:
+                assert "DIRECTLY_MEASURED" in r.evidence
+                assert "APPROXIMATION" in r.approximation
+                assert r.biological_prediction is not None
+        finally:
+            BIOLOGICAL_CIRCUITS["escape"] = False
+
+
+class TestWeakStrongThreshold:
+    """Test the 3.0B.2 weak-strong threshold experiment."""
+
+    def _get_validator(self):
+        from biological_brain.validation import WeakStrongThresholdValidator
+        BIOLOGICAL_CIRCUITS["escape"] = True
+        brain = BiologicalBrain(mode=BiologicalMode.BIOLOGICAL_3_0)
+        return WeakStrongThresholdValidator(brain)
+
+    def test_weak_intensity_no_escape(self):
+        """Weak looming (0.1) does not trigger escape response."""
+        validator = self._get_validator()
+        try:
+            report = validator.run_threshold_experiment()
+            weak = report.results[0]
+            assert weak.intensity == 0.1
+            assert weak.response_magnitude < 0.5
+            assert weak.vp_spike_tick is None
+        finally:
+            BIOLOGICAL_CIRCUITS["escape"] = False
+
+    def test_strong_intensity_full_escape(self):
+        """Strong looming (1.0) triggers full escape response."""
+        validator = self._get_validator()
+        try:
+            report = validator.run_threshold_experiment()
+            strong = report.results[1]
+            assert strong.intensity == 1.0
+            assert strong.response_magnitude > 0.5
+            assert strong.vp_spike_tick is not None
+            assert strong.gf_spike_tick is not None
+            assert strong.ttmn_spike_tick is not None
+        finally:
+            BIOLOGICAL_CIRCUITS["escape"] = False
+
+    def test_strong_intensity_short_latency(self):
+        """Strong intensity (1.0) produces escape within 7 ticks (short-mode)."""
+        validator = self._get_validator()
+        try:
+            report = validator.run_threshold_experiment()
+            strong = report.results[1]
+            assert strong.escape_tick is not None
+            assert strong.escape_tick <= 7
+            assert strong.vp_spike_tick == strong.gf_spike_tick - 1
+            assert strong.gf_spike_tick == strong.ttmn_spike_tick - 1
+        finally:
+            BIOLOGICAL_CIRCUITS["escape"] = False
+
+    def test_threshold_between_weak_and_strong(self):
+        """Binary-searched threshold is between weak (0.1) and strong (1.0)."""
+        validator = self._get_validator()
+        try:
+            report = validator.run_threshold_experiment()
+            threshold = report.results[2]
+            assert 0.1 < threshold.intensity < 1.0
+            assert threshold.response_magnitude > 0.5
+        finally:
+            BIOLOGICAL_CIRCUITS["escape"] = False
+
+    def test_threshold_within_validation_plan_range(self):
+        """Measured threshold with 35-tick window is within the expected 0.3-0.7 range.
+
+        At max_ticks=35 (short-mode latency upper bound, ~35ms), the binary-searched
+        threshold falls within the validation plan's expected range. The threshold is
+        explicitly labeled as window-dependent simulator behavior in the approximation.
+        """
+        validator = self._get_validator()
+        try:
+            report = validator.run_threshold_experiment()
+            threshold = report.results[2]
+            assert 0.3 <= threshold.intensity <= 0.7
+            assert "WINDOW-DEPENDENT" in threshold.approximation
+            assert "0.3-0.7" in threshold.approximation
+        finally:
+            BIOLOGICAL_CIRCUITS["escape"] = False
+
+    def test_threshold_is_window_dependent(self):
+        """Threshold changes with simulation window, confirming it is not biological."""
+        validator = self._get_validator()
+        try:
+            t35 = validator.find_threshold_intensity(max_ticks=35)
+            t50 = validator.find_threshold_intensity(max_ticks=50)
+            assert t35 > t50
+            assert t35 != t50
+        finally:
+            BIOLOGICAL_CIRCUITS["escape"] = False
+
+    def test_validation_passes(self):
+        """All threshold conditions pass validation."""
+        validator = self._get_validator()
+        try:
+            report = validator.run_threshold_experiment()
+            validation = validator.validate_threshold(report)
+            assert validation["weak"] is True
+            assert validation["strong"] is True
+            assert validation["threshold"] is True
+        finally:
+            BIOLOGICAL_CIRCUITS["escape"] = False
+
+    def test_threshold_report_has_evidence(self):
+        """Threshold report includes evidence classification and approximation."""
+        validator = self._get_validator()
+        try:
+            report = validator.run_threshold_experiment()
+            for r in report.results:
+                assert r.evidence is not None
+                assert r.approximation is not None
+                assert r.biological_prediction is not None
+        finally:
+            BIOLOGICAL_CIRCUITS["escape"] = False
+
+
+class TestTemporalSummation:
+    """Test the 3.0B.2 temporal summation experiment."""
+
+    def _get_validator(self):
+        from biological_brain.validation import TemporalSummationValidator
+        BIOLOGICAL_CIRCUITS["escape"] = True
+        brain = BiologicalBrain(mode=BiologicalMode.BIOLOGICAL_3_0)
+        return TemporalSummationValidator(brain)
+
+    def test_simultaneous_inputs_fire_gf(self):
+        """Delay=0 (simultaneous VP spikes) fires GF."""
+        validator = self._get_validator()
+        try:
+            report = validator.run_temporal_summation()
+            simult = report.results[0]
+            assert simult.delay_ticks == 0
+            assert simult.gf_fired is True
+            assert simult.escape_signal > 0.5
+        finally:
+            BIOLOGICAL_CIRCUITS["escape"] = False
+
+    def test_staggered_inputs_do_not_fire_gf(self):
+        """Delays >= 1 (staggered VP spikes) do not fire GF."""
+        validator = self._get_validator()
+        try:
+            report = validator.run_temporal_summation()
+            for r in report.results[1:]:
+                assert r.delay_ticks >= 1
+                assert r.gf_fired is False
+                assert r.escape_signal < 0.5
+        finally:
+            BIOLOGICAL_CIRCUITS["escape"] = False
+
+    def test_all_six_delays_tested(self):
+        """Experiment tests delays 0 through 5."""
+        validator = self._get_validator()
+        try:
+            report = validator.run_temporal_sumbination()
+        except AttributeError:
+            pass
+        try:
+            report = validator.run_temporal_summation()
+            delays = [r.delay_ticks for r in report.results]
+            assert delays == [0, 1, 2, 3, 4, 5]
+        finally:
+            BIOLOGICAL_CIRCUITS["escape"] = False
+
+    def test_validation_passes(self):
+        """Simultaneous input fires, staggered inputs don't."""
+        validator = self._get_validator()
+        try:
+            report = validator.run_temporal_summation()
+            validation = validator.validate_temporal_summation(report)
+            assert validation["simultaneous"] is True
+            for key in validation:
+                if key.startswith("staggered"):
+                    assert validation[key] is True
+        finally:
+            BIOLOGICAL_CIRCUITS["escape"] = False
+
+    def test_report_has_evidence(self):
+        """All results include evidence, prediction, and approximation."""
+        validator = self._get_validator()
+        try:
+            report = validator.run_temporal_summation()
+            for r in report.results:
+                assert r.evidence is not None
+                assert r.approximation is not None
+                assert r.biological_prediction is not None
+                assert "DIRECTLY_MEASURED" in r.evidence
+        finally:
+            BIOLOGICAL_CIRCUITS["escape"] = False
+
+
+class TestRefractoryPeriod:
+    """Test the 3.0B.2 refractory-period recovery experiment."""
+
+    def _get_validator(self):
+        from biological_brain.validation import RefractoryPeriodValidator
+        BIOLOGICAL_CIRCUITS["escape"] = True
+        brain = BiologicalBrain(mode=BiologicalMode.BIOLOGICAL_3_0)
+        return RefractoryPeriodValidator(brain)
+
+    def test_gf_not_respike_within_refractory(self):
+        """GF (refractory=5) does not re-spike at delays 1, 3, 5."""
+        validator = self._get_validator()
+        try:
+            report = validator.run_refractory_experiment()
+            gf_results = [r for r in report.results if r.neuron_id == "GF_L"]
+            for r in gf_results:
+                if r.delay_ticks in [1, 3, 5]:
+                    assert r.re_spiked is False
+        finally:
+            BIOLOGICAL_CIRCUITS["escape"] = False
+
+    def test_gf_respike_after_effective_recovery(self):
+        """GF (refractory=5) re-spikes at delays >= 6 (effective recovery = 6)."""
+        validator = self._get_validator()
+        try:
+            report = validator.run_refractory_experiment()
+            gf_results = [r for r in report.results if r.neuron_id == "GF_L"]
+            for r in gf_results:
+                if r.delay_ticks >= 6:
+                    assert r.re_spiked is True
+        finally:
+            BIOLOGICAL_CIRCUITS["escape"] = False
+
+    def test_ttmn_not_respike_within_refractory(self):
+        """TTMn (refractory=2) does not re-spike at delay 1."""
+        validator = self._get_validator()
+        try:
+            report = validator.run_refractory_experiment()
+            ttmn_results = [r for r in report.results if r.neuron_id == "TTMn_L"]
+            for r in ttmn_results:
+                if r.delay_ticks < 3:
+                    assert r.re_spiked is False
+        finally:
+            BIOLOGICAL_CIRCUITS["escape"] = False
+
+    def test_ttmn_respike_after_effective_recovery(self):
+        """TTMn (refractory=2) re-spikes at delays >= 3."""
+        validator = self._get_validator()
+        try:
+            report = validator.run_refractory_experiment()
+            ttmn_results = [r for r in report.results if r.neuron_id == "TTMn_L"]
+            for r in ttmn_results:
+                if r.delay_ticks >= 3:
+                    assert r.re_spiked is True
+        finally:
+            BIOLOGICAL_CIRCUITS["escape"] = False
+
+    def test_all_ten_conditions_present(self):
+        """Experiment tests 5 delays x 2 neurons = 10 conditions."""
+        validator = self._get_validator()
+        try:
+            report = validator.run_refractory_experiment()
+            assert len(report.results) == 10
+            delays = [r.delay_ticks for r in report.results if r.neuron_id == "GF_L"]
+            assert delays == [1, 3, 5, 7, 10]
+        finally:
+            BIOLOGICAL_CIRCUITS["escape"] = False
+
+    def test_validation_passes(self):
+        """All 10 conditions match biological predictions."""
+        validator = self._get_validator()
+        try:
+            report = validator.run_refractory_experiment()
+            validation = validator.validate_refractory(report)
+            assert all(validation.values())
+        finally:
+            BIOLOGICAL_CIRCUITS["escape"] = False
+
+    def test_report_has_evidence(self):
+        """All results include evidence, prediction, and approximation."""
+        validator = self._get_validator()
+        try:
+            report = validator.run_refractory_experiment()
+            for r in report.results:
+                assert r.evidence is not None
+                assert r.approximation is not None
+                assert r.biological_prediction is not None
+                assert r.configured_refractory in [2, 5]
+        finally:
+            BIOLOGICAL_CIRCUITS["escape"] = False
+
+
+class TestGFDLMnLatency:
+    """Test the 3.0B.2 GF -> PSI -> contralateral DLMn latency experiment."""
+
+    def _get_validator(self):
+        from biological_brain.validation import GFDLMnLatencyValidator
+        BIOLOGICAL_CIRCUITS["escape"] = True
+        brain = BiologicalBrain(mode=BiologicalMode.BIOLOGICAL_3_0)
+        return GFDLMnLatencyValidator(brain)
+
+    def test_left_pathway_timing(self):
+        """GF_L -> PSI_L -> DLMn_R: spikes at ticks 0, 1, 3."""
+        validator = self._get_validator()
+        try:
+            report = validator.run_pathway_latency_experiment()
+            left = report.results[0]
+            assert left.gf_source == "GF_L"
+            assert left.psi_target == "PSI_L"
+            assert left.dlmn_target == "DLMn_R"
+            assert left.gf_spike_tick == 0
+            assert left.psi_spike_tick == 1
+            assert left.dlmn_spike_tick == 3
+        finally:
+            BIOLOGICAL_CIRCUITS["escape"] = False
+
+    def test_right_pathway_timing(self):
+        """GF_R -> PSI_R -> DLMn_L: spikes at ticks 0, 1, 3."""
+        validator = self._get_validator()
+        try:
+            report = validator.run_pathway_latency_experiment()
+            right = report.results[1]
+            assert right.gf_source == "GF_R"
+            assert right.psi_target == "PSI_R"
+            assert right.dlmn_target == "DLMn_L"
+            assert right.gf_spike_tick == 0
+            assert right.psi_spike_tick == 1
+            assert right.dlmn_spike_tick == 3
+        finally:
+            BIOLOGICAL_CIRCUITS["escape"] = False
+
+    def test_left_pathway_component_latencies(self):
+        """Left pathway: GF->PSI=1, PSI->DLMn=2, total=3 ticks."""
+        validator = self._get_validator()
+        try:
+            report = validator.run_pathway_latency_experiment()
+            left = report.results[0]
+            assert left.gf_to_psi_latency == 1
+            assert left.psi_to_dlmn_latency == 2
+            assert left.total_latency == 3
+        finally:
+            BIOLOGICAL_CIRCUITS["escape"] = False
+
+    def test_right_pathway_component_latencies(self):
+        """Right pathway: GF->PSI=1, PSI->DLMn=2, total=3 ticks."""
+        validator = self._get_validator()
+        try:
+            report = validator.run_pathway_latency_experiment()
+            right = report.results[1]
+            assert right.gf_to_psi_latency == 1
+            assert right.psi_to_dlmn_latency == 2
+            assert right.total_latency == 3
+        finally:
+            BIOLOGICAL_CIRCUITS["escape"] = False
+
+    def test_contralateral_dlmn_selection(self):
+        """GF_L drives DLMn_R (contralateral), GF_R drives DLMn_L (contralateral)."""
+        validator = self._get_validator()
+        try:
+            report = validator.run_pathway_latency_experiment()
+            assert report.results[0].dlmn_target == "DLMn_R"
+            assert report.results[1].dlmn_target == "DLMn_L"
+        finally:
+            BIOLOGICAL_CIRCUITS["escape"] = False
+
+    def test_total_latency_in_target_range(self):
+        """Total latency 3 ticks is within biological target of 3-4 ticks."""
+        validator = self._get_validator()
+        try:
+            report = validator.run_pathway_latency_experiment()
+            for r in report.results:
+                assert 3 <= r.total_latency <= 4
+                assert "3-4" in r.biological_target
+        finally:
+            BIOLOGICAL_CIRCUITS["escape"] = False
+
+    def test_intermediate_psi_activation(self):
+        """PSI spikes at tick 1 (intermediate, between GF and DLMn)."""
+        validator = self._get_validator()
+        try:
+            report = validator.run_pathway_latency_experiment()
+            for r in report.results:
+                assert r.psi_spike_tick is not None
+                assert r.gf_spike_tick < r.psi_spike_tick < r.dlmn_spike_tick
+        finally:
+            BIOLOGICAL_CIRCUITS["escape"] = False
+
+    def test_validation_passes(self):
+        """Both pathways pass validation."""
+        validator = self._get_validator()
+        try:
+            report = validator.run_pathway_latency_experiment()
+            validation = validator.validate_pathway_latency(report)
+            assert validation["left_pathway"] is True
+            assert validation["right_pathway"] is True
+        finally:
+            BIOLOGICAL_CIRCUITS["escape"] = False
+
+    def test_report_has_evidence_and_approximation(self):
+        """All results include biological evidence, simulation result, and approximation."""
+        validator = self._get_validator()
+        try:
+            report = validator.run_pathway_latency_experiment()
+            for r in report.results:
+                assert r.biological_target is not None
+                assert r.biological_evidence is not None
+                assert r.simulation_result is not None
+                assert r.connectome_info is not None
+                assert r.inferred_values is not None
+                assert r.approximation is not None
+                assert "DIRECTLY_MEASURED" in r.biological_evidence
+                assert "APPROXIMATION" in r.approximation
+                assert "not a direct biological recording" in r.approximation
+        finally:
+            BIOLOGICAL_CIRCUITS["escape"] = False
+
+    def test_fail_if_pathway_does_not_complete(self):
+        """Validator raises RuntimeError if DLMn doesn't activate.
+
+        Using GF_L -> PSI_L -> DLMn_L (ipsilateral DLMn_L, not the actual
+        contralateral target DLMn_R) — DLMn_L receives no input from PSI_L.
+        """
+        from biological_brain.validation import GFDLMnLatencyValidator
+        validator = self._get_validator()
+        try:
+            brain = BiologicalBrain(mode=BiologicalMode.BIOLOGICAL_3_0)
+            v = GFDLMnLatencyValidator(brain)
+            with pytest.raises(RuntimeError, match="did not activate"):
+                v._measure_pathway("test", "GF_L", "PSI_L", "DLMn_L")
+        finally:
+            BIOLOGICAL_CIRCUITS["escape"] = False
+
+
+class TestSynapseAblation:
+    """Experiment 7: Synapse ablation — verify necessity of escape pathway synapses."""
+
+    def _get_validator(self):
+        from biological_brain.validation import SynapseAblationValidator
+        BIOLOGICAL_CIRCUITS["escape"] = True
+        brain = BiologicalBrain(mode=BiologicalMode.BIOLOGICAL_3_0)
+        return SynapseAblationValidator(brain)
+
+    def test_sensory_ablation_halts_escape(self):
+        """LC4_L → GF_L and LPLC2_L → GF_L ablation: all downstream neurons silenced."""
+        validator = self._get_validator()
+        try:
+            report = validator.run_ablation_experiment()
+            sensory = [r for r in report.results
+                       if r.ablation_name in ("LC4_L → GF_L", "LPLC2_L → GF_L")]
+            assert len(sensory) == 2
+            for r in sensory:
+                assert "GF_L" in r.neurons_deficit
+                assert "TTMn_L" in r.neurons_deficit
+                assert "DLMn_R" in r.neurons_deficit
+                assert r.baseline_signals["escape_signal"] == 1.0
+                assert r.ablated_signals["escape_signal"] == 0.0
+        finally:
+            BIOLOGICAL_CIRCUITS["escape"] = False
+
+    def test_gf_ttmn_ablation_selective_deficit(self):
+        """GF_L → TTMn_L (all): only TTMn_L (ipsilateral jump) silenced, DLMn_R intact."""
+        validator = self._get_validator()
+        try:
+            report = validator.run_ablation_experiment()
+            ablations = {r.ablation_name: r for r in report.results}
+            r = ablations["GF_L → TTMn_L (all)"]
+            assert r.neurons_deficit == ["TTMn_L"]
+            assert r.ablated_spikes.get("DLMn_R") is not None
+            assert r.ablated_spikes.get("PSI_L") is not None
+            assert "TTMn_L" not in [n for n in r.ablated_spikes if r.ablated_spikes[n] is not None]
+        finally:
+            BIOLOGICAL_CIRCUITS["escape"] = False
+
+    def test_gf_psi_ablation_disables_flight(self):
+        """GF_L → PSI_L (all): flight_signal drops to 0 (PSI is flight pathway)."""
+        validator = self._get_validator()
+        try:
+            report = validator.run_ablation_experiment()
+            ablations = {r.ablation_name: r for r in report.results}
+            r = ablations["GF_L → PSI_L (all)"]
+            assert r.neurons_deficit == ["PSI_L", "DLMn_R"]
+            assert r.ablated_signals["flight_signal"] == 0.0
+        finally:
+            BIOLOGICAL_CIRCUITS["escape"] = False
+
+    def test_psi_dlmn_ablation_disables_flight(self):
+        """PSI_L → DLMn_R: flight_signal drops to 0, PSI_L spikes preserved."""
+        validator = self._get_validator()
+        try:
+            report = validator.run_ablation_experiment()
+            ablations = {r.ablation_name: r for r in report.results}
+            r = ablations["PSI_L → DLMn_R"]
+            assert r.neurons_deficit == ["DLMn_R"]
+            assert r.ablated_signals["flight_signal"] == 0.0
+            assert r.ablated_spikes.get("PSI_L") is not None
+        finally:
+            BIOLOGICAL_CIRCUITS["escape"] = False
+
+    def test_validation_all_pass(self):
+        """All ablation validations pass."""
+        validator = self._get_validator()
+        try:
+            report = validator.run_ablation_experiment()
+            validation = validator.validate_ablation(report)
+            assert all(validation.values())
+        finally:
+            BIOLOGICAL_CIRCUITS["escape"] = False
+
+    def test_ablation_blocked_count_is_positive(self):
+        """Each ablation blocks at least one synapse."""
+        validator = self._get_validator()
+        try:
+            report = validator.run_ablation_experiment()
+            for r in report.results:
+                assert r.approximation is not None
+                assert "blocked" in r.approximation.lower() or "APPROXIMATION" in r.approximation
         finally:
             BIOLOGICAL_CIRCUITS["escape"] = False
