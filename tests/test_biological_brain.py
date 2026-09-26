@@ -3,7 +3,8 @@
 import pytest
 from biological_brain import (
     Neuron, Synapse, Sign, Circuit, NeuralEngine,
-    SignalTranslator, BiologicalBrain, BiologicalMode, BIOLOGICAL_CIRCUITS
+    SignalTranslator, BiologicalBrain, BiologicalMode, BIOLOGICAL_CIRCUITS,
+    MODEL_NAME_LIF_VOLTAGE
 )
 
 
@@ -1495,3 +1496,208 @@ class TestSynapseAblation:
                 assert "blocked" in r.approximation.lower() or "APPROXIMATION" in r.approximation
         finally:
             BIOLOGICAL_CIRCUITS["escape"] = False
+
+
+class TestDynamicsModelSelection:
+    """Phase 1: DynamicsModel abstraction with default lif_voltage."""
+
+    def test_default_engine_uses_lif_voltage(self):
+        """NeuralEngine defaults to lif_voltage model."""
+        c = Circuit("test")
+        c.add_neuron(Neuron("A", resting_potential=-70.0, threshold=-55.0, tau_m=10.0))
+        c.input_neurons = ["A"]
+        c.output_neurons = ["A"]
+
+        engine = NeuralEngine(c)
+        assert engine.dynamics_model_name == MODEL_NAME_LIF_VOLTAGE
+
+    def test_explicit_lif_voltage_selection(self):
+        """Explicitly selecting lif_voltage works and uses same model class."""
+        from biological_brain.dynamics import LIFVoltageModel
+
+        c = Circuit("test")
+        c.add_neuron(Neuron("A", resting_potential=-70.0, threshold=-55.0, tau_m=10.0))
+        c.input_neurons = ["A"]
+        c.output_neurons = ["A"]
+
+        engine_default = NeuralEngine(c)
+        engine_explicit = NeuralEngine(c, dynamics_model="lif_voltage")
+
+        assert isinstance(engine_default.dynamics, LIFVoltageModel)
+        assert isinstance(engine_explicit.dynamics, LIFVoltageModel)
+
+    def test_factory_unknown_model_raises(self):
+        """Factory raises ValueError for unknown model names."""
+        from biological_brain.dynamics import get_model
+        with pytest.raises(ValueError, match="Unknown dynamics model"):
+            get_model("nonexistent_model")
+
+    def test_factory_returns_lif_voltage_for_valid_name(self):
+        """Factory returns LIFVoltageModel for known name."""
+        from biological_brain.dynamics import get_model, LIFVoltageModel
+        model = get_model("lif_voltage")
+        assert isinstance(model, LIFVoltageModel)
+
+
+class TestDynamicsNumericalEquivalence:
+    """Phase 1: lif_voltage model produces identical results to original Neuron methods."""
+
+    def test_membrane_integration_equivalence(self):
+        """LIFVoltageModel.integrate matches Neuron.integrate exactly across decay."""
+        from biological_brain.dynamics import get_model
+        model = get_model("lif_voltage")
+
+        n_direct = Neuron("d", resting_potential=-70.0, threshold=-55.0,
+                           reset_potential=-75.0, tau_m=10.0)
+        n_model = Neuron("m", resting_potential=-70.0, threshold=-55.0,
+                          reset_potential=-75.0, tau_m=10.0)
+
+        n_direct.membrane_potential = -60.0
+        n_model.membrane_potential = -60.0
+
+        for _ in range(20):
+            spiked_d = n_direct.integrate(0.0)
+            spiked_m = model.integrate(n_model, 0.0)
+            assert spiked_d == spiked_m
+            assert n_direct.membrane_potential == n_model.membrane_potential
+            assert n_direct.refractory_remaining == n_model.refractory_remaining
+
+    def test_membrane_integration_threshold_cross(self):
+        """Integration produces identical spike when threshold is crossed."""
+        from biological_brain.dynamics import get_model
+        model = get_model("lif_voltage")
+
+        n_direct = Neuron("d", resting_potential=-70.0, threshold=-55.0,
+                           reset_potential=-75.0, refractory_period=2, tau_m=10.0)
+        n_model = Neuron("m", resting_potential=-70.0, threshold=-55.0,
+                          reset_potential=-75.0, refractory_period=2, tau_m=10.0)
+
+        n_direct.membrane_potential = -52.0
+        n_model.membrane_potential = -52.0
+
+        spiked_d = n_direct.integrate(0.0)
+        spiked_m = model.integrate(n_model, 0.0)
+
+        assert spiked_d == spiked_m
+        assert n_direct.membrane_potential == n_model.membrane_potential
+        assert n_direct.refractory_remaining == n_model.refractory_remaining
+
+    def test_synaptic_input_equivalence(self):
+        """receive_synaptic_spike matches receive_spike exactly."""
+        from biological_brain.dynamics import get_model
+        model = get_model("lif_voltage")
+
+        n_direct = Neuron("d", resting_potential=-70.0, threshold=-55.0, tau_m=10.0)
+        n_model = Neuron("m", resting_potential=-70.0, threshold=-55.0, tau_m=10.0)
+
+        n_direct.receive_spike(10.0, 1.0)
+        model.receive_synaptic_spike(n_model, 10.0, 1.0)
+        assert n_direct.membrane_potential == n_model.membrane_potential
+
+        n_direct.receive_spike(8.0, -1.0)
+        model.receive_synaptic_spike(n_model, 8.0, -1.0)
+        assert n_direct.membrane_potential == n_model.membrane_potential
+
+        # Refractory blocking
+        n_direct.membrane_potential = -50.0
+        n_model.membrane_potential = -50.0
+        n_direct.integrate(0.0)
+        model.integrate(n_model, 0.0)
+
+        n_direct.receive_spike(5.0, 1.0)
+        model.receive_synaptic_spike(n_model, 5.0, 1.0)
+        assert n_direct.membrane_potential == n_model.membrane_potential
+
+    def test_sensory_current_injection_equivalence(self):
+        """inject_sensory_current is blocked during refractory, matches original."""
+        c = Circuit("test")
+        # tau_m=10.0 so that input 20.0 (V=-50 after injection) still
+        # exceeds threshold after exponential decay (V ≈ -51.9 >= -55)
+        c.add_neuron(Neuron("n", resting_potential=-70.0, threshold=-55.0,
+                            reset_potential=-75.0, refractory_period=2, tau_m=10.0))
+        c.input_neurons = ["n"]
+        c.output_neurons = ["n"]
+
+        engine = NeuralEngine(c, dynamics_model="lif_voltage")
+
+        # Step 1: 20.0 input should cause spike -> V=-75, refractory=2
+        engine.step({"n": 20.0})
+        assert c.neurons["n"].membrane_potential == -75.0
+        assert c.neurons["n"].refractory_remaining == 2
+
+        # Step 2: 100.0 input is blocked during refractory
+        # V should only decrement refractory (no decay during refractory)
+        engine.step({"n": 100.0})
+        assert c.neurons["n"].membrane_potential == -75.0  # unchanged
+        assert c.neurons["n"].refractory_remaining == 1
+
+    def test_spike_reset_equivalence(self):
+        """reset matches: membrane -> resting, refractory cleared."""
+        from biological_brain.dynamics import get_model
+        model = get_model("lif_voltage")
+
+        n_direct = Neuron("d", resting_potential=-70.0, threshold=-55.0,
+                           reset_potential=-75.0, tau_m=10.0)
+        n_model = Neuron("m", resting_potential=-70.0, threshold=-55.0,
+                          reset_potential=-75.0, tau_m=10.0)
+
+        n_direct.membrane_potential = -50.0
+        n_model.membrane_potential = -50.0
+        n_direct.integrate(0.0)
+        model.integrate(n_model, 0.0)
+
+        n_direct.reset()
+        model.reset(n_model)
+
+        assert n_direct.membrane_potential == n_model.membrane_potential
+        assert n_direct.refractory_remaining == n_model.refractory_remaining
+
+    def test_refractory_period_equivalence(self):
+        """Refractory countdown matches exactly across steps."""
+        from biological_brain.dynamics import get_model
+        model = get_model("lif_voltage")
+
+        n_direct = Neuron("d", resting_potential=-70.0, threshold=-55.0,
+                           reset_potential=-75.0, refractory_period=3, tau_m=10.0)
+        n_model = Neuron("m", resting_potential=-70.0, threshold=-55.0,
+                          reset_potential=-75.0, refractory_period=3, tau_m=10.0)
+
+        n_direct.membrane_potential = -50.0
+        n_model.membrane_potential = -50.0
+
+        n_direct.integrate(0.0)
+        model.integrate(n_model, 0.0)
+
+        for _ in range(3):
+            n_direct.integrate(0.0)
+            model.integrate(n_model, 0.0)
+            assert n_direct.refractory_remaining == n_model.refractory_remaining
+            assert n_direct.membrane_potential == n_model.membrane_potential
+
+    def test_engine_spike_propagation_equivalence(self):
+        """Full engine step with spike propagation matches original behavior."""
+        c1 = Circuit("test")
+        c1.add_neuron(Neuron("A", resting_potential=-70.0, threshold=-55.0,
+                              reset_potential=-75.0, tau_m=10.0))
+        c1.add_neuron(Neuron("B", resting_potential=-70.0, threshold=-55.0, tau_m=10.0))
+        c1.connect("A", "B", weight=10.0, delay=1)
+        c1.input_neurons = ["A"]
+        c1.output_neurons = ["B"]
+
+        c2 = Circuit("test")
+        c2.add_neuron(Neuron("A", resting_potential=-70.0, threshold=-55.0,
+                              reset_potential=-75.0, tau_m=10.0))
+        c2.add_neuron(Neuron("B", resting_potential=-70.0, threshold=-55.0, tau_m=10.0))
+        c2.connect("A", "B", weight=10.0, delay=1)
+        c2.input_neurons = ["A"]
+        c2.output_neurons = ["B"]
+
+        e1 = NeuralEngine(c1)
+        e2 = NeuralEngine(c2, dynamics_model="lif_voltage")
+
+        inputs = [{"A": 30.0}, {}, {"A": 5.0}, {}, {"A": 0.0}]
+        for inp in inputs:
+            e1.step(inp)
+            e2.step(inp)
+            assert c1.neurons["A"].membrane_potential == c2.neurons["A"].membrane_potential
+            assert c1.neurons["B"].membrane_potential == c2.neurons["B"].membrane_potential
