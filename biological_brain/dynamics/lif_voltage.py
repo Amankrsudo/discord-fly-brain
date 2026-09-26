@@ -56,6 +56,14 @@ class LIFVoltageModel(DynamicsModel):
             return
         neuron.membrane_potential += weight * sign
 
+    def receive_electrical_current(self, neuron: Neuron, current: float) -> None:
+        """No-op for LIF model (electrical coupling handled via spike queue)."""
+        pass
+
+    def decay_conductances(self, neuron: Neuron) -> None:
+        """No-op for LIF model (no conductance-based state)."""
+        pass
+
     def integrate(self, neuron: Neuron, input_current: float = 0.0) -> bool:
         """Integrate one timestep of membrane potential.
 

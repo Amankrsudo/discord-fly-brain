@@ -52,6 +52,24 @@ class DynamicsModel(Protocol):
         """
         ...
 
+    def receive_electrical_current(self, neuron: Neuron, current: float) -> None:
+        """Accumulate electrical (gap-junction) current for one timestep.
+
+        Args:
+            neuron: The postsynaptic neuron
+            current: Gap-junction current to accumulate
+        """
+        ...
+
+    def decay_conductances(self, neuron: Neuron) -> None:
+        """Apply per-tick conductance decay to a neuron's synaptic state.
+
+        Implementations that do not use conductance-based state perform
+        a no-op. The conductance model applies exponential decay to
+        g_syn: g_syn *= exp(-dt / tau_decay).
+        """
+        ...
+
     def integrate(self, neuron: Neuron, input_current: float = 0.0) -> bool:
         """Integrate a neuron's membrane potential for one timestep.
 

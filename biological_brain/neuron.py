@@ -1,8 +1,13 @@
 """Neuron model for Biological Brain 3.0 - Stage A: Leaky Integrate-and-Fire."""
 
+from __future__ import annotations
+
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import TYPE_CHECKING, List, Optional
 from .synapse import Synapse
+
+if TYPE_CHECKING:
+    from .dynamics.conductance import ConductanceNeuronState
 
 
 @dataclass
@@ -15,6 +20,10 @@ class Neuron:
     - Exponential decay toward V_rest
     - Absolute refractory period
     - Hard threshold crossing
+    
+    The conductance_state field is optional and only used when the
+    conductance_v0 dynamics model is selected. It defaults to None,
+    preserving all existing LIF behavior.
     """
     neuron_id: str
     cell_type: str = "unknown"
@@ -29,6 +38,7 @@ class Neuron:
     tau_m: float = 20.0  # membrane time constant (ms)
     dt: float = 1.0  # simulation timestep (ms)
     incoming: List[Synapse] = field(default_factory=list)
+    conductance_state: Optional[ConductanceNeuronState] = None
 
     def __post_init__(self):
         """Initialize membrane potential to resting potential."""

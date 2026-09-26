@@ -1774,18 +1774,20 @@ class TestConductanceDynamicsStub:
         model = get_model("conductance_v0")
 
         n = Neuron("test", resting_potential=-70.0, threshold=-55.0, tau_m=10.0)
-        n._conductance_state = ConductanceNeuronState()
+        n.conductance_state = ConductanceNeuronState()
 
         # Simulate having accumulated electrical current and synaptic conductance
-        n._conductance_state.I_elec_accumulator = 5.0
-        n._conductance_state.g_syn = 3.0
-        n._conductance_state.refractory_remaining = 2
+        n.conductance_state.I_elec_accumulator = 5.0
+        n.conductance_state.g_syn = 3.0
+        n.conductance_state.refractory_remaining = 2
+        n.refractory_remaining = 2
 
         model.reset(n)
 
-        assert n._conductance_state.I_elec_accumulator == 0.0
-        assert n._conductance_state.g_syn == 0.0
-        assert n._conductance_state.refractory_remaining == 0
+        assert n.conductance_state.I_elec_accumulator == 0.0
+        assert n.conductance_state.g_syn == 0.0
+        assert n.conductance_state.refractory_remaining == 0
+        assert n.refractory_remaining == 0
 
     def test_available_models_includes_both(self):
         """available_models lists both lif_voltage and conductance_v0."""
@@ -1795,28 +1797,35 @@ class TestConductanceDynamicsStub:
         assert "conductance_v0" in models
 
     def test_conductance_model_integrate_raises_not_implemented(self):
-        """Conductance model integrate() raises NotImplementedError (no HH yet)."""
-        from biological_brain.dynamics import get_model
+        """Conductance model integrate() raises NotImplementedError without membrane area."""
+        from biological_brain.dynamics import get_model, attach_conductance_state
         model = get_model("conductance_v0")
         n = Neuron("test", resting_potential=-70.0, threshold=-55.0, tau_m=10.0)
-        with pytest.raises(NotImplementedError, match="HH integration"):
+        attach_conductance_state(n)
+        with pytest.raises(NotImplementedError, match="membrane_area_cm2"):
             model.integrate(n, 0.0)
 
     def test_conductance_model_inject_sensory_raises_not_implemented(self):
         """Conductance model inject_sensory_current raises NotImplementedError."""
-        from biological_brain.dynamics import get_model
+        from biological_brain.dynamics import get_model, attach_conductance_state
         model = get_model("conductance_v0")
         n = Neuron("test", resting_potential=-70.0, threshold=-55.0, tau_m=10.0)
+        attach_conductance_state(n)
         with pytest.raises(NotImplementedError, match="input resistance"):
             model.inject_sensory_current(n, 20.0)
 
-    def test_conductance_model_synaptic_spike_raises_not_implemented(self):
-        """Conductance model receive_synaptic_spike raises NotImplementedError."""
-        from biological_brain.dynamics import get_model
+    def test_conductance_model_receive_synaptic_spike_increments_g(self):
+        """Conductance model receive_synaptic_spike increments g_syn by peak conductance."""
+        from biological_brain.dynamics import get_model, attach_conductance_state
+        from biological_brain.dynamics.conductance import ConductanceParams
         model = get_model("conductance_v0")
         n = Neuron("test", resting_potential=-70.0, threshold=-55.0, tau_m=10.0)
-        with pytest.raises(NotImplementedError, match="conductance increment"):
-            model.receive_synaptic_spike(n, 10.0, 1)
+        params = ConductanceParams()
+        attach_conductance_state(n, params=params)
+
+        assert n.conductance_state.g_syn == 0.0
+        model.receive_synaptic_spike(n, 10.0, 1)
+        assert n.conductance_state.g_syn == params.g_syn_peak_us
 
     def test_conductance_params_have_source_supported_defaults(self):
         """ConductanceParams defaults come from published model (PMC6469880 Table 1)."""
@@ -1831,3 +1840,57 @@ class TestConductanceDynamicsStub:
         assert params.C_m == 1.0         # uF/cm^2
         assert params.tau_syn_decay_ms == 1.0  # ms
         assert params.E_syn == 0.0       # mV (ACh reversal)
+
+
+class TestConductanceAccumulatorLifecycle:
+    """3.0C Phase 2 — targeted regression guard for I_elec_accumulator.
+
+    Verifies that gap-junction current is computed, consumed by integrate(),
+    and then CLEARED so it does not leak into the next timestep.
+
+    The clearing step at NeuralEngine.step() (line ~73-75) was added during
+    Phase 2 development. The committed version (a282bd4) lacked this clearing
+    and would accumulate stale gap-junction current across timesteps.
+    """
+
+    def test_accumulator_cleared_after_step(self):
+        """Electrical current contributes during its timestep and is cleared afterward.
+
+        Without clearing, I_elec_accumulator would carry stale current into
+        the next step, causing voltage updates from old coupling rather than
+        fresh gap-junction calculations.
+        """
+        from biological_brain.dynamics import attach_conductance_state
+        from biological_brain.dynamics.conductance import ConductanceParams
+
+        params = ConductanceParams(membrane_area_cm2=1.0)
+        n_pre = Neuron("A", resting_potential=-70.0, threshold=-50.0, tau_m=100.0)
+        n_post = Neuron("B", resting_potential=-70.0, threshold=-50.0, tau_m=100.0)
+        attach_conductance_state(n_pre, params=params)
+        attach_conductance_state(n_post, params=params)
+
+        c = Circuit("test")
+        c.add_neuron(n_pre)
+        c.add_neuron(n_post)
+        c.add_synapse(Synapse("A", "B", sign=Sign.EXCITATORY, delay=1,
+                              synapse_type="electrical", conductance=135.0))
+        c.input_neurons = []
+        c.output_neurons = ["B"]
+
+        engine = NeuralEngine(c, dynamics_model="conductance_v0")
+
+        # Different voltages => electrical current flows (I_elec = 135 * 20 = 2700 nA)
+        n_pre.membrane_potential = -50.0
+        n_post.membrane_potential = -70.0
+        n_pre.conductance_state.V = -50.0
+        n_post.conductance_state.V = -70.0
+
+        # Step 1: accumulator populated, consumed by integrate, then cleared
+        engine.step({})
+        assert n_post.conductance_state.I_elec_accumulator == 0.0
+        # Voltage moved toward A's potential (depolarized from -70)
+        assert n_post.conductance_state.V > -70.0
+
+        # Step 2: accumulator must be 0, not carrying stale 2700 nA
+        engine.step({})
+        assert n_post.conductance_state.I_elec_accumulator == 0.0

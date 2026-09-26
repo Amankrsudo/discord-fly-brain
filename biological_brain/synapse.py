@@ -20,6 +20,8 @@ class Synapse:
     delay: int = 1
     neurotransmitter: str = "unknown"
     enabled: bool = True
+    synapse_type: str = "chemical"  # "chemical" or "electrical" (gap junction)
+    conductance: float = 0.0  # gap junction conductance in µS (electrical only)
 
     def effective_weight(self) -> float:
         """Get the signed weight for propagation."""

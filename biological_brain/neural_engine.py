@@ -42,6 +42,10 @@ class NeuralEngine:
         """
         model = self.dynamics
 
+        # 0. Decay conductance state (tick-level exponential decay)
+        for neuron in self.circuit.neurons.values():
+            model.decay_conductances(neuron)
+
         # 1. Inject sensory current into input neurons (blocked during refractory)
         for neuron_id, current in sensory_input.items():
             neuron = self.circuit.neurons.get(neuron_id)
@@ -55,17 +59,26 @@ class NeuralEngine:
             if neuron:
                 model.receive_synaptic_spike(neuron, weight, sign)
 
-        # 3. Integrate & threshold all neurons
+        # 3. Compute electrical (gap-junction) currents for conductance model
+        self._compute_electrical_currents()
+
+        # 4. Integrate & threshold all neurons
         spiked_neurons = []
         for neuron in self.circuit.neurons.values():
             if model.integrate(neuron, 0.0):
                 spiked_neurons.append(neuron.neuron_id)
 
-        # 4. Schedule synaptic propagation for spiked neurons
+        # 5. Clear electrical current accumulators (consumed during integrate step 4)
+        # This prevents stale current from leaking into the next timestep.
+        for neuron in self.circuit.neurons.values():
+            if neuron.conductance_state is not None:
+                neuron.conductance_state.I_elec_accumulator = 0.0
+
+        # 6. Schedule synaptic propagation for spiked neurons
         for source_id in spiked_neurons:
             self._schedule_propagation(source_id)
 
-        # 5. Read outputs
+        # 7. Read outputs
         outputs = {}
         for out_id in self.circuit.output_neurons:
             neuron = self.circuit.neurons.get(out_id)
@@ -76,12 +89,21 @@ class NeuralEngine:
         return outputs
 
     def _schedule_propagation(self, source_id: str) -> None:
-        """Schedule spike propagation to target neurons."""
+        """Schedule spike propagation to target neurons.
+
+        For the conductance_v0 model, electrical synapses are excluded
+        from the delay queue — they are handled by
+        _compute_electrical_currents() using the gap-junction formula
+        I_elec = g_gap * (V_pre - V_post). Only chemical synapses
+        contribute to the delay queue in conductance mode.
+        """
         for syn in self._synapses_by_source.get(source_id, []):
             if not syn.enabled:
                 continue
             if syn.delay < 1:
                 raise ValueError(f"Synapse delay must be >= 1, got {syn.delay}")
+            if self.dynamics_model_name == "conductance_v0" and syn.synapse_type == "electrical":
+                continue
             target_tick = self.current_tick + syn.delay
             effective_weight = syn.effective_weight()
             self.spike_queue[target_tick].append((
@@ -95,6 +117,55 @@ class NeuralEngine:
         model = self.dynamics
         for neuron in self.circuit.neurons.values():
             model.reset(neuron)
+
+    def _compute_electrical_currents(self) -> None:
+        """Compute gap-junction currents for electrical (gap-junction) synapses.
+
+        For each directional electrical Synapse, calculates the
+        gap-junction current from the presynaptic voltage to the
+        postsynaptic neuron, using the formula:
+
+            I_elec = g_gap * (V_pre - V_post)
+
+        where g_gap is the gap-junction conductance in µS (from the
+        circuit definition, derived from PMC6469880 Table 1, labeled
+        "INFERRED" / "APPROXIMATION" — 135 µS for young flies, explicitly
+        estimated, not directly measured).
+
+        The resulting current is accumulated into each postsynaptic
+        neuron's conductance state via the dynamics model's
+        receive_electrical_current() method.
+
+        IMPORTANT: This is CURRENT CALCULATION ONLY. The computed
+        current is NOT yet used to update membrane potential. The
+        conductance_v0 integrate() method still raises
+        NotImplementedError. This step merely populates the
+        I_elec_accumulator in conductance state for future use.
+
+        UNITS: If V is in mV and g_gap is in µS, I_elec is in nA.
+        No scaling or conversion is applied — this is an explicit
+        approximation due to dt=1ms.
+
+        Each directional electrical Synapse is processed exactly once.
+        No conductance doubling, no bidirectional collapsing.
+        """
+        for syn in self.circuit.synapses:
+            if not syn.enabled:
+                continue
+            if syn.synapse_type != "electrical":
+                continue
+
+            source_neuron = self.circuit.neurons.get(syn.source)
+            target_neuron = self.circuit.neurons.get(syn.target)
+            if source_neuron is None or target_neuron is None:
+                continue
+
+            V_pre = source_neuron.membrane_potential
+            V_post = target_neuron.membrane_potential
+            I_elec = syn.conductance * (V_pre - V_post)
+
+            if target_neuron.conductance_state is not None:
+                self.dynamics.receive_electrical_current(target_neuron, I_elec)
 
     def get_state(self) -> Dict:
         """Get current engine state for inspection."""

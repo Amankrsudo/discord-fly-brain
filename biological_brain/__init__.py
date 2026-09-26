@@ -10,7 +10,7 @@ from .neuron import Neuron
 from .synapse import Synapse, Sign
 from .neural_engine import NeuralEngine
 from .signals import SignalTranslator
-from .dynamics import DynamicsModel, LIFVoltageModel, ConductanceDynamicsModel, MODEL_NAME_LIF_VOLTAGE, MODEL_NAME_CONDUCTANCE_V0
+from .dynamics import DynamicsModel, LIFVoltageModel, ConductanceDynamicsModel, ConductanceParams, ConductanceNeuronState, attach_conductance_state, MODEL_NAME_LIF_VOLTAGE, MODEL_NAME_CONDUCTANCE_V0
 
 
 CIRCUIT_DIR = os.path.join(os.path.dirname(__file__), "data")
@@ -101,6 +101,8 @@ class BiologicalBrain:
                 weight=sd["weight_mV"], sign=sign,
                 delay=sd["delay_ticks"],
                 neurotransmitter=sd.get("neurotransmitter", "unknown"),
+                synapse_type=sd.get("type", "chemical"),
+                conductance=sd.get("gap_junction_conductance_us", 0.0),
             ))
         
         io = circuit_def["circuit_io"]
@@ -195,6 +197,9 @@ __all__ = [
     "DynamicsModel",
     "LIFVoltageModel",
     "ConductanceDynamicsModel",
+    "ConductanceParams",
+    "ConductanceNeuronState",
+    "attach_conductance_state",
     "MODEL_NAME_LIF_VOLTAGE",
     "MODEL_NAME_CONDUCTANCE_V0",
 ]

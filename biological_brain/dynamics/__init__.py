@@ -11,13 +11,16 @@ APPROXIMATION of real neural dynamics.
 
 from .base import DynamicsModel, DynamicsModelFactory
 from .lif_voltage import LIFVoltageModel
-from .conductance import ConductanceDynamicsModel
+from .conductance import ConductanceDynamicsModel, ConductanceParams, ConductanceNeuronState, attach_conductance_state
 
 __all__ = [
     "DynamicsModel",
     "DynamicsModelFactory",
     "LIFVoltageModel",
     "ConductanceDynamicsModel",
+    "ConductanceParams",
+    "ConductanceNeuronState",
+    "attach_conductance_state",
     "MODEL_NAME_LIF_VOLTAGE",
     "MODEL_NAME_CONDUCTANCE_V0",
 ]
