@@ -15,6 +15,7 @@ from .morphology import Compartment, CompartmentModel, CompartmentGeometry, Comp
 from .gfs_morphology import GFSMorphology, NeuronSpec, CompartmentSpec, PlacementSpec, MorphologyParameter, get_gfs_morphology
 from .morphology_builder import build_compartment_model, build_gfs_compartment_models
 from .geometry_metrics import CompartmentMetrics, compute_compartment_metrics, compute_all_metrics, assert_no_electrical_parameters
+from .passive_electrical_registry import PassiveParameterEntry, PassiveElectricalRegistry, get_passive_electrical_registry
 from .dynamics import DynamicsModel, LIFVoltageModel, ConductanceDynamicsModel, ConductanceParams, ConductanceNeuronState, attach_conductance_state, MODEL_NAME_LIF_VOLTAGE, MODEL_NAME_CONDUCTANCE_V0
 
 

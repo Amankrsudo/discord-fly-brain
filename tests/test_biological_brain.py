@@ -3262,3 +3262,209 @@ class TestCompartmentGeometryMetrics:
         )
         compute_compartment_metrics(comp)
         assert_no_electrical_parameters(comp)
+
+
+class TestPassiveElectricalRegistry:
+    """3.0D-7E: Evidence registry for candidate passive electrical parameters.
+
+    The registry is a provenance boundary, NOT an assignment mechanism.
+    No parameter may be simulator-eligible and no CableParameters value
+    may be populated from it.
+    """
+
+    EXPECTED_NAMES = [
+        "specific_membrane_capacitance",
+        "specific_axial_resistance",
+        "leak_conductance_density",
+        "leak_reversal_potential",
+        "gap_junction_conductance_young",
+        "gap_junction_conductance_old",
+        "gf_input_resistance",
+        "gfs_electrophysiology_reference",
+    ]
+
+    def test_factory_returns_expected_entries(self):
+        """Factory builds a registry with exactly the expected candidate set."""
+        from biological_brain.passive_electrical_registry import (
+            PassiveElectricalRegistry, PassiveParameterEntry,
+            get_passive_electrical_registry,
+        )
+
+        r = get_passive_electrical_registry()
+        assert isinstance(r, PassiveElectricalRegistry)
+        assert r.names() == self.EXPECTED_NAMES
+        for name in self.EXPECTED_NAMES:
+            assert isinstance(r.get(name), PassiveParameterEntry)
+        with pytest.raises(KeyError):
+            r.get("not_a_registered_parameter")
+
+    def test_augustin_candidate_values_and_units(self):
+        """Augustin 2019 candidate values are recorded verbatim with units."""
+        from biological_brain.passive_electrical_registry import get_passive_electrical_registry
+
+        r = get_passive_electrical_registry()
+        expected = {
+            "specific_membrane_capacitance": (1.0, "uF/cm2"),
+            "specific_axial_resistance": (35.4, "ohm*cm"),
+            "leak_conductance_density": (0.03, "mS/cm2"),
+            "leak_reversal_potential": (-85.0, "mV"),
+            "gap_junction_conductance_young": (135.0, "uS"),
+            "gap_junction_conductance_old": (34.5, "uS"),
+        }
+        for name, (value, unit) in expected.items():
+            entry = r.get(name)
+            assert entry.value == pytest.approx(value)
+            assert entry.unit == unit
+
+    def test_provenance_classifications(self):
+        """Estimated model values are not presented as direct measurements."""
+        from biological_brain.passive_electrical_registry import get_passive_electrical_registry
+        from biological_brain.provenance import ParameterProvenance
+
+        r = get_passive_electrical_registry()
+        expected = {
+            "specific_membrane_capacitance": ParameterProvenance.ESTIMATED,
+            "specific_axial_resistance": ParameterProvenance.ESTIMATED,
+            "leak_conductance_density": ParameterProvenance.ESTIMATED,
+            # Borrowed from Günay et al. model, not measured in GFS neurons.
+            "leak_reversal_potential": ParameterProvenance.PUBLISHED_MODEL_PARAMETER,
+            "gap_junction_conductance_young": ParameterProvenance.ESTIMATED,
+            "gap_junction_conductance_old": ParameterProvenance.ESTIMATED,
+            "gf_input_resistance": ParameterProvenance.EXPERIMENTALLY_CONSTRAINED,
+            "gfs_electrophysiology_reference": ParameterProvenance.EXPERIMENTALLY_CONSTRAINED,
+        }
+        for name, category in expected.items():
+            assert r.get(name).provenance_category == category, name
+
+    def test_source_attribution(self):
+        """Each entry names the source its evidence actually came from."""
+        from biological_brain.passive_electrical_registry import get_passive_electrical_registry
+
+        r = get_passive_electrical_registry()
+        for name in (
+            "specific_membrane_capacitance",
+            "specific_axial_resistance",
+            "leak_conductance_density",
+            "gap_junction_conductance_young",
+            "gap_junction_conductance_old",
+        ):
+            assert "Augustin" in r.get(name).source, name
+
+        # Leak reversal is attributed to the borrowed motoneuron model.
+        assert "Günay" in r.get("leak_reversal_potential").source
+        assert "NOT a direct measurement" in r.get("leak_reversal_potential").notes
+
+        assert "Jensen" in r.get("gf_input_resistance").source
+        assert "Hoyle" in r.get("gfs_electrophysiology_reference").source
+
+    def test_all_candidates_ineligible_for_simulator(self):
+        """No candidate is authorized for direct simulator assignment."""
+        from biological_brain.passive_electrical_registry import get_passive_electrical_registry
+
+        r = get_passive_electrical_registry()
+        assert len(r.parameters) == len(self.EXPECTED_NAMES)
+        for entry in r.parameters:
+            assert entry.eligible_for_simulator is False, entry.name
+            assert "Must NOT be assigned to CableParameters" in entry.notes, entry.name
+
+    def test_gf_input_resistance_is_whole_cell_range_not_specific_rm(self):
+        """GF input resistance stays a whole-cell MOhm range, never a specific Rm."""
+        from biological_brain.passive_electrical_registry import get_passive_electrical_registry
+
+        r = get_passive_electrical_registry()
+        entry = r.get("gf_input_resistance")
+
+        assert entry.unit == "MOhm"
+        assert entry.value_min == pytest.approx(50.0)
+        assert entry.value_max == pytest.approx(100.0)
+        assert entry.value_min <= entry.value <= entry.value_max
+        assert "NOT convertible to specific membrane resistance" in entry.notes
+
+        # No entry claims a specific membrane resistance (ohm*cm2).
+        assert all(e.unit != "ohm*cm2" for e in r.parameters)
+        # Only the whole-cell observation is expressed as a range.
+        ranged = [e.name for e in r.parameters if e.value_min is not None or e.value_max is not None]
+        assert ranged == ["gf_input_resistance"]
+
+    def test_factory_returns_fresh_independent_objects(self):
+        """Each call builds new entries; mutating one cannot affect another."""
+        from biological_brain.passive_electrical_registry import get_passive_electrical_registry
+
+        r1 = get_passive_electrical_registry()
+        r2 = get_passive_electrical_registry()
+
+        assert r1 is not r2
+        assert r1.parameters is not r2.parameters
+        assert r1.get("leak_reversal_potential") is not r2.get("leak_reversal_potential")
+
+        r1.get("leak_reversal_potential").value = 0.0
+        r1.get("leak_reversal_potential").eligible_for_simulator = True
+        r1.parameters.clear()
+
+        fresh = get_passive_electrical_registry()
+        assert fresh.names() == self.EXPECTED_NAMES
+        assert fresh.get("leak_reversal_potential").value == pytest.approx(-85.0)
+        assert fresh.get("leak_reversal_potential").eligible_for_simulator is False
+
+    def test_no_cable_parameter_coupling(self):
+        """The registry module neither imports nor mutates compartment electrical state."""
+        import inspect
+        from biological_brain import passive_electrical_registry as per_module
+        from biological_brain.morphology import CableParameters
+        from biological_brain.morphology_builder import build_gfs_compartment_models
+
+        source = inspect.getsource(per_module)
+        import_lines = [
+            line for line in source.splitlines()
+            if line.strip().startswith(("import ", "from "))
+        ]
+        assert not any("morphology" in line for line in import_lines)
+        assert "CableParameters" not in per_module.__dict__
+        assert "Compartment" not in per_module.__dict__
+
+        # Using the registry alongside built compartment models changes nothing.
+        from biological_brain.passive_electrical_registry import get_passive_electrical_registry
+
+        models = build_gfs_compartment_models()
+        before = [
+            (c.cable_params.axial_resistance_ohm_cm,
+             c.cable_params.membrane_capacitance_uf_per_cm2,
+             c.cable_params.leak_conductance_ms_per_cm2,
+             c.cable_params.leak_reversal_mV)
+            for model in models.values()
+            for c in model.compartments.values()
+        ]
+
+        registry = get_passive_electrical_registry()
+        assert CableParameters().axial_resistance_ohm_cm is None
+        assert registry.names() == self.EXPECTED_NAMES
+
+        after = [
+            (c.cable_params.axial_resistance_ohm_cm,
+             c.cable_params.membrane_capacitance_uf_per_cm2,
+             c.cable_params.leak_conductance_ms_per_cm2,
+             c.cable_params.leak_reversal_mV)
+            for model in models.values()
+            for c in model.compartments.values()
+        ]
+        assert after == before
+        assert all(v == (None, None, None, None) for v in after)
+
+    def test_existing_behavior_unchanged(self):
+        """Importing and using the registry does not alter LIF/dynamics behavior."""
+        from biological_brain.passive_electrical_registry import get_passive_electrical_registry
+
+        get_passive_electrical_registry()
+
+        n = Neuron("n", resting_potential=-70.0, threshold=-55.0, tau_m=10.0)
+        assert n.compartment_model is None
+        assert n.dynamics_model is None
+
+        c = Circuit("test")
+        c.add_neuron(n)
+        c.input_neurons = ["n"]
+        c.output_neurons = ["n"]
+
+        engine = NeuralEngine(c)
+        engine.step({"n": 10.0})
+        assert n.membrane_potential > -70.0
