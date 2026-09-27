@@ -3468,3 +3468,208 @@ class TestPassiveElectricalRegistry:
         engine = NeuralEngine(c)
         engine.step({"n": 10.0})
         assert n.membrane_potential > -70.0
+
+
+class TestPassiveParameterProfile:
+    """3.0D-7F: Explicit opt-in authorization layer over the 7E evidence registry.
+
+    Authorization is a permission record, not a measurement claim and not
+    a parameter assignment. The profile must never populate
+    Compartment.CableParameters or alter runtime behavior.
+    """
+
+    EXPECTED_AUTHORIZED = [
+        "specific_membrane_capacitance",
+        "specific_axial_resistance",
+        "leak_conductance_density",
+        "leak_reversal_potential",
+    ]
+
+    def test_profile_contains_exactly_four_authorized_quantities(self):
+        """Only the four Augustin passive quantities are authorized."""
+        from biological_brain.passive_profiles import (
+            PassiveParameterProfile, build_augustin_2019_gfs_passive_profile,
+            get_passive_parameter_profile, available_passive_profiles,
+            PROFILE_AUGUSTIN_2019_GFS_PASSIVE,
+        )
+
+        p = build_augustin_2019_gfs_passive_profile()
+        assert isinstance(p, PassiveParameterProfile)
+        assert p.name == PROFILE_AUGUSTIN_2019_GFS_PASSIVE
+        assert p.authorized_names() == tuple(self.EXPECTED_AUTHORIZED)
+        assert p.opt_in is True
+
+        # Exactly one profile exists and lookup is explicit, never defaulted.
+        assert available_passive_profiles() == ("augustin_2019_gfs_passive",)
+        assert get_passive_parameter_profile(PROFILE_AUGUSTIN_2019_GFS_PASSIVE).name == p.name
+        with pytest.raises(KeyError):
+            get_passive_parameter_profile("some_other_profile")
+
+    def test_exact_values_and_units_preserved(self):
+        """Values and units are exactly as reported by Augustin."""
+        from biological_brain.passive_profiles import build_augustin_2019_gfs_passive_profile
+
+        p = build_augustin_2019_gfs_passive_profile()
+        expected = {
+            "specific_membrane_capacitance": (1.0, "uF/cm2"),
+            "specific_axial_resistance": (35.4, "ohm*cm"),
+            "leak_conductance_density": (0.03, "mS/cm2"),
+            "leak_reversal_potential": (-85.0, "mV"),
+        }
+        for name, (value, unit) in expected.items():
+            entry = p.get(name)
+            assert entry.value == pytest.approx(value)
+            assert entry.unit == unit
+
+        # Specific axial resistance uses the canonical ohm*cm (ohm.cm) unit.
+        # The paper's literal printed notation is preserved as source text only.
+        ra = p.get("specific_axial_resistance")
+        assert ra.unit == "ohm*cm"
+        assert ra.unit != "ohm*cm2"
+        assert "CANONICAL UNIT: ohm*cm" in ra.limitations
+        assert "35.4 Ω/cm (estimated)" in ra.limitations
+        assert "retained here as source text only" in ra.limitations
+        assert "NOT a per-compartment axial" in ra.limitations
+
+    def test_provenance_and_source_preserved_from_registry(self):
+        """Profile values are copied from the evidence layer, which is not mutated."""
+        from biological_brain.passive_electrical_registry import get_passive_electrical_registry
+        from biological_brain.passive_profiles import (
+            AUTHORIZATION_SCOPE_MODEL_REPRODUCTION, build_augustin_2019_gfs_passive_profile,
+        )
+        from biological_brain.provenance import ParameterProvenance
+
+        registry = get_passive_electrical_registry()
+        p = build_augustin_2019_gfs_passive_profile()
+
+        for name in self.EXPECTED_AUTHORIZED:
+            entry = p.get(name)
+            source_entry = registry.get(name)
+            assert entry.value == source_entry.value
+            assert entry.unit == source_entry.unit
+            assert entry.provenance_category == source_entry.provenance_category
+            assert entry.source == source_entry.source
+            assert entry.authorization_scope == AUTHORIZATION_SCOPE_MODEL_REPRODUCTION
+
+        assert p.get("leak_reversal_potential").provenance_category == (
+            ParameterProvenance.PUBLISHED_MODEL_PARAMETER
+        )
+        assert p.get("specific_membrane_capacitance").provenance_category == (
+            ParameterProvenance.ESTIMATED
+        )
+        assert "Günay" in p.get("leak_reversal_potential").source
+
+        # Authorizing for reproduction does not change registry eligibility.
+        for name in self.EXPECTED_AUTHORIZED:
+            assert registry.get(name).eligible_for_simulator is False
+
+    def test_profile_is_explicitly_model_reproduction_only(self):
+        """The profile authorizes reproducing a model, not asserting biology."""
+        from biological_brain.passive_profiles import build_augustin_2019_gfs_passive_profile
+
+        p = build_augustin_2019_gfs_passive_profile()
+        assert p.model_reproduction_only is True
+        assert "MODEL REPRODUCTION ONLY" in p.limitations
+        assert "does NOT mean" in p.limitations
+        assert "reproducing that model's assumptions" in p.limitations
+        assert "51 isopotential segments" in p.limitations
+
+    def test_whole_cell_measurements_not_authorized(self):
+        """GF input resistance and DLMn whole-cell values stay unauthorized."""
+        from biological_brain.passive_profiles import build_augustin_2019_gfs_passive_profile
+
+        p = build_augustin_2019_gfs_passive_profile()
+        excluded = {e.name for e in p.excluded}
+
+        assert p.is_authorized("gf_input_resistance") is False
+        assert p.is_authorized("dlmn_whole_cell_capacitance") is False
+        assert p.is_authorized("dlmn_whole_cell_input_resistance") is False
+        assert {"gf_input_resistance", "dlmn_whole_cell_capacitance",
+                "dlmn_whole_cell_input_resistance"} <= excluded
+
+        # No whole-cell quantity was converted into a specific parameter.
+        assert not any("MOhm" == e.unit for e in p.parameters)
+        assert not any("pF" in e.unit for e in p.parameters)
+        with pytest.raises(KeyError):
+            p.get("gf_input_resistance")
+
+    def test_gap_junction_synaptic_and_active_parameters_not_authorized(self):
+        """Coupling, synaptic, and active/HH parameters are outside the profile."""
+        from biological_brain.passive_profiles import build_augustin_2019_gfs_passive_profile
+
+        p = build_augustin_2019_gfs_passive_profile()
+        excluded = {e.name for e in p.excluded}
+
+        for name in (
+            "gap_junction_conductance_young",
+            "gap_junction_conductance_old",
+            "chemical_synapse_conductance",
+            "active_na_conductance_density",
+            "active_k_conductance_density",
+            "active_ca_conductance_density",
+            "hodgkin_huxley_parameters",
+        ):
+            assert p.is_authorized(name) is False, name
+            assert name in excluded, name
+
+        assert not any("uS" == e.unit for e in p.parameters)
+
+    def test_profile_creation_deterministic_and_frozen(self):
+        """Rebuilding yields equal profiles; instances are immutable and separate."""
+        import dataclasses
+        from biological_brain.passive_profiles import build_augustin_2019_gfs_passive_profile
+
+        p1 = build_augustin_2019_gfs_passive_profile()
+        p2 = build_augustin_2019_gfs_passive_profile()
+
+        assert p1 == p2
+        assert p1 is not p2
+        assert p1.parameters is not p2.parameters
+        assert isinstance(p1.parameters, tuple)
+
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            p1.model_reproduction_only = False
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            p1.get("leak_conductance_density").value = 0.5
+
+    def test_no_cable_parameters_populated(self):
+        """Building the profile populates no compartment cable parameters."""
+        from biological_brain.morphology import CableParameters
+        from biological_brain.morphology_builder import build_gfs_compartment_models
+        from biological_brain.passive_profiles import build_augustin_2019_gfs_passive_profile
+
+        models = build_gfs_compartment_models()
+        p = build_augustin_2019_gfs_passive_profile()
+        assert p.authorized_names() == tuple(self.EXPECTED_AUTHORIZED)
+
+        for model in models.values():
+            for comp in model.compartments.values():
+                assert comp.cable_params.axial_resistance_ohm_cm is None
+                assert comp.cable_params.membrane_capacitance_uf_per_cm2 is None
+                assert comp.cable_params.leak_conductance_ms_per_cm2 is None
+                assert comp.cable_params.leak_reversal_mV is None
+
+        assert CableParameters().axial_resistance_ohm_cm is None
+
+    def test_existing_default_behavior_unchanged(self):
+        """The profile is opt-in and leaves lif_voltage/default paths untouched."""
+        from biological_brain.dynamics import MODEL_NAME_LIF_VOLTAGE
+        from biological_brain.passive_profiles import build_augustin_2019_gfs_passive_profile
+
+        build_augustin_2019_gfs_passive_profile()
+
+        n = Neuron("n", resting_potential=-70.0, threshold=-55.0, tau_m=10.0)
+        assert n.dynamics_model is None
+        assert n.compartment_model is None
+
+        c = Circuit("test")
+        c.add_neuron(n)
+        c.input_neurons = ["n"]
+        c.output_neurons = ["n"]
+
+        engine = NeuralEngine(c)
+        engine.step({"n": 10.0})
+        assert n.membrane_potential > -70.0
+
+        explicit = Neuron("m", dynamics_model=MODEL_NAME_LIF_VOLTAGE)
+        assert explicit.dynamics_model == MODEL_NAME_LIF_VOLTAGE

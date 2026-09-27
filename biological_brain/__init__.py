@@ -16,6 +16,7 @@ from .gfs_morphology import GFSMorphology, NeuronSpec, CompartmentSpec, Placemen
 from .morphology_builder import build_compartment_model, build_gfs_compartment_models
 from .geometry_metrics import CompartmentMetrics, compute_compartment_metrics, compute_all_metrics, assert_no_electrical_parameters
 from .passive_electrical_registry import PassiveParameterEntry, PassiveElectricalRegistry, get_passive_electrical_registry
+from .passive_profiles import AuthorizedPassiveParameter, ExcludedPassiveParameter, PassiveParameterProfile, build_augustin_2019_gfs_passive_profile, get_passive_parameter_profile, available_passive_profiles, PROFILE_AUGUSTIN_2019_GFS_PASSIVE, AUTHORIZATION_SCOPE_MODEL_REPRODUCTION
 from .dynamics import DynamicsModel, LIFVoltageModel, ConductanceDynamicsModel, ConductanceParams, ConductanceNeuronState, attach_conductance_state, MODEL_NAME_LIF_VOLTAGE, MODEL_NAME_CONDUCTANCE_V0
 
 
