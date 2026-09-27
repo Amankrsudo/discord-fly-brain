@@ -66,7 +66,64 @@ from math import exp
 from typing import Dict, Optional
 
 from ..neuron import Neuron
+from ..provenance import ParameterProvenance, ProvenanceRecord
 from .base import DynamicsModel
+
+
+_DEFAULT_PARAMS_PROVENANCE: Dict[str, ProvenanceRecord] = {
+    "E_leak": ProvenanceRecord(
+        ParameterProvenance.PUBLISHED_MODEL_PARAMETER,
+        "Günay et al. 2015 via Augustin et al. 2019 (PMC6469880 Table 1)",
+    ),
+    "E_Na": ProvenanceRecord(
+        ParameterProvenance.PUBLISHED_MODEL_PARAMETER,
+        "Günay et al. 2015 via Augustin et al. 2019 (PMC6469880 Table 1)",
+    ),
+    "E_K": ProvenanceRecord(
+        ParameterProvenance.PUBLISHED_MODEL_PARAMETER,
+        "Günay et al. 2015 via Augustin et al. 2019 (PMC6469880 Table 1)",
+    ),
+    "g_Na": ProvenanceRecord(
+        ParameterProvenance.PUBLISHED_MODEL_PARAMETER,
+        "Günay et al. 2015 via Augustin et al. 2019 (PMC6469880 Table 1)",
+    ),
+    "g_Nap": ProvenanceRecord(
+        ParameterProvenance.PUBLISHED_MODEL_PARAMETER,
+        "Günay et al. 2015 via Augustin et al. 2019 (PMC6469880 Table 1)",
+    ),
+    "g_K": ProvenanceRecord(
+        ParameterProvenance.ESTIMATED,
+        "Augustin et al. 2019 (PMC6469880 Table 1), labeled 'estimated'",
+    ),
+    "g_leak": ProvenanceRecord(
+        ParameterProvenance.ESTIMATED,
+        "Augustin et al. 2019 (PMC6469880 Table 1), labeled 'estimated'",
+    ),
+    "C_m": ProvenanceRecord(
+        ParameterProvenance.ESTIMATED,
+        "Augustin et al. 2019 (PMC6469880 Table 1), labeled 'estimated'",
+    ),
+    "V_threshold": ProvenanceRecord(
+        ParameterProvenance.FITTED_CALIBRATED,
+        "Software spike-event adapter threshold; not a biological AP threshold",
+    ),
+    "tau_syn_decay_ms": ProvenanceRecord(
+        ParameterProvenance.ESTIMATED,
+        "Augustin et al. 2019 (PMC6469880 Table 1), labeled 'standard value'",
+    ),
+    "E_syn": ProvenanceRecord(
+        ParameterProvenance.ESTIMATED,
+        "Augustin et al. 2019 (PMC6469880 Table 1), standard value for ACh reversal",
+    ),
+    "g_syn_peak_us": ProvenanceRecord(
+        ParameterProvenance.BORROWED_CROSS_CONTEXT,
+        "Augustin et al. 2019 (PMC6469880 Table 1); model parameter from motoneuron GFS model, applied across neuron types",
+    ),
+    "membrane_area_cm2": ProvenanceRecord(
+        ParameterProvenance.UNKNOWN,
+        "No source provides membrane area for these specific neurons",
+    ),
+}
 
 
 @dataclass
@@ -92,6 +149,7 @@ class ConductanceParams:
     E_syn: float = 0.0         # mV, chemical synapse reversal (ACh)
     g_syn_peak_us: float = 80.0   # µS, chemical synapse peak conductance [Augustin et al. 2019, estimated]
     membrane_area_cm2: Optional[float] = None  # cm², required for passive integration; APPROXIMATION (test-only reference)
+    provenance: Dict[str, ProvenanceRecord] = field(default_factory=lambda: dict(_DEFAULT_PARAMS_PROVENANCE))
 
 
 @dataclass

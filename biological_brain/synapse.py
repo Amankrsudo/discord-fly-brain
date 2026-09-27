@@ -1,7 +1,9 @@
 """Synapse model for Biological Brain 3.0."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
+from typing import List
+from .provenance import ParameterProvenance, evidence_to_provenance
 
 
 class Sign(Enum):
@@ -12,7 +14,11 @@ class Sign(Enum):
 
 @dataclass
 class Synapse:
-    """Biological connection between neurons."""
+    """Biological connection between neurons.
+
+    Provenance metadata (evidence, provenance) is optional and defaults
+    to empty lists, preserving backward compatibility.
+    """
     source: str
     target: str
     weight: float = 1.0
@@ -22,6 +28,8 @@ class Synapse:
     enabled: bool = True
     synapse_type: str = "chemical"  # "chemical" or "electrical" (gap junction)
     conductance: float = 0.0  # gap junction conductance in µS (electrical only)
+    evidence: List[str] = field(default_factory=list)  # raw JSON evidence strings, preserved verbatim
+    provenance: List[ParameterProvenance] = field(default_factory=list)  # structured provenance derived from evidence
 
     def effective_weight(self) -> float:
         """Get the signed weight for propagation."""

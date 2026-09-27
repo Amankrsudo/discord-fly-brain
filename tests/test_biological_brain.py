@@ -1894,3 +1894,72 @@ class TestConductanceAccumulatorLifecycle:
         # Step 2: accumulator must be 0, not carrying stale 2700 nA
         engine.step({})
         assert n_post.conductance_state.I_elec_accumulator == 0.0
+
+
+class TestProvenanceMetadata:
+    """3.0D-1A: Structured Parameter Provenance — metadata-only tests."""
+
+    def test_parameter_provenance_enum_has_all_categories(self):
+        """ParameterProvenance enum exposes all 8 taxonomy categories from the roadmap."""
+        from biological_brain.provenance import ParameterProvenance
+        expected = {
+            "DIRECTLY_MEASURED",
+            "EXPERIMENTALLY_CONSTRAINED",
+            "CONNECTOME_DERIVED",
+            "PUBLISHED_MODEL_PARAMETER",
+            "BORROWED_CROSS_CONTEXT",
+            "FITTED_CALIBRATED",
+            "ESTIMATED",
+            "UNKNOWN",
+        }
+        actual = {e.name for e in ParameterProvenance}
+        assert expected == actual
+
+    def test_synapse_preserves_json_evidence(self):
+        """Synapse objects constructed from escape_circuit.json preserve evidence strings and map to provenance enums."""
+        from biological_brain import BIOLOGICAL_CIRCUITS, BiologicalMode, BiologicalBrain
+        from biological_brain.provenance import ParameterProvenance
+        BIOLOGICAL_CIRCUITS["escape"] = True
+        brain = BiologicalBrain(mode=BiologicalMode.BIOLOGICAL_3_0)
+        circuit = brain.circuits.get("escape_core")
+        assert circuit is not None
+
+        # Electrical synapse should have INFERRED + APPROXIMATION evidence
+        elec_syn = None
+        for syn in circuit.synapses:
+            if syn.synapse_type == "electrical":
+                elec_syn = syn
+                break
+        assert elec_syn is not None
+        assert "INFERRED" in elec_syn.evidence
+        assert "APPROXIMATION" in elec_syn.evidence
+        # INFERRED and APPROXIMATION are ambiguous — mapped to UNKNOWN conservatively
+        assert ParameterProvenance.UNKNOWN in elec_syn.provenance
+        assert ParameterProvenance.BORROWED_CROSS_CONTEXT not in elec_syn.provenance
+        assert ParameterProvenance.FITTED_CALIBRATED not in elec_syn.provenance
+
+        # gap-junction conductance value is unchanged (135 uS)
+        assert elec_syn.conductance == 135.0
+
+        BIOLOGICAL_CIRCUITS["escape"] = False
+
+    def test_conductance_params_have_provenance_records(self):
+        """ConductanceParams exposes a provenance dict with records for all defined parameters."""
+        from biological_brain.dynamics.conductance import ConductanceParams
+        from biological_brain.provenance import ParameterProvenance, ProvenanceRecord
+
+        params = ConductanceParams()
+        assert params.provenance is not None
+        assert len(params.provenance) == 13
+
+        # Spot-check key classifications
+        assert params.provenance["E_leak"].category == ParameterProvenance.PUBLISHED_MODEL_PARAMETER
+        assert params.provenance["g_leak"].category == ParameterProvenance.ESTIMATED
+        assert params.provenance["g_syn_peak_us"].category == ParameterProvenance.BORROWED_CROSS_CONTEXT
+        assert params.provenance["V_threshold"].category == ParameterProvenance.FITTED_CALIBRATED
+        assert params.provenance["membrane_area_cm2"].category == ParameterProvenance.UNKNOWN
+
+        # All records have a non-empty source string
+        for name, rec in params.provenance.items():
+            assert isinstance(rec, ProvenanceRecord)
+            assert rec.source != ""

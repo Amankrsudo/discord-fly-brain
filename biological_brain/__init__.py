@@ -10,6 +10,7 @@ from .neuron import Neuron
 from .synapse import Synapse, Sign
 from .neural_engine import NeuralEngine
 from .signals import SignalTranslator
+from .provenance import ParameterProvenance, ProvenanceRecord, evidence_to_provenance
 from .dynamics import DynamicsModel, LIFVoltageModel, ConductanceDynamicsModel, ConductanceParams, ConductanceNeuronState, attach_conductance_state, MODEL_NAME_LIF_VOLTAGE, MODEL_NAME_CONDUCTANCE_V0
 
 
@@ -96,6 +97,9 @@ class BiologicalBrain:
             bio_sig = sd["sign"]
             sign = Sign.EXCITATORY if bio_sig == "excitatory" else Sign.INHIBITORY
 
+            evidence = sd.get("evidence", [])
+            provenance = evidence_to_provenance(evidence)
+
             c.add_synapse(Synapse(
                 source=src, target=tgt,
                 weight=sd["weight_mV"], sign=sign,
@@ -103,6 +107,8 @@ class BiologicalBrain:
                 neurotransmitter=sd.get("neurotransmitter", "unknown"),
                 synapse_type=sd.get("type", "chemical"),
                 conductance=sd.get("gap_junction_conductance_us", 0.0),
+                evidence=evidence,
+                provenance=provenance,
             ))
         
         io = circuit_def["circuit_io"]
@@ -202,4 +208,6 @@ __all__ = [
     "attach_conductance_state",
     "MODEL_NAME_LIF_VOLTAGE",
     "MODEL_NAME_CONDUCTANCE_V0",
+    "ParameterProvenance",
+    "ProvenanceRecord",
 ]
