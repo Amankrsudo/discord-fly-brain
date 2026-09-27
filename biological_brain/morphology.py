@@ -37,7 +37,8 @@ class CompartmentGeometry:
     Do NOT assign default biological values here.
     """
     length_um: Optional[float] = None  # compartment length (µm)
-    diameter_um: Optional[float] = None  # compartment diameter (µm)
+    diameter_um: Optional[float] = None  # proximal compartment diameter (µm)
+    diameter_distal_um: Optional[float] = None  # distal diameter for tapered compartments (µm)
     position: Optional[Tuple[float, float, float]] = None  # (x, y, z)
     anatomical_role: Optional[str] = None  # e.g. "soma", "dendrite", "axon"
 
@@ -60,6 +61,7 @@ class CompartmentProvenance:
     """
     length_um: ProvenanceRecord = field(default_factory=_unknown_provenance)
     diameter_um: ProvenanceRecord = field(default_factory=_unknown_provenance)
+    diameter_distal_um: ProvenanceRecord = field(default_factory=_unknown_provenance)
     position: ProvenanceRecord = field(default_factory=_unknown_provenance)
     anatomical_role: ProvenanceRecord = field(default_factory=_unknown_provenance)
 
@@ -95,6 +97,19 @@ class CompartmentState:
 
 
 @dataclass
+class PlacementRecord:
+    """Records a contact or input placement on a compartment.
+
+    Stores distance from proximal end, kind ('contact' or 'input'),
+    description, and the provenance of the distance value.
+    """
+    distance_um: float
+    kind: str
+    description: str = ""
+    provenance: ProvenanceRecord = field(default_factory=_unknown_provenance)
+
+
+@dataclass
 class Compartment:
     """A single compartment in a multi-compartment neuron model.
 
@@ -104,6 +119,9 @@ class Compartment:
     3. Cable params — cable_params (CableParameters)
     4. Provenance   — provenance (CompartmentProvenance)
     5. State        — state (CompartmentState)
+
+    placements: List[PlacementRecord] stores contact/input metadata
+    (distances from proximal end) for future synaptic location mapping.
     """
     compartment_id: str
     parent_id: Optional[str] = None
@@ -112,6 +130,7 @@ class Compartment:
     cable_params: CableParameters = field(default_factory=CableParameters)
     provenance: CompartmentProvenance = field(default_factory=CompartmentProvenance)
     state: CompartmentState = field(default_factory=CompartmentState)
+    placements: List[PlacementRecord] = field(default_factory=list)
 
 
 @dataclass

@@ -2991,3 +2991,153 @@ def _assert_published_model_parameter(param):
         assert param.provenance.category == ParameterProvenance.ESTIMATED
     else:
         assert param.provenance.category == ParameterProvenance.PUBLISHED_MODEL_PARAMETER
+
+
+class TestCompartmentTopologyConstruction:
+    """3.0D-7C: Build CompartmentModel from source-backed GFS morphology."""
+
+    def test_deterministic_construction(self):
+        """Building twice produces identical compartment models."""
+        from biological_brain.morphology_builder import build_gfs_compartment_models
+
+        m1 = build_gfs_compartment_models()
+        m2 = build_gfs_compartment_models()
+        assert set(m1.keys()) == set(m2.keys())
+        for neuron_type in m1:
+            c1 = m1[neuron_type]
+            c2 = m2[neuron_type]
+            assert set(c1.compartments.keys()) == set(c2.compartments.keys())
+            for cid in c1.compartments:
+                assert c1.compartments[cid].geometry.length_um == c2.compartments[cid].geometry.length_um
+                assert c1.compartments[cid].geometry.diameter_um == c2.compartments[cid].geometry.diameter_um
+
+    def test_expected_gfs_neuron_topology(self):
+        """Each GFS neuron has soma root + expected section compartments."""
+        from biological_brain.morphology_builder import build_gfs_compartment_models
+
+        models = build_gfs_compartment_models()
+
+        # GF: soma + axon + medial_dendrite
+        gf = models["GF"]
+        assert "GF_soma" in gf.compartments
+        assert "GF_axon" in gf.compartments
+        assert "GF_medial_dendrite" in gf.compartments
+
+        # TTMn: soma + axon + medial_dendrite + lateral_dendrite
+        ttmn = models["TTMn"]
+        assert "TTMn_soma" in ttmn.compartments
+        assert "TTMn_axon" in ttmn.compartments
+        assert "TTMn_medial_dendrite" in ttmn.compartments
+        assert "TTMn_lateral_dendrite" in ttmn.compartments
+
+        # PSI: soma + axon + dendrite
+        psi = models["PSI"]
+        assert "PSI_soma" in psi.compartments
+        assert "PSI_axon" in psi.compartments
+        assert "PSI_dendrite" in psi.compartments
+
+        # DLMn: soma + dendrite + axon
+        dlmn = models["DLMn"]
+        assert "DLMn_soma" in dlmn.compartments
+        assert "DLMn_dendrite" in dlmn.compartments
+        assert "DLMn_axon" in dlmn.compartments
+
+    def test_parent_child_connectivity(self):
+        """All section compartments have soma as parent."""
+        from biological_brain.morphology_builder import build_gfs_compartment_models
+
+        models = build_gfs_compartment_models()
+        for neuron_type, model in models.items():
+            soma_id = f"{neuron_type}_soma"
+            soma = model.compartments[soma_id]
+            assert soma.parent_id is None  # root
+            for comp_id in soma.neighbor_ids:
+                child = model.compartments[comp_id]
+                assert child.parent_id == soma_id
+
+    def test_geometry_provenance_preserved(self):
+        """Geometry values and provenance are transferred from source to compartment."""
+        from biological_brain.morphology_builder import build_gfs_compartment_models
+        from biological_brain.provenance import ParameterProvenance
+
+        models = build_gfs_compartment_models()
+        dlmn = models["DLMn"]
+
+        axon = dlmn.compartments["DLMn_axon"]
+        assert axon.geometry.length_um == 50.0
+        assert axon.provenance.length_um.category == ParameterProvenance.PUBLISHED_MODEL_PARAMETER
+
+        assert axon.geometry.diameter_um == 2.0
+        assert axon.geometry.diameter_distal_um == 4.0
+        assert axon.provenance.diameter_distal_um.category == ParameterProvenance.PUBLISHED_MODEL_PARAMETER
+
+    def test_distal_diameter_preserved_not_averaged(self):
+        """DLMn axon preserves both proximal (2) and distal (4) diameters."""
+        from biological_brain.morphology_builder import build_gfs_compartment_models
+
+        models = build_gfs_compartment_models()
+        axon = models["DLMn"].compartments["DLMn_axon"]
+        assert axon.geometry.diameter_um == 2.0
+        assert axon.geometry.diameter_distal_um == 4.0
+
+    def test_psi_dendrite_provenance_estimated(self):
+        """PSI dendrite length retains ESTIMATED provenance through conversion."""
+        from biological_brain.morphology_builder import build_gfs_compartment_models
+        from biological_brain.provenance import ParameterProvenance
+
+        models = build_gfs_compartment_models()
+        dend = models["PSI"].compartments["PSI_dendrite"]
+        assert dend.geometry.length_um == 170.0
+        assert dend.provenance.length_um.category == ParameterProvenance.ESTIMATED
+
+    def test_placement_metadata_preserved(self):
+        """Contact/input placements are attached to the correct compartments."""
+        from biological_brain.morphology_builder import build_gfs_compartment_models
+
+        models = build_gfs_compartment_models()
+
+        # GF axon: 2 contacts
+        gf_axon = models["GF"].compartments["GF_axon"]
+        assert len(gf_axon.placements) == 2
+        distances = sorted(p.distance_um for p in gf_axon.placements)
+        assert distances == [360.0, 400.0]
+
+        # GF medial_dendrite: 1 input
+        gf_dend = models["GF"].compartments["GF_medial_dendrite"]
+        assert len(gf_dend.placements) == 1
+        assert gf_dend.placements[0].distance_um == 12.0
+
+        # PSI axon: 1 input + 1 contact = 2
+        psi_axon = models["PSI"].compartments["PSI_axon"]
+        assert len(psi_axon.placements) == 2
+
+        # DLMn axon: 1 input
+        dlmn_axon = models["DLMn"].compartments["DLMn_axon"]
+        assert len(dlmn_axon.placements) == 1
+        assert dlmn_axon.placements[0].distance_um == 12.5
+
+    def test_no_invented_cable_parameters(self):
+        """No axial resistance, capacitance, leak, or reversal potentials assigned."""
+        from biological_brain.morphology_builder import build_gfs_compartment_models
+
+        models = build_gfs_compartment_models()
+        for model in models.values():
+            for comp in model.compartments.values():
+                assert comp.cable_params.axial_resistance_ohm_cm is None
+                assert comp.cable_params.membrane_capacitance_uf_per_cm2 is None
+                assert comp.cable_params.leak_conductance_ms_per_cm2 is None
+                assert comp.cable_params.leak_reversal_mV is None
+
+    def test_neuron_backward_compatible_without_compartment_model(self):
+        """Existing Neuron without compartment_model still works unchanged."""
+        n = Neuron("n", resting_potential=-70.0, threshold=-55.0, tau_m=10.0)
+        assert n.compartment_model is None
+
+        c = Circuit("test")
+        c.add_neuron(n)
+        c.input_neurons = ["n"]
+        c.output_neurons = ["n"]
+
+        engine = NeuralEngine(c)
+        engine.step({"n": 10.0})
+        assert n.membrane_potential > -70.0
