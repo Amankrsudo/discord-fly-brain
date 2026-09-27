@@ -14,6 +14,7 @@ from .provenance import ParameterProvenance, ProvenanceRecord, evidence_to_prove
 from .morphology import Compartment, CompartmentModel, CompartmentGeometry, CompartmentProvenance, CableParameters, CompartmentState, PlacementRecord
 from .gfs_morphology import GFSMorphology, NeuronSpec, CompartmentSpec, PlacementSpec, MorphologyParameter, get_gfs_morphology
 from .morphology_builder import build_compartment_model, build_gfs_compartment_models
+from .geometry_metrics import CompartmentMetrics, compute_compartment_metrics, compute_all_metrics, assert_no_electrical_parameters
 from .dynamics import DynamicsModel, LIFVoltageModel, ConductanceDynamicsModel, ConductanceParams, ConductanceNeuronState, attach_conductance_state, MODEL_NAME_LIF_VOLTAGE, MODEL_NAME_CONDUCTANCE_V0
 
 
@@ -228,4 +229,8 @@ __all__ = [
     "get_gfs_morphology",
     "build_compartment_model",
     "build_gfs_compartment_models",
+    "CompartmentMetrics",
+    "compute_compartment_metrics",
+    "compute_all_metrics",
+    "assert_no_electrical_parameters",
 ]

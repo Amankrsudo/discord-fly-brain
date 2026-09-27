@@ -3141,3 +3141,124 @@ class TestCompartmentTopologyConstruction:
         engine = NeuralEngine(c)
         engine.step({"n": 10.0})
         assert n.membrane_potential > -70.0
+
+
+class TestCompartmentGeometryMetrics:
+    """3.0D-7D: Geometry-derived compartment metrics (no electrical parameters)."""
+
+    def test_exact_cylinder_cross_sectional_area(self):
+        """Cross-sectional area = π * d² / 4 for a cylindrical compartment."""
+        from math import pi
+        from biological_brain.morphology import Compartment, CompartmentGeometry
+        from biological_brain.geometry_metrics import compute_compartment_metrics
+
+        comp = Compartment(
+            compartment_id="cyl",
+            geometry=CompartmentGeometry(length_um=100.0, diameter_um=10.0),
+        )
+        m = compute_compartment_metrics(comp)
+        assert m.cross_sectional_area_um2 == pytest.approx(pi * 10.0 ** 2 / 4)
+
+    def test_exact_cylinder_lateral_surface_area(self):
+        """Lateral surface area = π * d * L for a cylinder."""
+        from math import pi
+        from biological_brain.morphology import Compartment, CompartmentGeometry
+        from biological_brain.geometry_metrics import compute_compartment_metrics
+
+        comp = Compartment(
+            compartment_id="cyl",
+            geometry=CompartmentGeometry(length_um=100.0, diameter_um=10.0),
+        )
+        m = compute_compartment_metrics(comp)
+        assert m.lateral_surface_area_um2 == pytest.approx(pi * 10.0 * 100.0)
+
+    def test_exact_cylinder_volume(self):
+        """Volume = π * d² * L / 4 for a cylinder."""
+        from math import pi
+        from biological_brain.morphology import Compartment, CompartmentGeometry
+        from biological_brain.geometry_metrics import compute_compartment_metrics
+
+        comp = Compartment(
+            compartment_id="cyl",
+            geometry=CompartmentGeometry(length_um=100.0, diameter_um=10.0),
+        )
+        m = compute_compartment_metrics(comp)
+        assert m.volume_um3 == pytest.approx(pi * 10.0 ** 2 * 100.0 / 4)
+
+    def test_tapered_section_frustum_formulas(self):
+        """DLMn axon taper: proximal=2 um, distal=4 um, length=50 um."""
+        from math import pi, sqrt
+        from biological_brain.morphology import Compartment, CompartmentGeometry
+        from biological_brain.geometry_metrics import compute_compartment_metrics
+
+        comp = Compartment(
+            compartment_id="dlmn_axon",
+            geometry=CompartmentGeometry(
+                length_um=50.0,
+                diameter_um=2.0,
+                diameter_distal_um=4.0,
+            ),
+        )
+        m = compute_compartment_metrics(comp)
+        assert m.is_tapered is True
+        assert m.cross_sectional_area_um2 is None
+        assert m.proximal_cross_sectional_area_um2 == pytest.approx(pi * 2.0 ** 2 / 4)
+        assert m.distal_cross_sectional_area_um2 == pytest.approx(pi * 4.0 ** 2 / 4)
+
+        # Frustum lateral surface area
+        r1, r2, L = 1.0, 2.0, 50.0
+        slant = sqrt((r1 - r2) ** 2 + L ** 2)
+        expected_lateral = pi * (r1 + r2) * slant
+        assert m.lateral_surface_area_um2 == pytest.approx(expected_lateral)
+
+        # Frustum volume
+        expected_volume = (pi * L / 3) * (r1 ** 2 + r2 ** 2 + r1 * r2)
+        assert m.volume_um3 == pytest.approx(expected_volume)
+
+    def test_missing_geometry_returns_none(self):
+        """Compartment with no diameter cannot compute any metrics."""
+        from biological_brain.morphology import Compartment, CompartmentGeometry
+        from biological_brain.geometry_metrics import compute_compartment_metrics
+
+        comp = Compartment(
+            compartment_id="unknown",
+            geometry=CompartmentGeometry(),
+        )
+        m = compute_compartment_metrics(comp)
+        assert m.cross_sectional_area_um2 is None
+        assert m.lateral_surface_area_um2 is None
+        assert m.volume_um3 is None
+        assert "diameter_um is None" in m.derivation_note
+
+    def test_provenance_links_to_source_geometry(self):
+        """Derived metrics provenance references source geometry fields."""
+        from biological_brain.morphology import (
+            Compartment, CompartmentGeometry, CompartmentProvenance,
+        )
+        from biological_brain.provenance import ParameterProvenance, ProvenanceRecord
+        from biological_brain.geometry_metrics import compute_compartment_metrics
+
+        comp = Compartment(
+            compartment_id="cyl",
+            geometry=CompartmentGeometry(length_um=100.0, diameter_um=10.0),
+            provenance=CompartmentProvenance(
+                length_um=ProvenanceRecord(ParameterProvenance.PUBLISHED_MODEL_PARAMETER, "source1"),
+                diameter_um=ProvenanceRecord(ParameterProvenance.ESTIMATED, "source2"),
+            ),
+        )
+        m = compute_compartment_metrics(comp)
+        assert ParameterProvenance.UNKNOWN == m.provenance.category
+        assert "diameter_um(ESTIMATED)" in m.provenance.source
+        assert "length_um(PUBLISHED_MODEL_PARAMETER)" in m.provenance.source
+
+    def test_no_cable_parameters_populated(self):
+        """Computing metrics does NOT populate CableParameters."""
+        from biological_brain.morphology import Compartment, CompartmentGeometry
+        from biological_brain.geometry_metrics import compute_compartment_metrics, assert_no_electrical_parameters
+
+        comp = Compartment(
+            compartment_id="cyl",
+            geometry=CompartmentGeometry(length_um=100.0, diameter_um=10.0),
+        )
+        compute_compartment_metrics(comp)
+        assert_no_electrical_parameters(comp)
