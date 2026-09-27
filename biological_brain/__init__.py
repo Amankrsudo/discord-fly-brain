@@ -11,6 +11,7 @@ from .synapse import Synapse, Sign
 from .neural_engine import NeuralEngine
 from .signals import SignalTranslator
 from .provenance import ParameterProvenance, ProvenanceRecord, evidence_to_provenance
+from .morphology import Compartment, CompartmentModel, CompartmentGeometry, CompartmentProvenance, CableParameters, CompartmentState
 from .dynamics import DynamicsModel, LIFVoltageModel, ConductanceDynamicsModel, ConductanceParams, ConductanceNeuronState, attach_conductance_state, MODEL_NAME_LIF_VOLTAGE, MODEL_NAME_CONDUCTANCE_V0
 
 
@@ -210,4 +211,10 @@ __all__ = [
     "MODEL_NAME_CONDUCTANCE_V0",
     "ParameterProvenance",
     "ProvenanceRecord",
+    "Compartment",
+    "CompartmentModel",
+    "CompartmentGeometry",
+    "CompartmentProvenance",
+    "CableParameters",
+    "CompartmentState",
 ]

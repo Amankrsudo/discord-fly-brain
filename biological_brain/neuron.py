@@ -8,6 +8,7 @@ from .synapse import Synapse
 
 if TYPE_CHECKING:
     from .dynamics.conductance import ConductanceNeuronState
+    from .morphology import CompartmentModel
 
 
 @dataclass
@@ -24,6 +25,10 @@ class Neuron:
     The conductance_state field is optional and only used when the
     conductance_v0 dynamics model is selected. It defaults to None,
     preserving all existing LIF behavior.
+
+    The compartment_model field is for future multi-compartment/cable
+    modeling (3.0D-7A). It defaults to None, preserving the current
+    single-compartment behavior. No passive solver or HH is implemented.
     """
     neuron_id: str
     cell_type: str = "unknown"
@@ -40,6 +45,7 @@ class Neuron:
     incoming: List[Synapse] = field(default_factory=list)
     conductance_state: Optional[ConductanceNeuronState] = None
     dynamics_model: Optional[str] = None  # per-neuron dynamics backend; None = engine default
+    compartment_model: Optional["CompartmentModel"] = None  # multi-compartment model; None = single-compartment behavior
 
     def __post_init__(self):
         """Initialize membrane potential to resting potential."""

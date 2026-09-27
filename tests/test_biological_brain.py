@@ -2792,3 +2792,74 @@ class TestMixedDynamicsValidation:
 
         with pytest.raises(NotImplementedError):
             model.integrate(n, 0.0)
+
+
+class TestCompartmentArchitecture:
+    """3.0D-7A: Compartment/morphology architecture (no invented biology)."""
+
+    def test_compartment_has_no_invented_geometry(self):
+        """A compartment can be represented without any biological geometry values."""
+        from biological_brain.morphology import Compartment
+
+        comp = Compartment(compartment_id="c0")
+        assert comp.geometry.length_um is None
+        assert comp.geometry.diameter_um is None
+        assert comp.geometry.position is None
+        assert comp.geometry.anatomical_role is None
+
+    def test_compartments_form_parent_child_topology(self):
+        """Compartments can form a parent/neighbor topology without biology."""
+        from biological_brain.morphology import Compartment, CompartmentModel
+
+        model = CompartmentModel(neuron_id="n0")
+        parent = Compartment(compartment_id="parent")
+        child = Compartment(compartment_id="child")
+        model.add_compartment(parent)
+        model.add_compartment(child)
+        model.add_connection("parent", "child")
+
+        assert child.parent_id == "parent"
+        assert "child" in parent.neighbor_ids
+
+    def test_geometry_remains_explicitly_unknown(self):
+        """Geometry defaults to None, not an invented default value."""
+        from biological_brain.morphology import CompartmentGeometry
+
+        geom = CompartmentGeometry()
+        assert geom.length_um is None
+        assert geom.diameter_um is None
+
+    def test_provenance_attached_to_future_morphology(self):
+        """Provenance records can be attached to geometry fields."""
+        from biological_brain.morphology import CompartmentGeometry, CompartmentProvenance
+        from biological_brain.provenance import ParameterProvenance, ProvenanceRecord
+
+        prov = CompartmentProvenance(
+            length_um=ProvenanceRecord(ParameterProvenance.DIRECTLY_MEASURED, "Boerner & Godenschwege 2010"),
+            diameter_um=ProvenanceRecord(ParameterProvenance.ESTIMATED, "Augustin et al. 2019"),
+        )
+        assert prov.length_um.category == ParameterProvenance.DIRECTLY_MEASURED
+        assert prov.diameter_um.category == ParameterProvenance.ESTIMATED
+
+    def test_neuron_backward_compatible_without_compartment_model(self):
+        """Neuron without compartment_model behaves identically to before."""
+        n = Neuron("n", resting_potential=-70.0, threshold=-55.0, tau_m=10.0)
+        assert n.compartment_model is None
+
+        c = Circuit("test")
+        c.add_neuron(n)
+        c.input_neurons = ["n"]
+        c.output_neurons = ["n"]
+
+        engine = NeuralEngine(c)
+        engine.step({"n": 10.0})
+        assert n.membrane_potential > -70.0
+
+    def test_no_passive_solver_required(self):
+        """CompartmentModel exists without any integration/solver methods."""
+        from biological_brain.morphology import CompartmentModel
+
+        model = CompartmentModel(neuron_id="n0")
+        assert not hasattr(model, "integrate")
+        assert not hasattr(model, "solve_cable")
+        assert not hasattr(model, "compute_axial_current")
