@@ -1963,3 +1963,617 @@ class TestProvenanceMetadata:
         for name, rec in params.provenance.items():
             assert isinstance(rec, ProvenanceRecord)
             assert rec.source != ""
+
+
+class TestConductanceInvariantValidation:
+    """3.0C Phase 2 Step 7: Invariant validation experiments for conductance_v0.
+
+    7 invariant experiments, 17 test methods. VALIDATION ONLY — no new
+    biological mechanisms. Parameters from PMC6469880 Table 1 or test-only
+    fixtures. No inventions of HH parameters.
+
+    Experiments:
+      1. Multi-timestep passive Forward Euler integration (3 tests)
+      2. Leak current dominance and direction (2 tests)
+      3. Gap-junction voltage coupling (3 tests)
+      4. Chemical synapse conductance accumulation and decay (2 tests)
+      5. Chemical synaptic current effect on membrane voltage (2 tests)
+      6. Reduced threshold-crossing spike-event adapter (3 tests)
+      7. Refractory, unit, and electrical-exclusion constraints (2 tests)
+    """
+
+    # === Invariant 1: Multi-timestep Passive Forward Euler Integration ===
+
+    def test_passive_decay_toward_el_leak_multi_tick(self):
+        """Experiment 1a: Without input, V decays toward E_leak (-85 mV) across ticks.
+
+        Forward Euler: dV/dt = -g_leak*(V - E_leak) / C_m
+        Starting at V=-70 (above E_leak), V should decrease toward -85.
+        """
+        from biological_brain.dynamics import attach_conductance_state, get_model
+        from biological_brain.dynamics.conductance import ConductanceParams
+
+        n = Neuron("n", resting_potential=-65.0, threshold=-45.0, tau_m=10.0)
+        attach_conductance_state(n, params=ConductanceParams(membrane_area_cm2=1.0))
+        model = get_model("conductance_v0")
+
+        n.conductance_state.V = -70.0
+        n.membrane_potential = -70.0
+
+        for _ in range(5):
+            model.integrate(n, 0.0)
+
+        assert n.conductance_state.V < -70.0
+
+    def test_forward_euler_deterministic_same_input_same_output(self):
+        """Experiment 1b: Deterministic — same state and inputs produce identical V."""
+        from biological_brain.dynamics import attach_conductance_state, get_model
+        from biological_brain.dynamics.conductance import ConductanceParams
+
+        model = get_model("conductance_v0")
+
+        n1 = Neuron("n1", resting_potential=-65.0, threshold=-45.0, tau_m=10.0)
+        n2 = Neuron("n2", resting_potential=-65.0, threshold=-45.0, tau_m=10.0)
+        attach_conductance_state(n1, params=ConductanceParams(membrane_area_cm2=1.0))
+        attach_conductance_state(n2, params=ConductanceParams(membrane_area_cm2=1.0))
+
+        n1.conductance_state.V = -60.0
+        n2.conductance_state.V = -60.0
+        n1.membrane_potential = -60.0
+        n2.membrane_potential = -60.0
+        n1.conductance_state.g_syn = 10.0
+        n2.conductance_state.g_syn = 10.0
+        n1.conductance_state.I_elec_accumulator = 5.0
+        n2.conductance_state.I_elec_accumulator = 5.0
+
+        model.integrate(n1, 3.0)
+        model.integrate(n2, 3.0)
+
+        assert n1.conductance_state.V == pytest.approx(n2.conductance_state.V)
+
+    def test_forward_euler_matches_manual_computation(self):
+        """Experiment 1c: Single-timestep V matches hand-computed Forward Euler.
+
+        V=-70, g_leak=0.03 mS/cm^2, E_leak=-85 mV, C_m=1.0 uF/cm^2, no input.
+        I_leak = 0.03*(-70-(-85)) = 0.45 uA/cm^2
+        dV/dt = -0.45/1.0 = -0.45 mV/ms -> V_new = -70.45
+        """
+        from biological_brain.dynamics import attach_conductance_state, get_model
+        from biological_brain.dynamics.conductance import ConductanceParams
+
+        n = Neuron("n", resting_potential=-65.0, threshold=-45.0, tau_m=10.0)
+        attach_conductance_state(n, params=ConductanceParams(membrane_area_cm2=1.0))
+        model = get_model("conductance_v0")
+
+        n.conductance_state.V = -70.0
+        n.membrane_potential = -70.0
+
+        model.integrate(n, 0.0)
+
+        expected = -70.0 + 1.0 * (-(0.03 * (-70.0 - (-85.0))) / 1.0)
+        assert n.conductance_state.V == pytest.approx(expected, abs=1e-10)
+        assert n.membrane_potential == pytest.approx(expected, abs=1e-10)
+
+    # === Invariant 2: Leak Current Dominance and Direction ===
+
+    def test_leak_drives_voltage_toward_el_leak_from_above(self):
+        """Experiment 2a: V above E_leak -> V decreases (toward E_leak)."""
+        from biological_brain.dynamics import attach_conductance_state, get_model
+        from biological_brain.dynamics.conductance import ConductanceParams
+
+        n = Neuron("n", resting_potential=-65.0, threshold=-45.0, tau_m=10.0)
+        attach_conductance_state(n, params=ConductanceParams(membrane_area_cm2=1.0))
+        model = get_model("conductance_v0")
+
+        n.conductance_state.V = -60.0
+        n.membrane_potential = -60.0
+
+        model.integrate(n, 0.0)
+
+        # I_leak = 0.03*(-60-(-85)) = 0.75 > 0 (outward/hyperpolarizing)
+        # dV/dt = -0.75 -> V should decrease
+        assert n.conductance_state.V < -60.0
+
+    def test_leak_drives_voltage_toward_el_leak_from_below(self):
+        """Experiment 2b: V below E_leak -> V increases (toward E_leak)."""
+        from biological_brain.dynamics import attach_conductance_state, get_model
+        from biological_brain.dynamics.conductance import ConductanceParams
+
+        n = Neuron("n", resting_potential=-65.0, threshold=-45.0, tau_m=10.0)
+        attach_conductance_state(n, params=ConductanceParams(membrane_area_cm2=1.0))
+        model = get_model("conductance_v0")
+
+        n.conductance_state.V = -90.0
+        n.membrane_potential = -90.0
+
+        model.integrate(n, 0.0)
+
+        # I_leak = 0.03*(-90-(-85)) = -0.15 < 0 (inward/depolarizing)
+        # dV/dt = +0.15 -> V should increase
+        assert n.conductance_state.V > -90.0
+
+    # === Invariant 3: Gap-Junction Voltage Coupling ===
+
+    def test_electrical_current_drives_post_voltage(self):
+        """Experiment 3a (Regression A): Electrical current depolarizes postsynaptic V.
+
+        V_pre=-50, V_post=-70, g_gap=135 uS, area=1.0.
+        I_elec = 135*(-50-(-70)) = 2700 nA
+        I_elec_density = 2700/(1000*1.0) = 2.7 uA/cm^2
+        I_leak = 0.03*(-70-(-85)) = 0.45 uA/cm^2
+        dV/dt = (-0.45 + 2.7)/1.0 = 2.25 -> V_new = -70+2.25 = -67.75
+        """
+        from biological_brain.dynamics import attach_conductance_state
+        from biological_brain.dynamics.conductance import ConductanceParams
+
+        params = ConductanceParams(membrane_area_cm2=1.0)
+        n_pre = Neuron("pre", resting_potential=-65.0, threshold=-45.0, tau_m=100.0)
+        n_post = Neuron("post", resting_potential=-65.0, threshold=-45.0, tau_m=100.0)
+        attach_conductance_state(n_pre, params=ConductanceParams(membrane_area_cm2=1.0))
+        attach_conductance_state(n_post, params=ConductanceParams(membrane_area_cm2=1.0))
+
+        c = Circuit("test")
+        c.add_neuron(n_pre)
+        c.add_neuron(n_post)
+        c.add_synapse(Synapse("pre", "post", sign=Sign.EXCITATORY, delay=1,
+                              synapse_type="electrical", conductance=135.0))
+        c.input_neurons = []
+        c.output_neurons = ["post"]
+
+        engine = NeuralEngine(c, dynamics_model="conductance_v0")
+
+        n_pre.membrane_potential = -50.0
+        n_post.membrane_potential = -70.0
+        n_pre.conductance_state.V = -50.0
+        n_post.conductance_state.V = -70.0
+
+        engine.step({})
+
+        # Post should have depolarized toward pre
+        assert n_post.conductance_state.V > -70.0
+        assert n_post.conductance_state.I_elec_accumulator == 0.0  # cleared
+
+    def test_gap_current_hyperpolarizes_when_pre_below_post(self):
+        """Experiment 3b: V_pre < V_post -> I_elec < 0 -> V_post hyperpolarizes.
+
+        V_pre=-90, V_post=-70, g_gap=135 uS, area=1.0.
+        I_elec = 135*(-90-(-70)) = -2700 nA
+        I_elec_density = -2.7 uA/cm^2
+        I_leak = 0.45, dV/dt = (-0.45 - 2.7)/1.0 = -3.15 -> V_new = -73.15
+        """
+        from biological_brain.dynamics import attach_conductance_state
+        from biological_brain.dynamics.conductance import ConductanceParams
+
+        params = ConductanceParams(membrane_area_cm2=1.0)
+        n_pre = Neuron("pre", resting_potential=-65.0, threshold=-45.0, tau_m=100.0)
+        n_post = Neuron("post", resting_potential=-65.0, threshold=-45.0, tau_m=100.0)
+        attach_conductance_state(n_pre, params=ConductanceParams(membrane_area_cm2=1.0))
+        attach_conductance_state(n_post, params=ConductanceParams(membrane_area_cm2=1.0))
+
+        c = Circuit("test")
+        c.add_neuron(n_pre)
+        c.add_neuron(n_post)
+        c.add_synapse(Synapse("pre", "post", sign=Sign.EXCITATORY, delay=1,
+                              synapse_type="electrical", conductance=135.0))
+        c.input_neurons = []
+        c.output_neurons = ["post"]
+
+        engine = NeuralEngine(c, dynamics_model="conductance_v0")
+
+        n_pre.membrane_potential = -90.0
+        n_post.membrane_potential = -70.0
+        n_pre.conductance_state.V = -90.0
+        n_post.conductance_state.V = -70.0
+
+        engine.step({})
+
+        # Post should have hyperpolarized (moved away from pre, toward E_leak)
+        assert n_post.conductance_state.V < -70.0
+
+    def test_no_conductance_doubling_single_synapse(self):
+        """Experiment 3c: Each directional electrical synapse processed exactly once.
+
+        With a single electrical synapse (pre->post, g=135),
+        I_elec_accumulator should be exactly 135*(V_pre - V_post), not doubled.
+        """
+        from biological_brain.dynamics import attach_conductance_state
+        from biological_brain.dynamics.conductance import ConductanceParams
+
+        params = ConductanceParams(membrane_area_cm2=1.0)
+        n_pre = Neuron("pre", resting_potential=-65.0, threshold=-45.0, tau_m=100.0)
+        n_post = Neuron("post", resting_potential=-65.0, threshold=-45.0, tau_m=100.0)
+        attach_conductance_state(n_pre, params=ConductanceParams(membrane_area_cm2=1.0))
+        attach_conductance_state(n_post, params=ConductanceParams(membrane_area_cm2=1.0))
+
+        c = Circuit("test")
+        c.add_neuron(n_pre)
+        c.add_neuron(n_post)
+        c.add_synapse(Synapse("pre", "post", sign=Sign.EXCITATORY, delay=1,
+                              synapse_type="electrical", conductance=135.0))
+        c.input_neurons = []
+        c.output_neurons = ["post"]
+
+        engine = NeuralEngine(c, dynamics_model="conductance_v0")
+
+        n_pre.membrane_potential = -50.0
+        n_post.membrane_potential = -70.0
+        n_pre.conductance_state.V = -50.0
+        n_post.conductance_state.V = -70.0
+
+        # Compute electrical currents directly (before integrate clears)
+        engine._compute_electrical_currents()
+
+        expected_I_elec = 135.0 * (-50.0 - (-70.0))  # = 2700 nA
+        assert n_post.conductance_state.I_elec_accumulator == pytest.approx(expected_I_elec)
+
+    # === Invariant 4: Chemical Synapse Conductance Accumulation and Decay ===
+
+    def test_g_syn_decays_exponentially_per_tick(self):
+        """Experiment 4a: g_syn decays by exp(-dt/tau_decay) each tick."""
+        from math import exp
+        from biological_brain.dynamics import attach_conductance_state, get_model
+        from biological_brain.dynamics.conductance import ConductanceParams
+
+        n = Neuron("n", resting_potential=-65.0, threshold=-45.0, tau_m=10.0)
+        attach_conductance_state(n, params=ConductanceParams(membrane_area_cm2=1.0))
+        model = get_model("conductance_v0")
+
+        n.conductance_state.g_syn = 80.0
+
+        model.decay_conductances(n)
+
+        expected = 80.0 * exp(-1.0 / 1.0)  # dt=1ms, tau_decay=1ms
+        assert n.conductance_state.g_syn == pytest.approx(expected)
+
+    def test_chemical_conductance_summation_multiple_spikes(self):
+        """Experiment 4b: Multiple simultaneous chemical spikes sum g_syn linearly."""
+        from biological_brain.dynamics import attach_conductance_state, get_model
+        from biological_brain.dynamics.conductance import ConductanceParams
+
+        n = Neuron("n", resting_potential=-65.0, threshold=-45.0, tau_m=10.0)
+        params = ConductanceParams(membrane_area_cm2=1.0)
+        attach_conductance_state(n, params=params)
+        model = get_model("conductance_v0")
+
+        assert n.conductance_state.g_syn == 0.0
+
+        model.receive_synaptic_spike(n, 1.0, 1)  # adds g_syn_peak_us (80 uS)
+        assert n.conductance_state.g_syn == pytest.approx(params.g_syn_peak_us)
+
+        model.receive_synaptic_spike(n, 1.0, 1)  # adds another 80 uS
+        assert n.conductance_state.g_syn == pytest.approx(2 * params.g_syn_peak_us)
+
+    # === Invariant 5: Chemical Synaptic Current Effect on Voltage ===
+
+    def test_synaptic_current_zero_without_conductance(self):
+        """Experiment 5a: g_syn=0 -> I_syn=0 -> no synaptic voltage effect."""
+        from biological_brain.dynamics import attach_conductance_state, get_model
+        from biological_brain.dynamics.conductance import ConductanceParams
+
+        n = Neuron("n", resting_potential=-65.0, threshold=-45.0, tau_m=10.0)
+        attach_conductance_state(n, params=ConductanceParams(membrane_area_cm2=1.0))
+        model = get_model("conductance_v0")
+
+        n.conductance_state.V = -70.0
+        n.membrane_potential = -70.0
+        n.conductance_state.g_syn = 0.0
+
+        I_syn = model.compute_synaptic_current(n)
+        assert I_syn == 0.0
+
+        model.integrate(n, 0.0)
+        # V should only move toward E_leak (due to leak), no synaptic contribution
+        expected_V = -70.0 + 1.0 * (-(0.03 * (-70.0 - (-85.0))) / 1.0)
+        assert n.conductance_state.V == pytest.approx(expected_V, abs=1e-10)
+
+    def test_synaptic_current_depolarizes_when_v_below_esyn(self):
+        """Experiment 5b: V < E_syn(0mV) and g_syn > 0 -> depolarizing current.
+
+        I_syn = g_syn * (V - E_syn). When V < 0, I_syn is negative (inward, depolarizing).
+        With g_syn=100 uS, V=-70, area=1.0:
+          I_syn_abs = 100*(-70-0) = -7000 nA
+          I_syn_density = -7 uA/cm^2
+          dV/dt = (-0.45 + 7.0)/1.0 = 6.55 -> V_new = -63.45
+        """
+        from biological_brain.dynamics import attach_conductance_state, get_model
+        from biological_brain.dynamics.conductance import ConductanceParams
+
+        n = Neuron("n", resting_potential=-65.0, threshold=-45.0, tau_m=10.0)
+        params = ConductanceParams(membrane_area_cm2=1.0)
+        attach_conductance_state(n, params=params)
+        model = get_model("conductance_v0")
+
+        n.conductance_state.V = -70.0
+        n.membrane_potential = -70.0
+        n.conductance_state.g_syn = 100.0
+
+        V_before = n.conductance_state.V
+        model.integrate(n, 0.0)
+
+        # V should increase (depolarize toward E_syn=0)
+        assert n.conductance_state.V > V_before
+        assert n.conductance_state.I_syn == pytest.approx(-7000.0)
+
+    # === Invariant 6: Reduced Threshold-Crossing Spike-Event Adapter ===
+
+    def test_upward_threshold_crossing_emits_spike(self):
+        """Experiment 6a: V crosses threshold upward -> spike emitted, V resets."""
+        from biological_brain.dynamics import attach_conductance_state, get_model
+        from biological_brain.dynamics.conductance import ConductanceParams
+
+        n = Neuron("n", resting_potential=-65.0, threshold=-45.0,
+                   reset_potential=-65.0, tau_m=10.0, refractory_period=2)
+        attach_conductance_state(n, params=ConductanceParams(membrane_area_cm2=1.0))
+        model = get_model("conductance_v0")
+
+        n.conductance_state.V = -50.0  # below threshold (-45)
+        n.membrane_potential = -50.0
+
+        spiked = model.integrate(n, 100.0)  # large depolarizing input
+
+        assert spiked is True
+        assert n.conductance_state.V == -65.0  # reset_potential
+        assert n.membrane_potential == -65.0
+        assert n.refractory_remaining == 2
+        assert n.conductance_state.refractory_remaining == 2
+
+    def test_no_spike_when_already_above_threshold(self):
+        """Experiment 6b: V already above threshold -> no spike (no upward crossing)."""
+        from biological_brain.dynamics import attach_conductance_state, get_model
+        from biological_brain.dynamics.conductance import ConductanceParams
+
+        n = Neuron("n", resting_potential=-65.0, threshold=-45.0,
+                   reset_potential=-65.0, tau_m=10.0, refractory_period=2)
+        attach_conductance_state(n, params=ConductanceParams(membrane_area_cm2=1.0))
+        model = get_model("conductance_v0")
+
+        n.conductance_state.V = -40.0  # above threshold (-45)
+        n.membrane_potential = -40.0
+
+        V_before = n.conductance_state.V
+        spiked = model.integrate(n, 0.0)
+
+        assert spiked is False
+        # V should have changed (leak pulls toward E_leak)
+        assert n.conductance_state.V != V_before
+
+    def test_spike_resets_both_state_v_and_membrane_potential(self):
+        """Experiment 6c: After spike, both state.V and membrane_potential = reset_potential."""
+        from biological_brain.dynamics import attach_conductance_state, get_model
+        from biological_brain.dynamics.conductance import ConductanceParams
+
+        n = Neuron("n", resting_potential=-65.0, threshold=-45.0,
+                   reset_potential=-65.0, tau_m=10.0, refractory_period=2)
+        attach_conductance_state(n, params=ConductanceParams(membrane_area_cm2=1.0))
+        model = get_model("conductance_v0")
+
+        n.conductance_state.V = -48.0  # just below threshold
+        n.membrane_potential = -48.0
+
+        model.integrate(n, 50.0)  # forces threshold crossing
+
+        assert n.conductance_state.V == -65.0
+        assert n.membrane_potential == -65.0
+
+    # === Invariant 7: Refractory, Unit, and Electrical-Exclusion Constraints ===
+
+    def test_refractory_blocks_voltage_integration(self):
+        """Experiment 7a: refractory_remaining > 0 -> V unchanged, no integration."""
+        from biological_brain.dynamics import attach_conductance_state, get_model
+        from biological_brain.dynamics.conductance import ConductanceParams
+
+        n = Neuron("n", resting_potential=-65.0, threshold=-45.0,
+                   reset_potential=-65.0, tau_m=10.0, refractory_period=2)
+        attach_conductance_state(n, params=ConductanceParams(membrane_area_cm2=1.0))
+        model = get_model("conductance_v0")
+
+        n.conductance_state.V = -50.0
+        n.membrane_potential = -50.0
+        n.refractory_remaining = 1
+
+        V_before = n.conductance_state.V
+        spiked = model.integrate(n, 100.0)  # large input, but refractory
+
+        assert spiked is False
+        assert n.conductance_state.V == V_before  # V unchanged
+        assert n.refractory_remaining == 0  # decremented
+
+    def test_electrical_synapses_excluded_from_delay_queue(self):
+        """Experiment 7b: In conductance_v0, electrical synapses skip spike propagation queue.
+
+        Only chemical synapses contribute to the delay queue. Electrical
+        coupling is handled separately by _compute_electrical_currents().
+        """
+        from biological_brain.dynamics import attach_conductance_state
+        from biological_brain.dynamics.conductance import ConductanceParams
+
+        params = ConductanceParams(membrane_area_cm2=1.0)
+        n_pre = Neuron("pre", resting_potential=-65.0, threshold=-45.0,
+                       reset_potential=-65.0, tau_m=100.0, refractory_period=2)
+        n_post = Neuron("post", resting_potential=-65.0, threshold=-45.0,
+                        reset_potential=-65.0, tau_m=100.0, refractory_period=2)
+        attach_conductance_state(n_pre, params=ConductanceParams(membrane_area_cm2=1.0))
+        attach_conductance_state(n_post, params=ConductanceParams(membrane_area_cm2=1.0))
+
+        c = Circuit("test")
+        c.add_neuron(n_pre)
+        c.add_neuron(n_post)
+        # Electrical synapse (should be excluded from delay queue in conductance_v0)
+        c.add_synapse(Synapse("pre", "post", sign=Sign.EXCITATORY, delay=1,
+                              synapse_type="electrical", conductance=135.0))
+        # Chemical synapse (should be included in delay queue)
+        c.add_synapse(Synapse("pre", "post", sign=Sign.EXCITATORY, delay=2,
+                              synapse_type="chemical", weight=5.0))
+        c.input_neurons = []
+        c.output_neurons = ["post"]
+
+        engine = NeuralEngine(c, dynamics_model="conductance_v0")
+
+        # Force pre to schedule propagation (simulating a spike)
+        engine._schedule_propagation("pre")
+
+        # Electrical synapse (delay=1) should NOT be in queue
+        # Chemical synapse (delay=2) SHOULD be in queue at tick 2
+        tick_1_spikes = engine.spike_queue.get(1, [])
+        tick_2_spikes = engine.spike_queue.get(2, [])
+
+        assert len(tick_1_spikes) == 0  # electrical excluded
+        assert len(tick_2_spikes) == 1  # chemical included
+
+
+class TestPerNeuronDynamicsSelection:
+    """3.0D-2: Per-neuron dynamics backend selection.
+
+    Allows individual Neuron objects to select one of the EXISTING
+    dynamics implementations (lif_voltage or conductance_v0). No new
+    biological mechanisms or parameters are introduced.
+    """
+
+    def test_two_neurons_select_different_backends(self):
+        """Two neurons can independently select LIF and conductance_v0 backends."""
+        from biological_brain.dynamics import LIFVoltageModel, ConductanceDynamicsModel
+        from biological_brain.dynamics import attach_conductance_state
+        from biological_brain.dynamics.conductance import ConductanceParams
+
+        a = Neuron("A", resting_potential=-70.0, threshold=-55.0, tau_m=10.0)
+        a.dynamics_model = "lif_voltage"
+
+        b = Neuron("B", resting_potential=-65.0, threshold=-45.0,
+                   reset_potential=-65.0, tau_m=10.0)
+        b.dynamics_model = "conductance_v0"
+        attach_conductance_state(b, params=ConductanceParams(membrane_area_cm2=1.0))
+
+        c = Circuit("mixed")
+        c.add_neuron(a)
+        c.add_neuron(b)
+        c.connect("A", "B", weight=3.0, delay=1)
+        c.input_neurons = ["A"]
+        c.output_neurons = ["B"]
+
+        engine = NeuralEngine(c)  # engine default is LIF
+
+        model_a = engine._get_neuron_model(a)
+        model_b = engine._get_neuron_model(b)
+        assert isinstance(model_a, LIFVoltageModel)
+        assert isinstance(model_b, ConductanceDynamicsModel)
+        assert model_a.name == "lif_voltage"
+        assert model_b.name == "conductance_v0"
+
+    def test_unspecified_neuron_uses_engine_default(self):
+        """Neuron without dynamics_model uses engine's default model."""
+        from biological_brain.dynamics import LIFVoltageModel
+
+        n = Neuron("n", resting_potential=-70.0, threshold=-55.0,
+                   reset_potential=-75.0, tau_m=10.0)
+        assert n.dynamics_model is None
+
+        c = Circuit("test")
+        c.add_neuron(n)
+        c.input_neurons = ["n"]
+        c.output_neurons = ["n"]
+
+        engine = NeuralEngine(c, dynamics_model="lif_voltage")
+        model = engine._get_neuron_model(n)
+        assert isinstance(model, LIFVoltageModel)
+
+        # Numerical behavior unchanged: sub-threshold sensory input depolarizes
+        engine.step({"n": 10.0})
+        assert n.membrane_potential > -70.0  # depolarized, no spike
+
+    def test_explicit_lif_selection(self):
+        """Neuron with dynamics_model='lif_voltage' uses LIF backend."""
+        from biological_brain.dynamics import LIFVoltageModel
+
+        n = Neuron("n", resting_potential=-70.0, threshold=-55.0,
+                   reset_potential=-75.0, tau_m=10.0, refractory_period=2)
+        n.dynamics_model = "lif_voltage"
+
+        c = Circuit("test")
+        c.add_neuron(n)
+        c.input_neurons = ["n"]
+        c.output_neurons = ["n"]
+
+        engine = NeuralEngine(c)  # default LIF
+        model = engine._get_neuron_model(n)
+        assert isinstance(model, LIFVoltageModel)
+
+        # Should behave identically to default LIF (spikes with strong input)
+        engine.step({"n": 20.0})
+        assert n.refractory_remaining > 0  # spiked
+
+    def test_explicit_conductance_v0_selection(self):
+        """Neuron with dynamics_model='conductance_v0' uses conductance backend."""
+        from biological_brain.dynamics import ConductanceDynamicsModel
+        from biological_brain.dynamics import attach_conductance_state
+        from biological_brain.dynamics.conductance import ConductanceParams
+
+        n = Neuron("n", resting_potential=-65.0, threshold=-45.0,
+                   reset_potential=-65.0, tau_m=10.0)
+        n.dynamics_model = "conductance_v0"
+        attach_conductance_state(n, params=ConductanceParams(membrane_area_cm2=1.0))
+
+        c = Circuit("test")
+        c.add_neuron(n)
+        c.input_neurons = []
+        c.output_neurons = ["n"]
+
+        engine = NeuralEngine(c, dynamics_model="lif_voltage")  # engine default LIF
+        model = engine._get_neuron_model(n)
+        assert isinstance(model, ConductanceDynamicsModel)
+
+        # Conductance model integrates (passive Forward Euler) without error
+        engine.step({})
+        # V should have moved toward E_leak (-85), i.e., decreased from -65
+        assert n.conductance_state.V < n.resting_potential
+
+    def test_mixed_dynamics_coexist(self):
+        """LIF and conductance_v0 neurons coexist in one circuit and step together."""
+        from biological_brain.dynamics import attach_conductance_state
+        from biological_brain.dynamics.conductance import ConductanceParams
+
+        c = Circuit("mixed")
+        # Neuron A: LIF (engine default)
+        a = Neuron("A", resting_potential=-70.0, threshold=-55.0,
+                   reset_potential=-75.0, tau_m=10.0, refractory_period=2)
+        # Neuron B: conductance_v0
+        b = Neuron("B", resting_potential=-65.0, threshold=-45.0,
+                   reset_potential=-65.0, tau_m=10.0, refractory_period=2)
+        b.dynamics_model = "conductance_v0"
+        attach_conductance_state(b, params=ConductanceParams(membrane_area_cm2=1.0))
+
+        c.add_neuron(a)
+        c.add_neuron(b)
+        c.connect("A", "B", weight=3.0, delay=1)  # chemical synapse
+        c.input_neurons = ["A"]
+        c.output_neurons = ["B"]
+
+        engine = NeuralEngine(c)  # default LIF
+
+        # Tick 0: drive A to spike via sensory input
+        engine.step({"A": 25.0})
+        assert a.refractory_remaining > 0  # A (LIF) spiked
+
+        # Tick 1: A's chemical spike arrives at B
+        engine.step({})
+        # B (conductance_v0) should have received synaptic conductance
+        assert b.conductance_state.g_syn > 0.0
+
+    def test_backend_selection_requires_no_biological_params(self):
+        """Selecting conductance_v0 backend doesn't require conductance_state or params."""
+        from biological_brain.dynamics import ConductanceDynamicsModel
+
+        n = Neuron("n", resting_potential=-65.0, threshold=-45.0, tau_m=10.0)
+        n.dynamics_model = "conductance_v0"
+        # No conductance_state, no params — just selecting the backend
+        assert n.conductance_state is None
+
+        c = Circuit("test")
+        c.add_neuron(n)
+        c.input_neurons = []
+        c.output_neurons = ["n"]
+
+        engine = NeuralEngine(c)  # default LIF
+        model = engine._get_neuron_model(n)
+        assert isinstance(model, ConductanceDynamicsModel)
+        assert model.name == "conductance_v0"
+        # Model resolution succeeded without any biological parameters

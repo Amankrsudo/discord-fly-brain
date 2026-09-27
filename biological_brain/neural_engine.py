@@ -23,7 +23,19 @@ class NeuralEngine:
         self.current_tick = 0
         self.dynamics_model_name = dynamics_model
         self.dynamics: DynamicsModel = get_model(dynamics_model)
+        self._model_cache: Dict[str, DynamicsModel] = {dynamics_model: self.dynamics}
         self._build_neuron_index()
+
+    def _get_neuron_model(self, neuron: Neuron) -> DynamicsModel:
+        """Resolve the dynamics model for a neuron.
+
+        If the neuron specifies a dynamics_model, use that backend.
+        Otherwise, fall back to the engine's default model.
+        """
+        name = neuron.dynamics_model if neuron.dynamics_model is not None else self.dynamics_model_name
+        if name not in self._model_cache:
+            self._model_cache[name] = get_model(name)
+        return self._model_cache[name]
 
     def _build_neuron_index(self) -> None:
         """Build fast lookup for synapses by source."""
@@ -40,16 +52,16 @@ class NeuralEngine:
         Returns:
             Mapping of output neuron ID -> membrane potential
         """
-        model = self.dynamics
-
         # 0. Decay conductance state (tick-level exponential decay)
         for neuron in self.circuit.neurons.values():
+            model = self._get_neuron_model(neuron)
             model.decay_conductances(neuron)
 
         # 1. Inject sensory current into input neurons (blocked during refractory)
         for neuron_id, current in sensory_input.items():
             neuron = self.circuit.neurons.get(neuron_id)
             if neuron and not neuron.is_refractory():
+                model = self._get_neuron_model(neuron)
                 model.inject_sensory_current(neuron, current)
 
         # 2. Process scheduled spikes from previous ticks
@@ -57,6 +69,7 @@ class NeuralEngine:
         for target_id, weight, sign in due_spikes:
             neuron = self.circuit.neurons.get(target_id)
             if neuron:
+                model = self._get_neuron_model(neuron)
                 model.receive_synaptic_spike(neuron, weight, sign)
 
         # 3. Compute electrical (gap-junction) currents for conductance model
@@ -65,6 +78,7 @@ class NeuralEngine:
         # 4. Integrate & threshold all neurons
         spiked_neurons = []
         for neuron in self.circuit.neurons.values():
+            model = self._get_neuron_model(neuron)
             if model.integrate(neuron, 0.0):
                 spiked_neurons.append(neuron.neuron_id)
 
@@ -95,14 +109,22 @@ class NeuralEngine:
         from the delay queue — they are handled by
         _compute_electrical_currents() using the gap-junction formula
         I_elec = g_gap * (V_pre - V_post). Only chemical synapses
-        contribute to the delay queue in conductance mode.
+        contribute to the delay queue for conductance_v0 targets.
         """
         for syn in self._synapses_by_source.get(source_id, []):
             if not syn.enabled:
                 continue
             if syn.delay < 1:
                 raise ValueError(f"Synapse delay must be >= 1, got {syn.delay}")
-            if self.dynamics_model_name == "conductance_v0" and syn.synapse_type == "electrical":
+            # Skip electrical synapses for conductance_v0 targets (handled
+            # by _compute_electrical_currents via gap-junction current).
+            target_neuron = self.circuit.neurons.get(syn.target)
+            target_model_name = (
+                target_neuron.dynamics_model
+                if target_neuron is not None and target_neuron.dynamics_model is not None
+                else self.dynamics_model_name
+            )
+            if target_model_name == "conductance_v0" and syn.synapse_type == "electrical":
                 continue
             target_tick = self.current_tick + syn.delay
             effective_weight = syn.effective_weight()
@@ -114,8 +136,8 @@ class NeuralEngine:
         """Reset engine and all neurons to initial state."""
         self.spike_queue.clear()
         self.current_tick = 0
-        model = self.dynamics
         for neuron in self.circuit.neurons.values():
+            model = self._get_neuron_model(neuron)
             model.reset(neuron)
 
     def _compute_electrical_currents(self) -> None:
@@ -165,7 +187,8 @@ class NeuralEngine:
             I_elec = syn.conductance * (V_pre - V_post)
 
             if target_neuron.conductance_state is not None:
-                self.dynamics.receive_electrical_current(target_neuron, I_elec)
+                model = self._get_neuron_model(target_neuron)
+                model.receive_electrical_current(target_neuron, I_elec)
 
     def get_state(self) -> Dict:
         """Get current engine state for inspection."""

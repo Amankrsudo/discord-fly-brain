@@ -39,6 +39,7 @@ class Neuron:
     dt: float = 1.0  # simulation timestep (ms)
     incoming: List[Synapse] = field(default_factory=list)
     conductance_state: Optional[ConductanceNeuronState] = None
+    dynamics_model: Optional[str] = None  # per-neuron dynamics backend; None = engine default
 
     def __post_init__(self):
         """Initialize membrane potential to resting potential."""
