@@ -2607,3 +2607,188 @@ class TestNumericalResolutionPolicy:
         for name in [MODEL_NAME_LIF_VOLTAGE, MODEL_NAME_CONDUCTANCE_V0]:
             model = get_model(name)
             assert model.numerical_resolution.timestep_ms == 1.0
+
+
+class TestMixedDynamicsValidation:
+    """3.0D-4: Validation of mixed-dynamics architectural coexistence.
+
+    Validates that the per-neuron dynamics architecture correctly coexists
+    with existing circuit mechanisms (electrical + chemical synapses, delays).
+
+    Scientific limitation: This validates ARCHITECTURAL COEXISTENCE ONLY.
+    The published GFS (Augustin et al. 2019, PMC6469880) is a multicompartment
+    conductance model; our implementation is a reduced single-compartment
+    approximation. Experimental reference observations (GF-TTM ~0.7-1.2ms,
+    GF-DLM ~1.3-1.7ms, 100 Hz following) are NOT asserted here — they are
+    future biological validation targets, not acceptance criteria for this
+    reduced architecture.
+    """
+
+    def test_lif_and_conductance_coexist_in_same_step(self):
+        """Validation 1: LIF and conductance_v0 participate in same engine.step()."""
+        from biological_brain.dynamics import attach_conductance_state
+        from biological_brain.dynamics.conductance import ConductanceParams
+
+        lif = Neuron("lif_n", resting_potential=-70.0, threshold=-55.0, tau_m=10.0)
+        cond = Neuron("cond_n", resting_potential=-65.0, threshold=-45.0, tau_m=10.0)
+        cond.dynamics_model = "conductance_v0"
+        attach_conductance_state(cond, params=ConductanceParams(membrane_area_cm2=1.0))
+
+        c = Circuit("mixed")
+        c.add_neuron(lif)
+        c.add_neuron(cond)
+        c.input_neurons = ["lif_n"]
+        c.output_neurons = ["lif_n", "cond_n"]
+
+        engine = NeuralEngine(c)  # default LIF
+        engine.step({"lif_n": 5.0})
+
+        # LIF neuron depolarized from resting (-70 → -65)
+        assert lif.membrane_potential > -70.0
+        # conductance_v0 neuron passively decays toward E_leak (-85)
+        assert cond.conductance_state.V < -65.0
+
+    def test_conductance_v0_electrical_current_directionality(self):
+        """Validation 2: Electrical current drives conductance_v0 V in both directions."""
+        from biological_brain.dynamics import attach_conductance_state
+        from biological_brain.dynamics.conductance import ConductanceParams
+
+        params = ConductanceParams(membrane_area_cm2=1.0)
+        pre = Neuron("pre", resting_potential=-65.0, threshold=-45.0, tau_m=100.0)
+        post = Neuron("post", resting_potential=-65.0, threshold=-45.0, tau_m=100.0)
+        pre.dynamics_model = "conductance_v0"
+        post.dynamics_model = "conductance_v0"
+        attach_conductance_state(pre, params=ConductanceParams(membrane_area_cm2=1.0))
+        attach_conductance_state(post, params=ConductanceParams(membrane_area_cm2=1.0))
+
+        c = Circuit("elec_dir")
+        c.add_neuron(pre)
+        c.add_neuron(post)
+        c.add_synapse(Synapse("pre", "post", sign=Sign.EXCITATORY, delay=1,
+                              synapse_type="electrical", conductance=135.0))
+        c.input_neurons = []
+        c.output_neurons = ["post"]
+
+        engine = NeuralEngine(c)  # default LIF; neurons select conductance_v0
+
+        # Case 1: V_pre > V_post -> post depolarizes
+        pre.membrane_potential = -50.0
+        post.membrane_potential = -70.0
+        pre.conductance_state.V = -50.0
+        post.conductance_state.V = -70.0
+        engine.step({})
+        assert post.conductance_state.V > -70.0
+        engine.reset()
+
+        # Case 2: V_pre < V_post -> post hyperpolarizes (toward E_leak)
+        pre.membrane_potential = -90.0
+        post.membrane_potential = -70.0
+        pre.conductance_state.V = -90.0
+        post.conductance_state.V = -70.0
+        engine.step({})
+        assert post.conductance_state.V < -70.0
+
+    def test_electrical_synapses_excluded_from_delay_queue(self):
+        """Validation 3: Electrical synapses skip chemical propagation delay queue."""
+        from biological_brain.dynamics import attach_conductance_state
+        from biological_brain.dynamics.conductance import ConductanceParams
+
+        cond = Neuron("cond_n", resting_potential=-65.0, threshold=-45.0, tau_m=100.0)
+        cond.dynamics_model = "conductance_v0"
+        attach_conductance_state(cond, params=ConductanceParams(membrane_area_cm2=1.0))
+        lif = Neuron("lif_n", resting_potential=-70.0, threshold=-55.0, tau_m=10.0)
+
+        c = Circuit("delay_excl")
+        c.add_neuron(lif)
+        c.add_neuron(cond)
+        # Electrical synapse (should be excluded from delay queue)
+        c.add_synapse(Synapse("lif_n", "cond_n", sign=Sign.EXCITATORY, delay=1,
+                              synapse_type="electrical", conductance=135.0))
+        # Chemical synapse (should be included in delay queue)
+        c.add_synapse(Synapse("lif_n", "cond_n", sign=Sign.EXCITATORY, delay=1,
+                              synapse_type="chemical", weight=5.0))
+        c.input_neurons = ["lif_n"]
+        c.output_neurons = ["cond_n"]
+
+        engine = NeuralEngine(c)
+
+        # Drive LIF neuron to spike
+        engine.step({"lif_n": 20.0})
+        assert lif.refractory_remaining > 0
+
+        # Tick delay=1: only chemical spike queued, electrical excluded
+        queued = engine.spike_queue.get(1, [])
+        assert len(queued) == 1
+        assert queued[0][0] == "cond_n"
+
+        # Tick 1 arrives: chemical spike delivers synaptic conductance
+        engine.step({})
+        assert cond.conductance_state.g_syn > 0.0
+
+    def test_default_neuron_matches_explicit_lif_numerically(self):
+        """Validation 4: Neuron without dynamics_model == explicit lif_voltage."""
+        n_default = Neuron("n1", resting_potential=-70.0, threshold=-55.0, tau_m=10.0)
+        n_explicit = Neuron("n2", resting_potential=-70.0, threshold=-55.0, tau_m=10.0)
+        n_explicit.dynamics_model = "lif_voltage"
+
+        c = Circuit("equiv")
+        c.add_neuron(n_default)
+        c.add_neuron(n_explicit)
+        c.input_neurons = ["n1", "n2"]
+        c.output_neurons = ["n1", "n2"]
+
+        engine = NeuralEngine(c)
+        engine.step({"n1": 10.0, "n2": 10.0})
+
+        assert n_default.membrane_potential == pytest.approx(n_explicit.membrane_potential)
+
+    def test_mixed_circuit_full_coexistence(self):
+        """Validation 5: LIF + conductance_v0 + electrical + chemical synapse coexist."""
+        from biological_brain.dynamics import attach_conductance_state
+        from biological_brain.dynamics.conductance import ConductanceParams
+
+        lif = Neuron("lif_n", resting_potential=-70.0, threshold=-55.0, tau_m=10.0)
+        cond = Neuron("cond_n", resting_potential=-65.0, threshold=-45.0, tau_m=10.0)
+        cond.dynamics_model = "conductance_v0"
+        attach_conductance_state(cond, params=ConductanceParams(membrane_area_cm2=1.0))
+
+        c = Circuit("full_mixed")
+        c.add_neuron(lif)
+        c.add_neuron(cond)
+        c.add_synapse(Synapse("lif_n", "cond_n", sign=Sign.EXCITATORY, delay=2,
+                              synapse_type="chemical", weight=5.0))
+        c.add_synapse(Synapse("lif_n", "cond_n", sign=Sign.EXCITATORY, delay=1,
+                              synapse_type="electrical", conductance=135.0))
+        c.input_neurons = ["lif_n"]
+        c.output_neurons = ["cond_n"]
+
+        engine = NeuralEngine(c)
+
+        # Tick 0: drive LIF to spike
+        engine.step({"lif_n": 20.0})
+        assert lif.refractory_remaining > 0
+
+        # Only chemical spike queued (delay=2); electrical excluded
+        queued = engine.spike_queue.get(2, [])
+        assert len(queued) == 1
+
+        # Tick 1: no chemical spike arrives yet (delay=2)
+        engine.step({})
+        assert cond.conductance_state.g_syn == 0.0
+
+        # Tick 2: chemical spike arrives
+        engine.step({})
+        assert cond.conductance_state.g_syn > 0.0
+
+    def test_conductance_v0_integration_enforces_area_requirement(self):
+        """Validation 6: conductance_v0 integration enforces area; no invented params."""
+        from biological_brain.dynamics import attach_conductance_state, get_model
+
+        n = Neuron("n", resting_potential=-65.0, threshold=-45.0, tau_m=10.0)
+        n.dynamics_model = "conductance_v0"
+        # Attach state WITHOUT membrane_area_cm2 — no invented parameters
+        attach_conductance_state(n)
+        model = get_model("conductance_v0")
+
+        with pytest.raises(NotImplementedError):
+            model.integrate(n, 0.0)
