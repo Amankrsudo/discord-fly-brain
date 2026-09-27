@@ -9,13 +9,14 @@ No new biological parameters are introduced. Each model is an
 APPROXIMATION of real neural dynamics.
 """
 
-from .base import DynamicsModel, DynamicsModelFactory
+from .base import DynamicsModel, DynamicsModelFactory, NumericalResolution
 from .lif_voltage import LIFVoltageModel
 from .conductance import ConductanceDynamicsModel, ConductanceParams, ConductanceNeuronState, attach_conductance_state
 
 __all__ = [
     "DynamicsModel",
     "DynamicsModelFactory",
+    "NumericalResolution",
     "LIFVoltageModel",
     "ConductanceDynamicsModel",
     "ConductanceParams",

@@ -2577,3 +2577,33 @@ class TestPerNeuronDynamicsSelection:
         assert isinstance(model, ConductanceDynamicsModel)
         assert model.name == "conductance_v0"
         # Model resolution succeeded without any biological parameters
+
+
+class TestNumericalResolutionPolicy:
+    """3.0D-3: Numerical resolution contract documents dt and constraints."""
+
+    def test_lif_voltage_has_numerical_resolution(self):
+        """LIF model declares numerical_resolution with timestep_ms."""
+        from biological_brain.dynamics import LIFVoltageModel, NumericalResolution
+
+        model = LIFVoltageModel()
+        assert isinstance(model.numerical_resolution, NumericalResolution)
+        assert model.numerical_resolution.timestep_ms == 1.0
+        assert model.numerical_resolution.resolution_note != ""
+
+    def test_conductance_v0_has_numerical_resolution(self):
+        """Conductance model declares numerical_resolution with timestep_ms."""
+        from biological_brain.dynamics import ConductanceDynamicsModel, NumericalResolution
+
+        model = ConductanceDynamicsModel()
+        assert isinstance(model.numerical_resolution, NumericalResolution)
+        assert model.numerical_resolution.timestep_ms == 1.0
+        assert model.numerical_resolution.resolution_note != ""
+
+    def test_all_models_validated_at_dt_1ms(self):
+        """Both models are validated at the engine's current dt=1ms."""
+        from biological_brain.dynamics import get_model, MODEL_NAME_LIF_VOLTAGE, MODEL_NAME_CONDUCTANCE_V0
+
+        for name in [MODEL_NAME_LIF_VOLTAGE, MODEL_NAME_CONDUCTANCE_V0]:
+            model = get_model(name)
+            assert model.numerical_resolution.timestep_ms == 1.0

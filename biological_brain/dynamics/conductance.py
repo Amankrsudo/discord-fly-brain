@@ -67,7 +67,7 @@ from typing import Dict, Optional
 
 from ..neuron import Neuron
 from ..provenance import ParameterProvenance, ProvenanceRecord
-from .base import DynamicsModel
+from .base import DynamicsModel, NumericalResolution
 
 
 _DEFAULT_PARAMS_PROVENANCE: Dict[str, ProvenanceRecord] = {
@@ -196,12 +196,33 @@ class ConductanceDynamicsModel(DynamicsModel):
     - 80 uS chemical peak = ESTIMATED (PMC6469880 Table 1), not DIRECTLY_MEASURED
     - Voltage integration: IMPLEMENTED as passive Forward Euler with spike-event adapter (Steps 6-8)
 
+    Numerical resolution:
+    - This model runs at dt=1ms as a REDUCED APPROXIMATION.
+    - dt=1ms CANNOT resolve active HH channel kinetics (Na activation tau
+      ~ 0.1 ms, chemical synapse rise tau 0.1 ms). These are represented
+      as instantaneous events.
+    - A future HH implementation would require sub-ms timesteps
+      (e.g. ~0.01 ms) and must declare its own requirements via
+      NumericalResolution. See the NUMERICAL RESOLUTION POLICY in
+      base.py.
+
     The conductance_state field on Neuron is optional and defaults to None.
     Only neurons that explicitly have ConductanceNeuronState attached can
     use this model. LC4/LPLC2 and PSI neurons are expected to remain on
     lif_voltage until source-supported parameters are found. This does NOT
     implement per-neuron mixed LIF/HH execution.
     """
+
+    numerical_resolution = NumericalResolution(
+        timestep_ms=1.0,
+        resolution_note=(
+            "APPROXIMATION: passive Forward Euler at dt=1ms. Cannot resolve "
+            "HH Na/K channel kinetics (activation tau ~ 0.1ms) or sub-ms "
+            "chemical synapse rise (0.1ms). Active channel models would "
+            "require sub-ms timesteps (~0.01ms) and must declare their own "
+            "NumericalResolution."
+        ),
+    )
 
     def _ensure_conductance_state(self, neuron: Neuron) -> ConductanceNeuronState:
         """Verify neuron has conductance state, raise if missing."""

@@ -17,7 +17,7 @@ behavior are introduced.
 """
 
 from ..neuron import Neuron
-from .base import DynamicsModel
+from .base import DynamicsModel, NumericalResolution
 
 
 class LIFVoltageModel(DynamicsModel):
@@ -25,6 +25,16 @@ class LIFVoltageModel(DynamicsModel):
 
     This is the default model, reproducing the 3.0B behavior exactly.
     """
+
+    numerical_resolution = NumericalResolution(
+        timestep_ms=1.0,
+        resolution_note=(
+            "LIF model has no fast kinetics. dt=1ms is adequate for "
+            "exponential decay + threshold crossing. This model does "
+            "NOT involve active voltage-gated channels and therefore "
+            "does not require sub-ms resolution."
+        ),
+    )
 
     @property
     def name(self) -> str:

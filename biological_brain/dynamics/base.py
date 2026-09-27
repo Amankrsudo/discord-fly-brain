@@ -4,10 +4,56 @@ A DynamicsModel defines how a single neuron integrates inputs,
 detects spikes, and resets after a spike. The protocol is designed
 to be minimal so that future models (e.g. conductance-based) can
 implement these operations without modifying NeuralEngine.
+
+NUMERICAL RESOLUTION POLICY (3.0D-3)
+
+The engine runs at a fixed dt (currently 1 ms). This is documented
+as a model/integration concern, NOT a biological parameter. The
+distinction matters:
+
+- Biological timescale: the intrinsic speed of a physiological process
+  (e.g. Na activation tau ~ 0.1 ms, chemical synapse rise tau ~ 0.1 ms).
+- Simulator timestep: the dt the engine iterates at (currently 1 ms).
+- Numerical resolution: whether dt adequately samples the model's
+  dynamics (e.g. Forward Euler is conditionally stable; rapid voltage
+  transients require smaller dt).
+- Model approximation: the degree to which a model simplifies biology
+  (e.g. conductance_v0 uses a threshold-crossing spike-event adapter
+  instead of active HH channels).
+
+Rules:
+1. The current reduced models (lif_voltage, conductance_v0) are
+   validated at dt = 1 ms. This is adequate for LIF (no fast kinetics)
+   and for conductance_v0 as a passive Forward-Euler approximation.
+2. Active channel models (e.g. Hodgkin-Huxley) require sub-ms timesteps
+   (~0.01 ms) to resolve voltage-gated Na/K kinetics. 1 ms must NOT
+   be treated as sufficient for HH kinetics.
+3. A future HH model must declare its own numerical-resolution
+   requirements via the NumericalResolution contract on DynamicsModel.
+   It may request a smaller timestep or alternative integration method.
+4. No future timestep may be chosen as a biological fact.
 """
 
+from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 from ..neuron import Neuron
+
+
+@dataclass
+class NumericalResolution:
+    """Documents the numerical resolution contract for a dynamics model.
+
+    This is META-INFORMATION about simulation numerics, NOT a biological
+    parameter. It records the timestep for which the model's behavior has
+    been validated or is appropriate, and any resolution constraints.
+
+    See the NUMERICAL RESOLUTION POLICY in this module's docstring for
+    the distinction between biological timescales, simulator timestep,
+    numerical resolution, and model approximation.
+    """
+
+    timestep_ms: float
+    resolution_note: str
 
 
 @runtime_checkable
@@ -23,7 +69,14 @@ class DynamicsModel(Protocol):
     This is an APPROXIMATION of biological neural dynamics. No model
     is claimed to be biologically accurate; each represents a
     computational approximation for simulation purposes.
+
+    Implementations must provide a ``numerical_resolution`` attribute
+    (NumericalResolution) documenting the timestep(s) for which the
+    model has been validated and any numerical constraints. See the
+    NUMERICAL RESOLUTION POLICY in the module docstring.
     """
+
+    numerical_resolution: NumericalResolution
 
     @property
     def name(self) -> str:
