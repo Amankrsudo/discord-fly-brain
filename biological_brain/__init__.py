@@ -12,6 +12,7 @@ from .neural_engine import NeuralEngine
 from .signals import SignalTranslator
 from .provenance import ParameterProvenance, ProvenanceRecord, evidence_to_provenance
 from .morphology import Compartment, CompartmentModel, CompartmentGeometry, CompartmentProvenance, CableParameters, CompartmentState
+from .gfs_morphology import GFSMorphology, NeuronSpec, CompartmentSpec, PlacementSpec, MorphologyParameter, get_gfs_morphology
 from .dynamics import DynamicsModel, LIFVoltageModel, ConductanceDynamicsModel, ConductanceParams, ConductanceNeuronState, attach_conductance_state, MODEL_NAME_LIF_VOLTAGE, MODEL_NAME_CONDUCTANCE_V0
 
 
@@ -217,4 +218,10 @@ __all__ = [
     "CompartmentProvenance",
     "CableParameters",
     "CompartmentState",
+    "GFSMorphology",
+    "NeuronSpec",
+    "CompartmentSpec",
+    "PlacementSpec",
+    "MorphologyParameter",
+    "get_gfs_morphology",
 ]

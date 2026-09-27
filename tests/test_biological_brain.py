@@ -2863,3 +2863,131 @@ class TestCompartmentArchitecture:
         assert not hasattr(model, "integrate")
         assert not hasattr(model, "solve_cable")
         assert not hasattr(model, "compute_axial_current")
+
+
+class TestGFSMorphologySpecification:
+    """3.0D-7B: Source-backed GFS morphology from Augustin et al. 2019."""
+
+    def test_gfs_morphology_contains_all_four_neurons(self):
+        """Morphology spec covers GF, TTMn, PSI, DLMn."""
+        from biological_brain.gfs_morphology import get_gfs_morphology
+
+        gfs = get_gfs_morphology()
+        for neuron_type in ["GF", "TTMn", "PSI", "DLMn"]:
+            assert neuron_type in gfs.neurons
+
+    def test_psi_dendrite_length_is_estimated(self):
+        """PSI dendrite length (170 um) must be classified ESTIMATED, not measured."""
+        from biological_brain.gfs_morphology import get_gfs_morphology, get_morphology_parameter
+        from biological_brain.provenance import ParameterProvenance
+
+        gfs = get_gfs_morphology()
+        param = get_morphology_parameter(gfs, "PSI", "dendrite", "length")
+        assert param is not None
+        assert param.value == 170.0
+        assert param.provenance.category == ParameterProvenance.ESTIMATED
+
+    def test_all_other_morphology_values_are_published_model_parameters(self):
+        """Non-estimated Augustin anatomy values must be PUBLISHED_MODEL_PARAMETER."""
+        from biological_brain.gfs_morphology import get_gfs_morphology
+        from biological_brain.provenance import ParameterProvenance
+
+        gfs = get_gfs_morphology()
+        _collect_params(gfs, _assert_published_model_parameter)
+
+    def test_values_match_august_2019_table(self):
+        """Spot-check key values against Augustin Table 1."""
+        from biological_brain.gfs_morphology import get_gfs_morphology, get_morphology_parameter
+
+        gfs = get_gfs_morphology()
+
+        assert get_morphology_parameter(gfs, "GF", "axon", "length").value == 400.0
+        assert gfs.neurons["GF"].soma_diameter.value == 8.0
+
+        assert get_morphology_parameter(gfs, "TTMn", "axon", "length").value == 50.0
+        assert get_morphology_parameter(gfs, "TTMn", "medial_dendrite", "length").value == 60.0
+        assert get_morphology_parameter(gfs, "TTMn", "lateral_dendrite", "length").value == 30.0
+        assert gfs.neurons["TTMn"].soma_diameter.value == 6.0
+
+        assert get_morphology_parameter(gfs, "PSI", "axon", "length").value == 90.0
+        assert gfs.neurons["PSI"].soma_diameter.value == 4.5
+
+        assert get_morphology_parameter(gfs, "DLMn", "dendrite", "length").value == 100.0
+        assert get_morphology_parameter(gfs, "DLMn", "axon", "length").value == 50.0
+        assert get_morphology_parameter(gfs, "DLMn", "dendrite", "diameter").value == 2.0
+        assert get_morphology_parameter(gfs, "DLMn", "axon", "diameter_distal").value == 4.0
+
+    def test_placements_present_for_gf_ttmn_psi_dlmn(self):
+        """Contact and input placements are present for all four neurons."""
+        from biological_brain.gfs_morphology import get_gfs_morphology
+
+        gfs = get_gfs_morphology()
+        assert len(gfs.neurons["GF"].placements) == 3    # 2 contacts + 1 input
+        assert len(gfs.neurons["TTMn"].placements) == 0   # no placements in Table 1
+        assert len(gfs.neurons["PSI"].placements) == 2    # 1 input + 1 contact
+        assert len(gfs.neurons["DLMn"].placements) == 1    # 1 input
+
+    def test_boerner_anatomical_context_documented(self):
+        """GF and TTMn include Boerner context (3D reconstruction provenance)."""
+        from biological_brain.gfs_morphology import get_gfs_morphology
+
+        gfs = get_gfs_morphology()
+        assert any("Boerner" in s for s in gfs.neurons["GF"].context_sources)
+        assert any("Boerner" in s for s in gfs.neurons["TTMn"].context_sources)
+
+    def test_no_invented_cable_parameters_or_coordinates(self):
+        """No cable parameters or 3D coordinates stored in morphology data."""
+        from biological_brain.gfs_morphology import get_gfs_morphology
+
+        gfs = get_gfs_morphology()
+        # CompartmentSpec has no cable_param or position fields
+        for neuron in gfs.neurons.values():
+            for comp in neuron.compartments:
+                # No cable params, no coordinates, no branch angles
+                for attr in ["cable_params", "position", "branch_angle", "compartment_count"]:
+                    assert not hasattr(comp, attr)
+            # No cable params on NeuronSpec
+            assert not hasattr(neuron, "cable_params")
+
+    def test_neuron_without_compartment_model_backward_compatible(self):
+        """Existing Neuron without compartment_model still works as before."""
+        from biological_brain.dynamics import attach_conductance_state
+        from biological_brain.dynamics.conductance import ConductanceParams
+
+        c = Circuit("test")
+        n = Neuron("n", resting_potential=-70.0, threshold=-55.0, tau_m=10.0)
+        assert n.compartment_model is None
+
+        c.add_neuron(n)
+        c.input_neurons = ["n"]
+        c.output_neurons = ["n"]
+
+        engine = NeuralEngine(c)
+        engine.step({"n": 10.0})
+        assert n.membrane_potential > -70.0
+
+
+def _collect_params(gfs, check_fn):
+    """Walk all morphology parameters and apply check_fn."""
+    for neuron in gfs.neurons.values():
+        if neuron.soma_diameter is not None:
+            check_fn(neuron.soma_diameter)
+        for comp in neuron.compartments:
+            if comp.length is not None:
+                check_fn(comp.length)
+            if comp.diameter is not None:
+                check_fn(comp.diameter)
+            if comp.diameter_distal is not None:
+                check_fn(comp.diameter_distal)
+        for placement in neuron.placements:
+            check_fn(placement.distance)
+
+
+def _assert_published_model_parameter(param):
+    """Assert a parameter is PUBLISHED_MODEL_PARAMETER (or ESTIMATED for known cases)."""
+    from biological_brain.provenance import ParameterProvenance
+
+    if param.value == 170.0:
+        assert param.provenance.category == ParameterProvenance.ESTIMATED
+    else:
+        assert param.provenance.category == ParameterProvenance.PUBLISHED_MODEL_PARAMETER
