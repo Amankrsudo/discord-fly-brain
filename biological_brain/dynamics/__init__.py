@@ -12,6 +12,16 @@ APPROXIMATION of real neural dynamics.
 from .base import DynamicsModel, DynamicsModelFactory, NumericalResolution
 from .lif_voltage import LIFVoltageModel
 from .conductance import ConductanceDynamicsModel, ConductanceParams, ConductanceNeuronState, attach_conductance_state
+from .passive_cable import (
+    PassiveCableModel, PassiveNetwork, PassiveNetworkState, PassiveNumericalPolicy,
+    CompartmentElectrical, AxialConnection, leak_current_A,
+    PassiveBackendError, PassiveGeometryError, PassiveAuthorizationError,
+    PassiveNumericalResolutionError, PassiveUnsupportedError,
+    PASSIVE_CABLE_NUMERICAL_POLICY, PASSIVE_CABLE_REQUIRED_PARAMETERS,
+    MODEL_NAME_PASSIVE_CABLE_V0,
+)
+from ..passive_profiles import PROFILE_AUGUSTIN_2019_GFS_PASSIVE
+from functools import partial
 
 __all__ = [
     "DynamicsModel",
@@ -22,19 +32,45 @@ __all__ = [
     "ConductanceParams",
     "ConductanceNeuronState",
     "attach_conductance_state",
+    "PassiveCableModel",
+    "PassiveNetwork",
+    "PassiveNetworkState",
+    "PassiveNumericalPolicy",
+    "CompartmentElectrical",
+    "AxialConnection",
+    "leak_current_A",
+    "PassiveBackendError",
+    "PassiveGeometryError",
+    "PassiveAuthorizationError",
+    "PassiveNumericalResolutionError",
+    "PassiveUnsupportedError",
+    "PASSIVE_CABLE_NUMERICAL_POLICY",
+    "PASSIVE_CABLE_REQUIRED_PARAMETERS",
     "MODEL_NAME_LIF_VOLTAGE",
     "MODEL_NAME_CONDUCTANCE_V0",
+    "MODEL_NAME_PASSIVE_CABLE_V0",
 ]
 
 MODEL_NAME_LIF_VOLTAGE = "lif_voltage"
 MODEL_NAME_CONDUCTANCE_V0 = "conductance_v0"
+MODEL_NAME_PASSIVE_CABLE_V0 = "passive_cable_v0"
 
 # Registry of available models (extendable by 3.0C phases).
 # LIF voltage is the default and must remain numerically unchanged.
 # Conductance is opt-in, architecture-only stub.
+# Passive cable is opt-in, requires an explicit authorized profile, and
+# declares its own (finer) numerical resolution policy.
+#
+# PassiveCableModel requires profile_name positionally, so its registry
+# entry names the profile explicitly here rather than relying on a hidden
+# default inside the class. The CompartmentModel must still declare the
+# same profile before it can be solved.
 MODELS = {
     MODEL_NAME_LIF_VOLTAGE: LIFVoltageModel,
     MODEL_NAME_CONDUCTANCE_V0: ConductanceDynamicsModel,
+    MODEL_NAME_PASSIVE_CABLE_V0: partial(
+        PassiveCableModel, profile_name=PROFILE_AUGUSTIN_2019_GFS_PASSIVE
+    ),
 }
 
 

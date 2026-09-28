@@ -16,9 +16,12 @@ invented in this step.
 """
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, TYPE_CHECKING
 
 from .provenance import ParameterProvenance, ProvenanceRecord
+
+if TYPE_CHECKING:  # pragma: no cover
+    from .electrical_representation import ElectricalRepresentation
 
 
 def _unknown_provenance() -> ProvenanceRecord:
@@ -141,10 +144,33 @@ class CompartmentModel:
     spatial/cable behavior in future phases. When absent (None), the
     neuron uses current single-compartment behavior.
 
+    passive_profile_name names the explicitly authorized passive parameter
+    profile that a passive backend would use for this model (3.0D-7F/7G).
+    It is None by default and is never inferred: a passive backend requires
+    it to be set explicitly. It is a permission record only and assigns no
+    values to Compartment.cable_params.
+
+    electrical_representation records compartments that are anatomically
+    represented but NOT currently representable as electrical compartments
+    (3.0D-7I), typically because the source provides no geometry from which
+    a membrane area could be computed. It is None by default (no exclusions
+    declared). Excluded compartments keep their full anatomical geometry,
+    topology, and provenance; they are simply omitted from a derived
+    electrical network. This is a computational limitation, not a
+    biological claim.
+
     No passive cable solver, HH, or biological values are implemented here.
     """
+
+    def is_electrically_excluded(self, compartment_id: str) -> bool:
+        """Whether a compartment is declared not electrically representable."""
+        if self.electrical_representation is None:
+            return False
+        return self.electrical_representation.is_excluded(compartment_id)
     neuron_id: str
     compartments: Dict[str, Compartment] = field(default_factory=dict)
+    passive_profile_name: Optional[str] = None
+    electrical_representation: Optional["ElectricalRepresentation"] = None
 
     def add_compartment(self, compartment: Compartment) -> None:
         """Add a compartment to the model."""

@@ -85,6 +85,45 @@ def _match_placements(comp_spec: CompartmentSpec, neuron_spec: NeuronSpec) -> li
     return records
 
 
+def _declare_electrical_exclusions(model: CompartmentModel, soma_id: str) -> None:
+    """Declare compartments that are anatomical but not electrically representable.
+
+    The GF soma is reported in the source with a diameter only. Membrane
+    capacitance and leak conductance require a membrane SURFACE AREA, and no
+    cylindrical soma length is available, so no area can be derived. The soma
+    is therefore declared excluded from passive electrical representation.
+
+    This declaration is a COMPUTATIONAL LIMITATION, not a biological claim:
+    the soma is real, it is not described as having zero membrane area, and
+    no axial, capacitance, or leak value is invented for it. The anatomical
+    compartment keeps its diameter and provenance untouched.
+
+    Scope note: only the GF soma is declared here, as scoped for 3.0D-7I. The
+    TTMn, PSI, and DLMn somas have the same geometric insufficiency and are
+    NOT declared excluded; they continue to be rejected by explicit geometry
+    errors rather than being silently omitted. That asymmetry is a known
+    open question, not a biological difference between neurons.
+    """
+    from .electrical_representation import (
+        ElectricalRepresentation, insufficient_geometry_exclusion,
+    )
+
+    if model.neuron_id != "GF":
+        return
+
+    model.electrical_representation = ElectricalRepresentation(
+        exclusions=(
+            insufficient_geometry_exclusion(
+                soma_id,
+                "GF soma has a source-backed diameter (8 um) but no "
+                "source-backed length, so no membrane surface area can be "
+                "computed. A diameter alone is NOT converted into an area, and "
+                "no soma length is invented.",
+            ),
+        )
+    )
+
+
 def build_compartment_model(neuron_spec: NeuronSpec) -> CompartmentModel:
     """Construct a CompartmentModel from a source-backed NeuronSpec.
 
@@ -128,6 +167,8 @@ def build_compartment_model(neuron_spec: NeuronSpec) -> CompartmentModel:
         model.add_compartment(comp)
         if comp.compartment_id not in soma.neighbor_ids:
             soma.neighbor_ids.append(comp.compartment_id)
+
+    _declare_electrical_exclusions(model, soma_id)
 
     return model
 

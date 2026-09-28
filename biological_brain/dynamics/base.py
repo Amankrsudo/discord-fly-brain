@@ -164,12 +164,22 @@ class DynamicsModelFactory:
         Raises:
             ValueError: If the model name is unknown
         """
+        from functools import partial
+
         from .lif_voltage import LIFVoltageModel
         from .conductance import ConductanceDynamicsModel
+        from .passive_cable import PassiveCableModel
+        from ..passive_profiles import PROFILE_AUGUSTIN_2019_GFS_PASSIVE
 
         registry = {
             "lif_voltage": LIFVoltageModel,
             "conductance_v0": ConductanceDynamicsModel,
+            # PassiveCableModel requires an explicit profile name; the
+            # registry entry supplies it explicitly rather than relying on
+            # a default inside the class.
+            "passive_cable_v0": partial(
+                PassiveCableModel, profile_name=PROFILE_AUGUSTIN_2019_GFS_PASSIVE
+            ),
         }
 
         if name not in registry:
@@ -185,8 +195,10 @@ class DynamicsModelFactory:
         """Return list of available model names."""
         from .lif_voltage import LIFVoltageModel
         from .conductance import ConductanceDynamicsModel
+        from .passive_cable import PassiveCableModel
 
         return list({
             "lif_voltage": LIFVoltageModel,
             "conductance_v0": ConductanceDynamicsModel,
+            "passive_cable_v0": PassiveCableModel,
         }.keys())

@@ -6,6 +6,7 @@ from biological_brain import (
     SignalTranslator, BiologicalBrain, BiologicalMode, BIOLOGICAL_CIRCUITS,
     MODEL_NAME_LIF_VOLTAGE
 )
+from biological_brain.passive_profiles import PROFILE_AUGUSTIN_2019_GFS_PASSIVE
 
 
 class TestNeuron:
@@ -3673,3 +3674,1399 @@ class TestPassiveParameterProfile:
 
         explicit = Neuron("m", dynamics_model=MODEL_NAME_LIF_VOLTAGE)
         assert explicit.dynamics_model == MODEL_NAME_LIF_VOLTAGE
+
+
+_UNSET_PROFILE = "<unset>"
+
+
+def _passive_test_model(profile_name=_UNSET_PROFILE, tapered=False):
+    """Build a two-compartment passive test model (cylinder sections only)."""
+    from biological_brain.morphology import Compartment, CompartmentGeometry, CompartmentModel
+    from biological_brain.passive_profiles import PROFILE_AUGUSTIN_2019_GFS_PASSIVE
+
+    model = CompartmentModel(
+        "test_cell",
+        passive_profile_name=(
+            PROFILE_AUGUSTIN_2019_GFS_PASSIVE
+            if profile_name is _UNSET_PROFILE
+            else profile_name
+        ),
+    )
+    model.add_compartment(Compartment(
+        compartment_id="soma",
+        geometry=CompartmentGeometry(diameter_um=10.0, length_um=10.0),
+    ))
+    model.add_compartment(Compartment(
+        compartment_id="axon",
+        geometry=CompartmentGeometry(
+            diameter_um=4.0,
+            length_um=50.0,
+            diameter_distal_um=6.0 if tapered else None,
+        ),
+    ))
+    model.add_connection("soma", "axon")
+    return model
+
+
+class TestPassiveCableBackend:
+    """3.0D-7G: Opt-in passive cable backend over the 7F authorized profile.
+
+    The backend derives electrical quantities only from explicitly
+    represented geometry and explicitly authorized passive parameters.
+    It never populates CableParameters and never becomes a default.
+    """
+
+    def test_backend_selectable_explicitly_without_changing_lif_default(self):
+        """passive_cable_v0 is selectable but never the engine default."""
+        from biological_brain.dynamics import (
+            get_model, get_model as _get, MODEL_NAME_LIF_VOLTAGE,
+            MODEL_NAME_PASSIVE_CABLE_V0,
+        )
+
+        assert _get() is not None  # default construction still works
+        passive = get_model(MODEL_NAME_PASSIVE_CABLE_V0)
+        assert passive.name == "passive_cable_v0"
+        assert passive.is_default is False
+
+        lif = get_model(MODEL_NAME_LIF_VOLTAGE)
+        assert lif.name == "lif_voltage"
+        assert lif.numerical_resolution.timestep_ms == 1.0
+
+        n = Neuron("n")
+        assert n.dynamics_model is None
+
+    def test_profile_selection_explicit_and_visible(self):
+        """A model must declare its profile; the backend exposes which it used."""
+        from biological_brain.dynamics.passive_cable import (
+            PassiveAuthorizationError, PassiveCableModel,
+        )
+        from biological_brain.passive_profiles import PROFILE_AUGUSTIN_2019_GFS_PASSIVE
+
+        backend = PassiveCableModel(profile_name=PROFILE_AUGUSTIN_2019_GFS_PASSIVE)
+        assert backend.profile_name == PROFILE_AUGUSTIN_2019_GFS_PASSIVE
+        assert backend.profile.model_reproduction_only is True
+
+        network = backend.prepare(_passive_test_model())
+        assert network.profile_name == PROFILE_AUGUSTIN_2019_GFS_PASSIVE
+        assert "MODEL REPRODUCTION ONLY" in network.profile_limitations
+
+        # No declared profile is an explicit error, never an implicit default.
+        undeclared = _passive_test_model(profile_name=None)
+        with pytest.raises(PassiveAuthorizationError, match="declares no passive profile"):
+            backend.prepare(undeclared)
+
+        # A declared profile must match the backend's profile.
+        mismatched = _passive_test_model(profile_name="some_other_profile")
+        with pytest.raises(PassiveAuthorizationError, match="must match"):
+            backend.prepare(mismatched)
+
+    def test_cylinder_geometry_expected_electrical_quantities(self):
+        """Cylinder geometry maps to the documented membrane/axial quantities."""
+        from math import pi
+        from biological_brain.dynamics.passive_cable import PassiveCableModel
+
+        backend = PassiveCableModel(profile_name=PROFILE_AUGUSTIN_2019_GFS_PASSIVE)
+        network = backend.prepare(_passive_test_model())
+
+        soma = network.compartment("soma")
+        expected_area_cm2 = pi * 10.0 * 10.0 * 1e-8
+        assert soma.membrane_area_cm2 == pytest.approx(expected_area_cm2)
+        # C = Cm_specific * A, g = g_density_specific * A
+        assert soma.capacitance_F == pytest.approx(1.0 * 1e-6 * expected_area_cm2)
+        assert soma.leak_conductance_S == pytest.approx(0.03 * 1e-3 * expected_area_cm2)
+        assert soma.leak_reversal_mV == pytest.approx(-85.0)
+
+        axon = network.compartment("axon")
+        # R_link = Ra * L / A, using the child's own proximal axial path
+        expected_r = 35.4 * (50.0 * 1e-4) / (pi * 4.0 ** 2 / 4 * 1e-8)
+        assert axon.axial_resistance_ohm == pytest.approx(expected_r)
+        assert soma.axial_resistance_ohm is None  # root has no parent path
+
+        assert len(network.connections) == 1
+        assert network.connections[0].parent_id == "soma"
+        assert network.connections[0].child_id == "axon"
+
+    def test_axial_current_directionality(self):
+        """Current flows from the higher-voltage parent into the child."""
+        from biological_brain.dynamics.passive_cable import (
+            PassiveCableModel, leak_current_A,
+        )
+
+        backend = PassiveCableModel(profile_name=PROFILE_AUGUSTIN_2019_GFS_PASSIVE)
+        network = backend.prepare(_passive_test_model())
+        state = backend.initial_state(_passive_test_model())
+        v_soma, v_axon = -60.0, -80.0
+        state.voltages_mV["soma"] = v_soma
+        state.voltages_mV["axon"] = v_axon
+
+        currents = backend.step(network, state)
+
+        # Net current is leak plus axial; isolate the axial part.
+        soma = network.compartment("soma")
+        axon = network.compartment("axon")
+        axial = (
+            (v_soma - v_axon) * 1e-3 / axon.axial_resistance_ohm
+        )
+        assert axial > 0.0
+        # Net current = injected - leak + axial, so adding leak back gives axial.
+        assert currents["axon"] + leak_current_A(axon, v_axon) == pytest.approx(axial)
+        assert currents["soma"] + leak_current_A(soma, v_soma) == pytest.approx(-axial)
+
+        # The child depolarizes, the parent hyperpolarizes.
+        assert state.voltages_mV["axon"] > v_axon
+        assert state.voltages_mV["soma"] < v_soma
+
+    def test_leak_current_sign_relative_to_leak_reversal(self):
+        """Leak is outward above the reversal potential, inward below it."""
+        from biological_brain.dynamics.passive_cable import (
+            PassiveCableModel, leak_current_A,
+        )
+
+        backend = PassiveCableModel(profile_name=PROFILE_AUGUSTIN_2019_GFS_PASSIVE)
+        network = backend.prepare(_passive_test_model())
+        axon = network.compartment("axon")
+
+        assert axon.leak_reversal_mV == pytest.approx(-85.0)
+        assert leak_current_A(axon, -60.0) > 0.0    # depolarized: current leaves
+        assert leak_current_A(axon, -85.0) == pytest.approx(0.0)
+        assert leak_current_A(axon, -100.0) < 0.0  # hyperpolarized: current enters
+
+        # Above reversal the compartment must hyperpolarize toward it.
+        state = backend.initial_state(_passive_test_model())
+        state.voltages_mV["soma"] = state.voltages_mV["axon"] = -60.0
+        backend.step(network, state)
+        assert state.voltages_mV["axon"] < -60.0
+        assert state.voltages_mV["axon"] > -85.0
+
+    def test_capacitive_integration_deterministic(self):
+        """Identical inputs give identical trajectories; tau follows Cm/g."""
+        from biological_brain.dynamics.passive_cable import PassiveCableModel
+
+        backend = PassiveCableModel(profile_name=PROFILE_AUGUSTIN_2019_GFS_PASSIVE)
+        model = _passive_test_model()
+        network_a, state_a = backend.simulate(model, steps=20)
+        model_b = _passive_test_model()
+        network_b, state_b = backend.simulate(model_b, steps=20)
+
+        assert state_a.voltages_mV == state_b.voltages_mV
+        assert [c.compartment_id for c in network_a.compartments] == [
+            c.compartment_id for c in network_b.compartments
+        ]
+
+        # Membrane time constant C/g = Cm/g = 33.3 ms, independent of size.
+        axon = network_a.compartment("axon")
+        tau_ms = (axon.capacitance_F / axon.leak_conductance_S) * 1e3
+        assert tau_ms == pytest.approx(1.0 / 0.03)
+
+    def test_diameter_only_soma_does_not_yield_membrane_area(self):
+        """Absent diameter/area still fails loudly, including for a taper."""
+        from biological_brain.dynamics.passive_cable import (
+            PassiveCableModel, PassiveGeometryError,
+        )
+        from biological_brain.morphology import Compartment, CompartmentGeometry, CompartmentModel
+        from biological_brain.passive_profiles import PROFILE_AUGUSTIN_2019_GFS_PASSIVE
+
+        # No diameter at all.
+        model = CompartmentModel("nodiam", passive_profile_name=PROFILE_AUGUSTIN_2019_GFS_PASSIVE)
+        model.add_compartment(Compartment(
+            compartment_id="x",
+            geometry=CompartmentGeometry(length_um=100.0),
+        ))
+        with pytest.raises(PassiveGeometryError, match="no computable membrane area"):
+            PassiveCableModel(
+                profile_name=PROFILE_AUGUSTIN_2019_GFS_PASSIVE
+            ).prepare(model)
+
+        # A distal diameter without a proximal diameter is not a usable taper.
+        model.add_compartment(Compartment(
+            compartment_id="y",
+            geometry=CompartmentGeometry(length_um=50.0, diameter_distal_um=4.0),
+        ))
+        with pytest.raises(PassiveGeometryError, match="no computable membrane area"):
+            PassiveCableModel(
+                profile_name=PROFILE_AUGUSTIN_2019_GFS_PASSIVE
+            ).prepare(model)
+
+    def test_unauthorized_parameters_cannot_enter_solver(self):
+        """Only the four authorized passive quantities are resolvable."""
+        from biological_brain.dynamics.passive_cable import (
+            PassiveCableModel, PassiveUnsupportedError,
+        )
+
+        backend = PassiveCableModel(profile_name=PROFILE_AUGUSTIN_2019_GFS_PASSIVE)
+        assert backend.resolve_parameter("specific_membrane_capacitance") == pytest.approx(1.0)
+        assert backend.resolve_parameter("specific_axial_resistance") == pytest.approx(35.4)
+        assert backend.resolve_parameter("leak_conductance_density") == pytest.approx(0.03)
+        assert backend.resolve_parameter("leak_reversal_potential") == pytest.approx(-85.0)
+
+        for name in (
+            "gf_input_resistance",
+            "gap_junction_conductance_young",
+            "dlmn_whole_cell_input_resistance",
+            "hodgkin_huxley_parameters",
+            "chemical_synapse_conductance",
+        ):
+            with pytest.raises(PassiveUnsupportedError):
+                backend.resolve_parameter(name)
+
+        network = backend.prepare(_passive_test_model())
+        assert [n for n, _v, _u in network.authorized_parameters] == [
+            "specific_membrane_capacitance",
+            "specific_axial_resistance",
+            "leak_conductance_density",
+            "leak_reversal_potential",
+        ]
+
+        # Circuit-level synaptic integration is refused, not invented.
+        n = Neuron("n")
+        with pytest.raises(PassiveUnsupportedError):
+            backend.receive_synaptic_spike(n, 5.0, 1)
+        with pytest.raises(PassiveUnsupportedError):
+            backend.receive_electrical_current(n, 1.0)
+        with pytest.raises(PassiveUnsupportedError):
+            backend.inject_sensory_current(n, 1.0)
+        with pytest.raises(PassiveUnsupportedError):
+            backend.integrate(n)
+
+    def test_engine_timestep_rejected_by_passive_policy(self):
+        """The engine's 1 ms default is not silently accepted by this backend."""
+        from biological_brain.dynamics.passive_cable import (
+            PASSIVE_CABLE_NUMERICAL_POLICY, PassiveCableModel,
+            PassiveNumericalResolutionError,
+        )
+
+        with pytest.raises(PassiveNumericalResolutionError, match="1.0"):
+            PassiveCableModel(profile_name=PROFILE_AUGUSTIN_2019_GFS_PASSIVE, timestep_ms=1.0)
+
+        backend = PassiveCableModel(profile_name=PROFILE_AUGUSTIN_2019_GFS_PASSIVE)
+        assert backend.timestep_ms == PASSIVE_CABLE_NUMERICAL_POLICY.default_timestep_ms
+        assert backend.numerical_resolution.timestep_ms == 0.01
+
+        network = backend.prepare(_passive_test_model())
+        state = backend.initial_state(_passive_test_model())
+        with pytest.raises(PassiveNumericalResolutionError):
+            backend.step(network, state, timestep_ms=1.0)
+
+        # The policy is numerical configuration, not a biological timescale.
+        assert "NOT an experimentally established biological" in (
+            PASSIVE_CABLE_NUMERICAL_POLICY.policy_note
+        )
+
+    def test_lif_runtime_behavior_unchanged(self):
+        """Using the passive backend leaves LIF engine behavior identical."""
+        from biological_brain.dynamics import get_model
+        from biological_brain.dynamics.passive_cable import PassiveCableModel
+
+        def run_lif_reference():
+            n = Neuron("n", resting_potential=-70.0, threshold=-55.0, tau_m=10.0)
+            c = Circuit("test")
+            c.add_neuron(n)
+            c.input_neurons = ["n"]
+            c.output_neurons = ["n"]
+            engine = NeuralEngine(c)
+            engine.step({"n": 10.0})
+            return n
+
+        reference = run_lif_reference()
+
+        passive = get_model("passive_cable_v0")
+        passive.prepare(_passive_test_model())
+        after = run_lif_reference()
+
+        assert after.membrane_potential == reference.membrane_potential
+        assert after.refractory_remaining == reference.refractory_remaining
+        assert after.compartment_model is None
+        assert isinstance(passive, PassiveCableModel)
+
+    def test_no_cable_parameters_populated(self):
+        """Preparing and stepping writes nothing to Compartment.cable_params."""
+        from biological_brain.dynamics.passive_cable import PassiveCableModel
+
+        backend = PassiveCableModel(profile_name=PROFILE_AUGUSTIN_2019_GFS_PASSIVE)
+        model = _passive_test_model()
+        network, state = backend.simulate(model, steps=5)
+
+        for comp in model.compartments.values():
+            assert comp.cable_params.axial_resistance_ohm_cm is None
+            assert comp.cable_params.membrane_capacitance_uf_per_cm2 is None
+            assert comp.cable_params.leak_conductance_ms_per_cm2 is None
+            assert comp.cable_params.leak_reversal_mV is None
+            # Represented state is untouched too.
+            assert comp.state.voltage_mV == -70.0
+
+        assert state.voltages_mV != {}
+        assert network.timestep_ms == 0.01
+
+    def test_provenance_and_profile_retained(self):
+        """Authorization scope, provenance, and geometry provenance stay available."""
+        from biological_brain.dynamics.passive_cable import PassiveCableModel
+        from biological_brain.provenance import ParameterProvenance
+
+        backend = PassiveCableModel(profile_name=PROFILE_AUGUSTIN_2019_GFS_PASSIVE)
+        assert backend.profile.model_reproduction_only is True
+
+        leak = backend.profile.get("leak_reversal_potential")
+        assert leak.provenance_category == ParameterProvenance.PUBLISHED_MODEL_PARAMETER
+        assert leak.authorization_scope == "published_model_reproduction"
+
+        network = backend.prepare(_passive_test_model())
+        axon = network.compartment("axon")
+
+        # Geometry provenance for the derived area is carried through.
+        assert axon.membrane_area_provenance.category == ParameterProvenance.UNKNOWN
+        assert "Derived from" in axon.membrane_area_provenance.source
+        assert "Cylinder" in axon.membrane_area_derivation
+        assert "uniform cylinder" in axon.axial_derivation
+        assert "R = Ra * L / A" in axon.axial_derivation
+
+        assert {n for n, _v, _u in network.authorized_parameters} == {
+            "specific_membrane_capacitance",
+            "specific_axial_resistance",
+            "leak_conductance_density",
+            "leak_reversal_potential",
+        }
+
+
+def _validation_single_compartment():
+    """One fully specified synthetic cylinder. Not a GFS morphology."""
+    from biological_brain.morphology import Compartment, CompartmentGeometry, CompartmentModel
+
+    model = CompartmentModel("validation_cell", passive_profile_name=PROFILE_AUGUSTIN_2019_GFS_PASSIVE)
+    model.add_compartment(Compartment(
+        compartment_id="c",
+        geometry=CompartmentGeometry(diameter_um=10.0, length_um=500.0),
+    ))
+    return model
+
+
+def _validation_uniform_chain(n=3, diameter_um=6.0, length_um=200.0):
+    """A chain of n identical uniform cylinders. Not a GFS morphology."""
+    from biological_brain.morphology import Compartment, CompartmentGeometry, CompartmentModel
+
+    model = CompartmentModel("validation_chain", passive_profile_name=PROFILE_AUGUSTIN_2019_GFS_PASSIVE)
+    ids = [f"s{i}" for i in range(n)]
+    for cid in ids:
+        model.add_compartment(Compartment(
+            compartment_id=cid,
+            geometry=CompartmentGeometry(diameter_um=diameter_um, length_um=length_um),
+        ))
+    for parent, child in zip(ids, ids[1:]):
+        model.add_connection(parent, child)
+    return model
+
+
+class TestPassiveCableNumericalValidation:
+    """3.0D-7H: numerical validation of the 7G passive cable backend.
+
+    These tests validate the IMPLEMENTATION against analytic passive-cable
+    results. They assert nothing about biology, and they do not adopt any
+    segment count, geometry, or timestep as a biological fact. All passive
+    values come from the existing 7F authorized profile.
+    """
+
+    INJECTED_A = 1e-12
+
+    def _analytic_voltage(self, electrical, t_ms, v0_mV):
+        """V(t) = E + (V0-E)exp(-t/tau) + (I/g)(1-exp(-t/tau)), tau = C/g."""
+        from math import exp
+
+        tau_ms = (electrical.capacitance_F / electrical.leak_conductance_S) * 1e3
+        decay = exp(-t_ms / tau_ms)
+        steady_offset = (self.INJECTED_A / electrical.leak_conductance_S) * 1e3
+        return electrical.leak_reversal_mV + (v0_mV - electrical.leak_reversal_mV) * decay \
+            + steady_offset * (1.0 - decay)
+
+    def test_matches_analytic_passive_solution(self):
+        """Single compartment tracks the analytic RC solution within Euler error."""
+        from biological_brain.dynamics.passive_cable import PassiveCableModel
+
+        backend = PassiveCableModel(profile_name=PROFILE_AUGUSTIN_2019_GFS_PASSIVE)
+        electrical = backend.prepare(_validation_single_compartment()).compartment("c")
+
+        # tau = C/g follows from the authorized Cm and leak density only.
+        assert electrical.leak_reversal_mV == pytest.approx(-85.0)
+        tau_ms = (electrical.capacitance_F / electrical.leak_conductance_S) * 1e3
+        assert tau_ms > 0.0
+
+        for t_ms in (1.0, 5.0, 10.0, 25.0, 50.0, 100.0, 250.0, 500.0):
+            model = _validation_single_compartment()
+            network = backend.prepare(model)
+            state = backend.initial_state(model)
+            v0 = state.voltages_mV["c"]
+            for _ in range(int(round(t_ms / backend.timestep_ms))):
+                backend.step(network, state, injected_currents_A={"c": self.INJECTED_A})
+
+            analytic = self._analytic_voltage(electrical, t_ms, v0)
+            error = abs(state.voltages_mV["c"] - analytic)
+            # Observed worst case is 7.8e-4 mV (3.1e-4 relative) for
+            # first-order forward Euler at dt = 0.01 ms.
+            assert error < 1.0e-3, f"t={t_ms} ms error={error}"
+            assert error / abs(analytic - electrical.leak_reversal_mV) < 5.0e-4
+
+    def test_charge_conservation_uniform_network(self):
+        """Axial current is antisymmetric and capacitive charge balances."""
+        from biological_brain.dynamics.passive_cable import PassiveCableModel, leak_current_A
+
+        backend = PassiveCableModel(profile_name=PROFILE_AUGUSTIN_2019_GFS_PASSIVE)
+        model = _validation_uniform_chain()
+        network = backend.prepare(model)
+        state = backend.initial_state(model)
+        state.voltages_mV["s0"] = -60.0
+        state.voltages_mV["s1"] = -75.0
+        state.voltages_mV["s2"] = -68.0
+
+        injection = {"s0": 2e-12, "s2": -1e-12}
+        dt_s = backend.timestep_ms * 1e-3
+
+        def stored_charge():
+            return sum(
+                network.compartment(cid).capacitance_F * v * 1e-3
+                for cid, v in state.voltages_mV.items()
+            )
+
+        q_start = stored_charge()
+        accumulated = 0.0
+        for _ in range(200):
+            before = dict(state.voltages_mV)
+            currents = backend.step(network, state, injected_currents_A=injection)
+
+            # Axial terms cancel pairwise, so the net current summed over all
+            # compartments must equal injected minus leak exactly.
+            total = 0.0
+            for cid, current in currents.items():
+                total += injection.get(cid, 0.0) - leak_current_A(
+                    network.compartment(cid), before[cid]
+                )
+            assert sum(currents.values()) == pytest.approx(total, rel=1e-12, abs=1e-30)
+            accumulated += total * dt_s
+
+            # Every connection moves equal and opposite charge.
+            assert currents["s1"] != 0.0
+
+        assert stored_charge() - q_start == pytest.approx(accumulated, rel=1e-9)
+
+    def test_axial_resistance_composability(self):
+        """N x Ra(L/N)/A == Ra*L/A for a uniform section.
+
+        This is a MATHEMATICAL composability identity only. It does not
+        adopt any segment count as a biological or modelling fact.
+        """
+        from biological_brain.dynamics.passive_cable import PassiveCableModel
+        from biological_brain.geometry_metrics import compute_compartment_metrics
+
+        backend = PassiveCableModel(profile_name=PROFILE_AUGUSTIN_2019_GFS_PASSIVE)
+        # A parent-linked child section, which is the case that has an axial path.
+        model = _validation_uniform_chain(n=2)
+        compartment = model.compartments["s1"]
+
+        ra = backend.resolve_parameter("specific_axial_resistance")
+        area_cm2 = compute_compartment_metrics(compartment).cross_sectional_area_um2 * 1e-8
+        length_cm = compartment.geometry.length_um * 1e-4
+        r_total = ra * length_cm / area_cm2
+
+        # The backend's own single-section value agrees.
+        assert backend.prepare(model).compartment("s1").axial_resistance_ohm == pytest.approx(
+            r_total, rel=1e-12
+        )
+
+        for n in (1, 2, 3, 7, 51, 100):
+            r_segment = ra * (length_cm / n) / area_cm2
+            assert n * r_segment == pytest.approx(r_total, rel=1e-12), f"N={n}"
+
+    def test_finer_timestep_reduces_error_toward_analytic(self):
+        """Halving dt reduces error: first-order convergence, not a biology claim."""
+        from biological_brain.dynamics.passive_cable import (
+            PASSIVE_CABLE_NUMERICAL_POLICY, PassiveCableModel,
+        )
+
+        coarse_dt = PASSIVE_CABLE_NUMERICAL_POLICY.default_timestep_ms
+        fine_dt = coarse_dt / 2.0
+
+        errors = {}
+        for label, dt in (("coarse", coarse_dt), ("fine", fine_dt)):
+            backend = PassiveCableModel(profile_name=PROFILE_AUGUSTIN_2019_GFS_PASSIVE,
+                                        timestep_ms=dt)
+            electrical = backend.prepare(_validation_single_compartment()).compartment("c")
+            errors[label] = []
+            for t_ms in (1.0, 5.0, 10.0, 25.0, 50.0, 100.0):
+                model = _validation_single_compartment()
+                network = backend.prepare(model)
+                state = backend.initial_state(model)
+                v0 = state.voltages_mV["c"]
+                for _ in range(int(round(t_ms / dt))):
+                    backend.step(network, state, injected_currents_A={"c": self.INJECTED_A})
+                analytic = self._analytic_voltage(electrical, t_ms, v0)
+                errors[label].append(abs(state.voltages_mV["c"] - analytic))
+
+        for coarse_error, fine_error in zip(errors["coarse"], errors["fine"]):
+            assert fine_error < coarse_error
+            # Observed ratio is ~0.5, consistent with first-order convergence.
+            assert fine_error < 0.75 * coarse_error
+
+        # The policy remains the source of the numerical configuration.
+        assert coarse_dt == 0.01
+        assert "NOT an experimentally established biological" in (
+            PASSIVE_CABLE_NUMERICAL_POLICY.policy_note
+        )
+
+    def test_profile_name_is_required(self):
+        """The backend has no default profile; the caller must name one."""
+        from biological_brain.dynamics.passive_cable import PassiveCableModel
+
+        with pytest.raises(TypeError):
+            PassiveCableModel()
+
+        backend = PassiveCableModel(profile_name=PROFILE_AUGUSTIN_2019_GFS_PASSIVE)
+        assert backend.profile_name == PROFILE_AUGUSTIN_2019_GFS_PASSIVE
+        assert backend.is_default is False
+
+
+def _excluded_parent_model():
+    """A model whose root is declared excluded but has a specified child.
+
+    Mirrors the GF situation geometrically: the root carries a diameter
+    only (no length), the child is fully specified.
+    """
+    from biological_brain.electrical_representation import (
+        ElectricalRepresentation, insufficient_geometry_exclusion,
+    )
+    from biological_brain.morphology import Compartment, CompartmentGeometry, CompartmentModel
+
+    model = CompartmentModel(
+        "excluded_root_model", passive_profile_name=PROFILE_AUGUSTIN_2019_GFS_PASSIVE
+    )
+    model.add_compartment(Compartment(
+        compartment_id="root",
+        geometry=CompartmentGeometry(diameter_um=8.0, anatomical_role="soma"),
+    ))
+    model.add_compartment(Compartment(
+        compartment_id="child",
+        geometry=CompartmentGeometry(diameter_um=8.0, length_um=400.0),
+    ))
+    model.add_connection("root", "child")
+    model.electrical_representation = ElectricalRepresentation(
+        exclusions=(
+            insufficient_geometry_exclusion(
+                "root", "diameter only; no source-backed length"
+            ),
+        )
+    )
+    return model
+
+
+class TestElectricalRepresentationExclusions:
+    """3.0D-7I: anatomically real compartments not electrically representable."""
+
+    def test_gf_soma_excluded_but_anatomically_present(self):
+        """GF_soma is declared not electrically representable, and stays real."""
+        from biological_brain.electrical_representation import (
+            EXCLUSION_INSUFFICIENT_GEOMETRY, SCOPE_COMPUTATIONAL_LIMITATION,
+        )
+        from biological_brain.morphology_builder import build_gfs_compartment_models
+
+        gf = build_gfs_compartment_models()["GF"]
+
+        # Anatomically represented: yes.
+        assert "GF_soma" in gf.compartments
+        assert gf.compartments["GF_soma"].geometry.diameter_um == 8.0
+        assert gf.is_electrically_excluded("GF_soma") is True
+
+        # Electrically represented by passive_cable_v0: no.
+        representation = gf.electrical_representation
+        assert representation.is_excluded("GF_soma") is True
+        assert representation.excluded_ids() == ("GF_soma",)
+
+        exclusion = representation.get("GF_soma")
+        assert exclusion.reason == EXCLUSION_INSUFFICIENT_GEOMETRY
+        assert exclusion.scope == SCOPE_COMPUTATIONAL_LIMITATION
+        assert "no source-backed length" in exclusion.reason_detail
+
+        # No other GFS compartment is excluded.
+        assert gf.is_electrically_excluded("GF_axon") is False
+        assert gf.is_electrically_excluded("GF_medial_dendrite") is False
+
+    def test_exclusion_provenance_states_computational_limitation(self):
+        """The exclusion is documented as a limitation, not a biological claim."""
+        from biological_brain.electrical_representation import (
+            SCOPE_COMPUTATIONAL_LIMITATION,
+        )
+        from biological_brain.morphology_builder import build_gfs_compartment_models
+        from biological_brain.provenance import ParameterProvenance
+
+        exclusion = build_gfs_compartment_models()["GF"].electrical_representation.get("GF_soma")
+        source = exclusion.provenance.source
+
+        assert exclusion.scope == SCOPE_COMPUTATIONAL_LIMITATION
+        assert exclusion.provenance.category == ParameterProvenance.UNKNOWN
+        assert "computational representation limitation" in source
+        assert "insufficient source-backed geometry" in source
+        # Explicitly NOT the forbidden claims.
+        assert "NOT a biological claim" in source
+        assert "not described as having zero membrane area" in source
+        assert "not experimental evidence" in source
+
+    def test_excluded_compartment_receives_no_electrical_quantities(self):
+        """An excluded compartment gets no C, no g_leak, no axial resistance."""
+        from biological_brain.dynamics.passive_cable import PassiveCableModel
+
+        model = _excluded_parent_model()
+        backend = PassiveCableModel(profile_name=PROFILE_AUGUSTIN_2019_GFS_PASSIVE)
+        network = backend.prepare(model)
+
+        assert [c.compartment_id for c in network.compartments] == ["child"]
+        assert [e.compartment_id for e in network.excluded] == ["root"]
+
+        with pytest.raises(KeyError):
+            network.compartment("root")
+
+        state = backend.initial_state(model)
+        assert "root" not in state.voltages_mV
+        assert state.voltages_mV == {"child": -70.0}
+
+        # No electrical parameters were written onto the excluded compartment.
+        for comp in model.compartments.values():
+            assert comp.cable_params.axial_resistance_ohm_cm is None
+            assert comp.cable_params.membrane_capacitance_uf_per_cm2 is None
+            assert comp.cable_params.leak_conductance_ms_per_cm2 is None
+            assert comp.cable_params.leak_reversal_mV is None
+
+    def test_child_of_excluded_parent_becomes_electrical_root(self):
+        """No axial path is invented; the anatomical parent_id is preserved."""
+        from biological_brain.dynamics.passive_cable import PassiveCableModel
+
+        model = _excluded_parent_model()
+        backend = PassiveCableModel(profile_name=PROFILE_AUGUSTIN_2019_GFS_PASSIVE)
+        network = backend.prepare(model)
+
+        # Anatomical topology is untouched.
+        assert model.compartments["child"].parent_id == "root"
+        assert model.compartments["root"].neighbor_ids == ["child"]
+
+        # Electrical topology is derived separately.
+        child = network.compartment("child")
+        assert child.anatomical_parent_id == "root"
+        assert child.electrical_parent_id is None
+        assert child.axial_resistance_ohm is None
+        assert "electrical root" in child.axial_derivation
+        assert "not electrically represented" in child.electrical_root_reason
+
+        # No fake soma-to-child link exists.
+        assert network.connections == ()
+        assert all(c.parent_id != "root" for c in network.connections)
+
+    def test_chain_of_excluded_ancestors_is_deterministic(self):
+        """A represented compartment under excluded ancestors links normally."""
+        from biological_brain.dynamics.passive_cable import PassiveCableModel
+        from biological_brain.electrical_representation import (
+            ElectricalRepresentation, insufficient_geometry_exclusion,
+        )
+        from biological_brain.morphology import Compartment, CompartmentGeometry, CompartmentModel
+
+        model = CompartmentModel(
+            "chain", passive_profile_name=PROFILE_AUGUSTIN_2019_GFS_PASSIVE
+        )
+        model.add_compartment(Compartment(
+            compartment_id="root", geometry=CompartmentGeometry(diameter_um=8.0)
+        ))
+        model.add_compartment(Compartment(
+            compartment_id="mid", geometry=CompartmentGeometry(diameter_um=8.0, length_um=400.0)
+        ))
+        model.add_compartment(Compartment(
+            compartment_id="leaf", geometry=CompartmentGeometry(diameter_um=6.0, length_um=50.0)
+        ))
+        model.add_connection("root", "mid")
+        model.add_connection("mid", "leaf")
+        model.electrical_representation = ElectricalRepresentation(
+            exclusions=(insufficient_geometry_exclusion("root", "diameter only"),)
+        )
+
+        backend = PassiveCableModel(profile_name=PROFILE_AUGUSTIN_2019_GFS_PASSIVE)
+        first = backend.prepare(model)
+        second = backend.prepare(model)
+
+        # mid is an electrical root; leaf links to mid, and nothing links to root.
+        assert first.compartment("mid").electrical_parent_id is None
+        assert first.compartment("leaf").electrical_parent_id == "mid"
+        assert [(c.parent_id, c.child_id) for c in first.connections] == [("mid", "leaf")]
+
+        # Deterministic across preparations.
+        assert first.compartments == second.compartments
+        assert first.connections == second.connections
+
+    def test_normal_parent_child_cylinder_still_connects(self):
+        """A fully specified parent-child pair is unaffected by the mechanism."""
+        from biological_brain.dynamics.passive_cable import PassiveCableModel
+
+        model = _passive_test_model()
+        network = PassiveCableModel(
+            profile_name=PROFILE_AUGUSTIN_2019_GFS_PASSIVE
+        ).prepare(model)
+
+        assert [c.compartment_id for c in network.compartments] == ["axon", "soma"]
+        assert network.excluded == ()
+        assert network.compartment("axon").electrical_parent_id == "soma"
+        assert network.compartment("axon").axial_resistance_ohm is not None
+        assert [(c.parent_id, c.child_id) for c in network.connections] == [
+            ("soma", "axon")
+        ]
+
+    def test_diameter_only_soma_never_yields_membrane_area(self):
+        """A diameter alone must NOT be converted into a membrane area.
+
+        Regression guard: even with a diameter, no area may be inferred, and
+        without an explicit exclusion the model must fail loudly.
+    """
+        from math import pi
+        from biological_brain.dynamics.passive_cable import (
+            PassiveCableModel, PassiveGeometryError,
+        )
+        from biological_brain.geometry_metrics import compute_compartment_metrics
+        from biological_brain.morphology import Compartment, CompartmentGeometry, CompartmentModel
+
+        model = CompartmentModel(
+            "diameter_only", passive_profile_name=PROFILE_AUGUSTIN_2019_GFS_PASSIVE
+        )
+        model.add_compartment(Compartment(
+            compartment_id="soma", geometry=CompartmentGeometry(diameter_um=8.0)
+        ))
+        model.add_compartment(Compartment(
+            compartment_id="child", geometry=CompartmentGeometry(diameter_um=8.0, length_um=400.0)
+        ))
+        model.add_connection("soma", "child")
+
+        # The geometry layer itself refuses to produce an area.
+        metrics = compute_compartment_metrics(model.compartments["soma"])
+        assert metrics.lateral_surface_area_um2 is None
+        assert metrics.derivation_note
+
+        # Without an explicit exclusion the whole model fails loudly.
+        backend = PassiveCableModel(profile_name=PROFILE_AUGUSTIN_2019_GFS_PASSIVE)
+        with pytest.raises(PassiveGeometryError, match="no computable membrane area"):
+            backend.prepare(model)
+
+        # pi*d^2 must never be used as a membrane area, excluded or not.
+        excluded = _excluded_parent_model()
+        excluded_network = backend.prepare(excluded)
+        assert excluded_network.compartment("child").membrane_area_cm2 == pytest.approx(
+            pi * 8.0 * 400.0 * 1e-8
+        )
+        assert "root" not in [c.compartment_id for c in excluded_network.compartments]
+
+
+def _taper_child_model(d1_um, d2_um, length_um=50.0, parent_length_um=50.0):
+    """Parent-linked child carrying explicit proximal/distal diameters.
+
+    The parent is a plain test fixture so the child has a real axial path.
+    """
+    from biological_brain.morphology import Compartment, CompartmentGeometry, CompartmentModel
+
+    model = CompartmentModel(
+        "taper_model", passive_profile_name=PROFILE_AUGUSTIN_2019_GFS_PASSIVE
+    )
+    model.add_compartment(Compartment(
+        compartment_id="parent",
+        geometry=CompartmentGeometry(diameter_um=4.0, length_um=parent_length_um),
+    ))
+    model.add_compartment(Compartment(
+        compartment_id="taper",
+        geometry=CompartmentGeometry(
+            diameter_um=d1_um, diameter_distal_um=d2_um, length_um=length_um
+        ),
+    ))
+    model.add_connection("parent", "taper")
+    return model
+
+
+class TestTaperAxialResistance:
+    """3.0D-7J: axial resistance for a linearly tapered circular compartment.
+
+    R = integral Ra / A(x) dx = Ra * L / (pi * r1 * r2)
+
+    This is a mathematical cable-model convention, not a biological
+    parameter. No new Ra, no new morphology value, no new authorization.
+    """
+
+    RA = 35.4  # ohm*cm, already authorized by augustin_2019_gfs_passive
+
+    def test_dlmn_axon_taper_resistance(self):
+        """The source-backed DLMn axon taper yields the expected resistance."""
+        from math import pi
+        from biological_brain.dynamics.passive_cable import PassiveCableModel
+        from biological_brain.morphology_builder import build_gfs_compartment_models
+
+        # Drive the fixture from the actual source-backed DLMn axon geometry.
+        source = build_gfs_compartment_models()["DLMn"].compartments["DLMn_axon"].geometry
+        assert source.length_um == 50.0
+        assert source.diameter_um == 2.0
+        assert source.diameter_distal_um == 4.0
+
+        model = _taper_child_model(source.diameter_um, source.diameter_distal_um,
+                                   source.length_um)
+        network = PassiveCableModel(
+            profile_name=PROFILE_AUGUSTIN_2019_GFS_PASSIVE
+        ).prepare(model)
+
+        r1 = 1e-4  # cm
+        r2 = 2e-4  # cm
+        length_cm = 0.005
+        expected = self.RA * length_cm / (pi * r1 * r2)
+
+        assert expected == pytest.approx(2817042.493327, rel=1e-9)
+        assert network.compartment("taper").axial_resistance_ohm == pytest.approx(
+            expected, rel=1e-9
+        )
+        assert network.compartment("taper").axial_resistance_ohm == pytest.approx(
+            2.817042493e6, rel=1e-9
+        )
+
+    def test_uniform_cylinder_unchanged(self):
+        """A non-tapered section still uses Ra * L / A."""
+        from math import pi
+        from biological_brain.dynamics.passive_cable import PassiveCableModel
+
+        network = PassiveCableModel(
+            profile_name=PROFILE_AUGUSTIN_2019_GFS_PASSIVE
+        ).prepare(_taper_child_model(4.0, None))
+
+        taper = network.compartment("taper")
+        area_cm2 = pi * 4.0 ** 2 / 4 * 1e-8
+        assert taper.axial_resistance_ohm == pytest.approx(
+            self.RA * 0.005 / area_cm2, rel=1e-12
+        )
+        assert "uniform cylinder" in taper.axial_derivation
+
+    def test_taper_reduces_to_cylinder_when_diameters_equal(self):
+        """With d1 == d2 the taper formula is exactly the cylinder formula."""
+        from math import pi
+        from biological_brain.dynamics.passive_cable import PassiveCableModel
+
+        model = _taper_child_model(4.0, 4.0)
+        network = PassiveCableModel(
+            profile_name=PROFILE_AUGUSTIN_2019_GFS_PASSIVE
+        ).prepare(model)
+
+        r_cm = 2.0 * 1e-4
+        taper_formula = self.RA * 0.005 / (pi * r_cm * r_cm)
+        cylinder_formula = self.RA * 0.005 / (pi * r_cm ** 2)
+        assert taper_formula == pytest.approx(cylinder_formula, rel=1e-15)
+
+        # Equal diameters are not a taper, so the uniform path is used.
+        assert network.compartment("taper").axial_resistance_ohm == pytest.approx(
+            cylinder_formula, rel=1e-12
+        )
+
+    def test_reversing_taper_endpoints_gives_same_resistance(self):
+        """DC axial resistance is symmetric in the two end radii."""
+        from biological_brain.dynamics.passive_cable import PassiveCableModel
+
+        backend = PassiveCableModel(profile_name=PROFILE_AUGUSTIN_2019_GFS_PASSIVE)
+        forward = backend.prepare(_taper_child_model(2.0, 4.0)).compartment("taper")
+        reverse = backend.prepare(_taper_child_model(4.0, 2.0)).compartment("taper")
+
+        assert forward.axial_resistance_ohm == pytest.approx(
+            reverse.axial_resistance_ohm, rel=1e-12
+        )
+
+    def test_taper_derivation_records_the_convention(self):
+        """The derivation states the linearly tapered circular cable formula."""
+        from biological_brain.dynamics.passive_cable import PassiveCableModel
+
+        network = PassiveCableModel(
+            profile_name=PROFILE_AUGUSTIN_2019_GFS_PASSIVE
+        ).prepare(_taper_child_model(2.0, 4.0))
+        taper = network.compartment("taper")
+
+        assert "linearly tapered circular cable" in taper.axial_derivation
+        assert "R = Ra * L / (pi * r1 * r2)" in taper.axial_derivation
+        # Membrane quantities still come from the existing frustum convention.
+        assert "Frustum of a cone" in taper.membrane_area_derivation
+        # A taper is still electrically represented, not excluded.
+        assert network.excluded == ()
+
+    def test_missing_taper_quantities_still_raise(self):
+        """A taper needs length and both diameters; nothing is inferred."""
+        from biological_brain.dynamics.passive_cable import (
+            PassiveCableModel, PassiveGeometryError,
+        )
+        from biological_brain.morphology import Compartment, CompartmentGeometry, CompartmentModel
+
+        backend = PassiveCableModel(profile_name=PROFILE_AUGUSTIN_2019_GFS_PASSIVE)
+
+        def model_for(child_geometry):
+            model = CompartmentModel(
+                "partial", passive_profile_name=PROFILE_AUGUSTIN_2019_GFS_PASSIVE
+            )
+            model.add_compartment(Compartment(
+                compartment_id="parent",
+                geometry=CompartmentGeometry(diameter_um=4.0, length_um=50.0),
+            ))
+            model.add_compartment(Compartment(
+                compartment_id="child", geometry=child_geometry
+            ))
+            model.add_connection("parent", "child")
+            return model
+
+        # Missing length.
+        with pytest.raises(PassiveGeometryError, match="no computable membrane area"):
+            backend.prepare(model_for(CompartmentGeometry(diameter_um=2.0, diameter_distal_um=4.0)))
+
+        # Missing proximal diameter.
+        with pytest.raises(PassiveGeometryError, match="no computable membrane area"):
+            backend.prepare(model_for(
+                CompartmentGeometry(diameter_distal_um=4.0, length_um=50.0)
+            ))
+
+        # Missing distal diameter is indistinguishable from "not a taper", so
+        # the taper formula must NOT be applied: the section falls back to the
+        # uniform cylinder convention using the proximal diameter.
+        fallback = backend.prepare(model_for(
+            CompartmentGeometry(diameter_um=2.0, length_um=50.0)
+        )).compartment("child")
+        from math import pi
+        cylinder = self.RA * 0.005 / (pi * 2.0 ** 2 / 4 * 1e-8)
+        genuine_taper = self.RA * 0.005 / (pi * 1e-4 * 2e-4)
+        assert fallback.axial_resistance_ohm == pytest.approx(cylinder, rel=1e-12)
+        assert fallback.axial_resistance_ohm != pytest.approx(genuine_taper, rel=1e-6)
+        assert "uniform cylinder" in fallback.axial_derivation
+
+    def test_no_new_authorized_parameter(self):
+        """7J added no authorization: the profile set is unchanged."""
+        from biological_brain.passive_profiles import (
+            build_augustin_2019_gfs_passive_profile, get_passive_electrical_registry,
+        )
+
+        profile = build_augustin_2019_gfs_passive_profile()
+        assert profile.authorized_names() == (
+            "specific_membrane_capacitance",
+            "specific_axial_resistance",
+            "leak_conductance_density",
+            "leak_reversal_potential",
+        )
+        assert profile.get("specific_axial_resistance").value == pytest.approx(35.4)
+        assert profile.get("specific_axial_resistance").unit == "ohm*cm"
+        # Exactly one Ra is used, and it is the authorized one.
+        assert get_passive_electrical_registry().get("specific_axial_resistance").value == (
+            pytest.approx(35.4)
+        )
+
+    def test_gf_axon_remains_blocked(self):
+        """GF_axon is still blocked: its source-backed diameter is absent."""
+        from biological_brain.dynamics.passive_cable import (
+            PassiveCableModel, PassiveGeometryError,
+        )
+        from biological_brain.morphology_builder import build_gfs_compartment_models
+
+        gf = build_gfs_compartment_models()["GF"]
+        gf.passive_profile_name = PROFILE_AUGUSTIN_2019_GFS_PASSIVE
+        assert gf.compartments["GF_axon"].geometry.diameter_um is None
+
+        with pytest.raises(PassiveGeometryError, match="'GF_axon'"):
+            PassiveCableModel(
+                profile_name=PROFILE_AUGUSTIN_2019_GFS_PASSIVE
+            ).prepare(gf)
+
+        # The soma exclusion from 7I is untouched.
+        assert gf.is_electrically_excluded("GF_soma") is True
+        assert gf.compartments["GF_soma"].geometry.diameter_um == 8.0
+
+
+def _subdivided_uniform_model(diameter_um=8.0, length_um=400.0, distances=()):
+    """Parent-linked uniform cylinder with optional source placements."""
+    from biological_brain.morphology import (
+        Compartment, CompartmentGeometry, CompartmentModel, PlacementRecord,
+    )
+
+    model = CompartmentModel(
+        "subdiv", passive_profile_name=PROFILE_AUGUSTIN_2019_GFS_PASSIVE
+    )
+    model.add_compartment(Compartment(
+        compartment_id="root",
+        geometry=CompartmentGeometry(diameter_um=diameter_um, length_um=50.0),
+    ))
+    section = Compartment(
+        compartment_id="section",
+        geometry=CompartmentGeometry(diameter_um=diameter_um, length_um=length_um),
+    )
+    section.placements = [
+        PlacementRecord(distance_um=d, kind="contact", description="source placement")
+        for d in distances
+    ]
+    model.add_compartment(section)
+    model.add_connection("root", "section")
+    return model
+
+
+def _subdivided_taper_model(length_um=50.0):
+    """Parent-linked taper using the source-backed DLMn axon geometry."""
+    from biological_brain.morphology import Compartment, CompartmentGeometry, CompartmentModel
+
+    model = CompartmentModel(
+        "taper_subdiv", passive_profile_name=PROFILE_AUGUSTIN_2019_GFS_PASSIVE
+    )
+    model.add_compartment(Compartment(
+        compartment_id="parent",
+        geometry=CompartmentGeometry(diameter_um=4.0, length_um=50.0),
+    ))
+    model.add_compartment(Compartment(
+        compartment_id="axon",
+        geometry=CompartmentGeometry(
+            diameter_um=2.0, diameter_distal_um=4.0, length_um=length_um
+        ),
+    ))
+    model.add_connection("parent", "axon")
+    return model
+
+
+def _plan(section_id, count):
+    from biological_brain.subdivision import SectionSubdivision, SubdivisionPlan
+
+    return SubdivisionPlan(sections=(SectionSubdivision(section_id, count),))
+
+
+class TestDerivedSubdivision:
+    """3.0D-7K: derived, non-destructive computational subdivision.
+
+    Segment count is an explicit numerical configuration. The default is 1.
+    No segment count is claimed to be biologically correct.
+    """
+
+    # Source-backed uniform fixture: 8 um diameter, 400 um long.
+    TOTAL_AREA_UM2 = 10053.096491
+    TOTAL_R_OHM = 2817042.492727
+
+    def test_default_segment_count_preserves_behavior(self):
+        """Default is 1: no derived segments, ids unchanged, values identical."""
+        from biological_brain.dynamics.passive_cable import PassiveCableModel
+        from biological_brain.subdivision import (
+            DEFAULT_SEGMENT_COUNT, SectionSubdivision, SubdivisionPlan,
+            derive_segments,
+        )
+
+        assert DEFAULT_SEGMENT_COUNT == 1
+        assert SectionSubdivision("x").segment_count == 1
+        assert SubdivisionPlan().segment_count_for("anything") == 1
+
+        model = _subdivided_uniform_model()
+        backend = PassiveCableModel(profile_name=PROFILE_AUGUSTIN_2019_GFS_PASSIVE)
+
+        without_plan = backend.prepare(model)
+        with_default_plan = backend.prepare(
+            model, SubdivisionPlan(sections=(SectionSubdivision("section", 1),))
+        )
+        assert without_plan.compartments == with_default_plan.compartments
+        assert without_plan.connections == with_default_plan.connections
+
+        section = model.compartments["section"]
+        segments = derive_segments(section, None)
+        assert len(segments) == 1
+        assert segments[0].segment_id == "section"
+        assert segments[0].is_derived_segment is False
+
+    def test_uniform_subdivision_n2_and_length_conservation(self):
+        """N=2 halves each segment length and sums back to the source length."""
+        from biological_brain.dynamics.passive_cable import PassiveCableModel
+        from biological_brain.subdivision import derive_segments
+
+        backend = PassiveCableModel(profile_name=PROFILE_AUGUSTIN_2019_GFS_PASSIVE)
+        model = _subdivided_uniform_model()
+        network = backend.prepare(model, _plan("section", 2))
+
+        segments = [c for c in network.compartments
+                    if c.source_section_id == "section"]
+        assert [c.compartment_id for c in segments] == ["section#seg0", "section#seg1"]
+        assert all(c.is_derived_segment for c in segments)
+
+        derived = derive_segments(model.compartments["section"], _plan("section", 2))
+        assert [s.geometry.length_um for s in derived] == [200.0, 200.0]
+        assert sum(s.geometry.length_um for s in derived) == pytest.approx(400.0)
+
+    def test_uniform_subdivision_n51_is_explicitly_configured(self):
+        """N=51 is available on request and is not the default."""
+        from biological_brain.dynamics.passive_cable import PassiveCableModel
+        from biological_brain.subdivision import SubdivisionPlan, derive_segments
+
+        model = _subdivided_uniform_model()
+        backend = PassiveCableModel(profile_name=PROFILE_AUGUSTIN_2019_GFS_PASSIVE)
+
+        # Without a plan the section is one compartment.
+        assert len(backend.prepare(model).compartments) == 2
+
+        network = backend.prepare(model, _plan("section", 51))
+        segments = [c for c in network.compartments
+                    if c.source_section_id == "section"]
+        assert len(segments) == 51
+        assert segments[0].segment_count == 51
+
+        derived = derive_segments(model.compartments["section"], _plan("section", 51))
+        assert derived[0].geometry.length_um == pytest.approx(400.0 / 51)
+        assert sum(s.geometry.length_um for s in derived) == pytest.approx(400.0)
+        assert all(s.geometry.diameter_um == 8.0 for s in derived)
+
+        # The plan must be supplied explicitly; the default plan is 1.
+        assert SubdivisionPlan().segment_count_for("section") == 1
+
+    def test_uniform_area_and_axial_resistance_conserve(self):
+        """Membrane area and axial resistance sum back to the source values."""
+        from biological_brain.dynamics.passive_cable import PassiveCableModel
+
+        backend = PassiveCableModel(profile_name=PROFILE_AUGUSTIN_2019_GFS_PASSIVE)
+        base = backend.prepare(_subdivided_uniform_model())
+        source = [c for c in base.compartments if c.source_section_id == "section"][0]
+        assert source.membrane_area_cm2 * 1e8 == pytest.approx(self.TOTAL_AREA_UM2, rel=1e-9)
+        assert source.axial_resistance_ohm == pytest.approx(self.TOTAL_R_OHM, rel=1e-9)
+
+        for n, expected_area, expected_r in (
+            (2, 5026.5482455, 1.4085212465e6),
+            (51, 197.1195390, 0.0552361273e6),
+            (100, 100.53096491, 0.02817042493e6),
+        ):
+            network = backend.prepare(
+                _subdivided_uniform_model(), _plan("section", n)
+            )
+            segments = [c for c in network.compartments
+                        if c.source_section_id == "section"]
+            assert len(segments) == n
+            for c in segments:
+                assert c.membrane_area_cm2 * 1e8 == pytest.approx(
+                    expected_area, rel=1e-6
+                )
+                assert c.axial_resistance_ohm == pytest.approx(expected_r, rel=1e-6)
+            # Conservation: the sums return the source totals.
+            assert sum(c.membrane_area_cm2 for c in segments) == pytest.approx(
+                source.membrane_area_cm2, rel=1e-12
+            )
+            assert sum(c.axial_resistance_ohm for c in segments) == pytest.approx(
+                source.axial_resistance_ohm, rel=1e-9
+            )
+
+    def test_taper_subdivision_n2_matches_fixtures(self):
+        """N=2 of the source taper gives the documented per-segment values."""
+        from biological_brain.dynamics.passive_cable import PassiveCableModel
+        from biological_brain.subdivision import derive_segments
+
+        model = _subdivided_taper_model()
+        backend = PassiveCableModel(profile_name=PROFILE_AUGUSTIN_2019_GFS_PASSIVE)
+        network = backend.prepare(model, _plan("axon", 2))
+
+        derived = derive_segments(model.compartments["axon"], _plan("axon", 2))
+        assert [s.geometry.length_um for s in derived] == [25.0, 25.0]
+        assert [s.geometry.diameter_um for s in derived] == [2.0, 3.0]
+        assert [s.geometry.diameter_distal_um for s in derived] == [3.0, 4.0]
+
+        segments = [c for c in network.compartments if c.source_section_id == "axon"]
+        resistances = [c.axial_resistance_ohm for c in segments]
+        assert resistances[0] == pytest.approx(1.878028329e6, rel=1e-6)
+        assert resistances[1] == pytest.approx(0.939014164e6, rel=1e-6)
+        assert sum(resistances) == pytest.approx(self.TOTAL_R_OHM, rel=1e-9)
+
+    def test_taper_subdivision_n5_conserves_area_and_resistance(self):
+        """N=5 of the source taper conserves axial resistance and membrane area."""
+        from biological_brain.dynamics.passive_cable import PassiveCableModel
+        from biological_brain.subdivision import derive_segments
+
+        model = _subdivided_taper_model()
+        backend = PassiveCableModel(profile_name=PROFILE_AUGUSTIN_2019_GFS_PASSIVE)
+        base = backend.prepare(model)
+        source = [c for c in base.compartments if c.source_section_id == "axon"][0]
+
+        network = backend.prepare(model, _plan("axon", 5))
+        segments = [c for c in network.compartments if c.source_section_id == "axon"]
+        assert len(segments) == 5
+
+        derived = derive_segments(model.compartments["axon"], _plan("axon", 5))
+        assert [s.geometry.length_um for s in derived] == [10.0] * 5
+        assert [s.geometry.diameter_um for s in derived] == [2.0, 2.4, 2.8, 3.2, 3.6]
+        assert [s.geometry.diameter_distal_um for s in derived] == [2.4, 2.8, 3.2, 3.6, 4.0]
+
+        # Each segment uses the 7J taper convention.
+        assert all("linearly tapered circular cable" in c.axial_derivation
+                   for c in segments)
+        # Each segment uses the existing frustum membrane-area convention.
+        assert all("Frustum of a cone" in c.membrane_area_derivation for c in segments)
+
+        assert sum(c.axial_resistance_ohm for c in segments) == pytest.approx(
+            source.axial_resistance_ohm, rel=1e-9
+        )
+        assert sum(c.membrane_area_cm2 for c in segments) == pytest.approx(
+            source.membrane_area_cm2, rel=1e-12
+        )
+
+    def test_source_geometry_and_provenance_unchanged(self):
+        """Subdivision never writes to the source CompartmentGeometry."""
+        from biological_brain.dynamics.passive_cable import PassiveCableModel
+        from biological_brain.provenance import ParameterProvenance
+
+        uniform = _subdivided_uniform_model()
+        before_geom = (
+            uniform.compartments["section"].geometry.length_um,
+            uniform.compartments["section"].geometry.diameter_um,
+            uniform.compartments["section"].geometry.diameter_distal_um,
+        )
+        before_prov = uniform.compartments["section"].provenance
+        before_parent = uniform.compartments["section"].parent_id
+        before_neighbors = list(uniform.compartments["root"].neighbor_ids)
+
+        backend = PassiveCableModel(profile_name=PROFILE_AUGUSTIN_2019_GFS_PASSIVE)
+        backend.prepare(uniform, _plan("section", 51))
+
+        section = uniform.compartments["section"]
+        assert (section.geometry.length_um, section.geometry.diameter_um,
+                section.geometry.diameter_distal_um) == before_geom
+        assert section.parent_id == before_parent
+        assert list(uniform.compartments["root"].neighbor_ids) == before_neighbors
+        assert section.provenance is before_prov
+        assert section.provenance.length_um.category == ParameterProvenance.UNKNOWN
+
+        taper = _subdivided_taper_model()
+        backend.prepare(taper, _plan("axon", 5))
+        assert taper.compartments["axon"].geometry.diameter_um == 2.0
+        assert taper.compartments["axon"].geometry.diameter_distal_um == 4.0
+        assert taper.compartments["axon"].geometry.length_um == 50.0
+
+    def test_subdivision_provenance_is_numerical(self):
+        """Derived segment provenance is explicitly non-biological."""
+        from biological_brain.dynamics.passive_cable import PassiveCableModel
+        from biological_brain.provenance import ParameterProvenance
+        from biological_brain.subdivision import (
+            SectionSubdivision, SubdivisionPlan, derive_segments,
+        )
+
+        model = _subdivided_uniform_model()
+        derived = derive_segments(model.compartments["section"], _plan("section", 51))
+        segment = derived[0]
+
+        source_text = segment.subdivision_provenance.source
+        assert segment.subdivision_provenance.category == ParameterProvenance.UNKNOWN
+        assert "not a source anatomical value" in source_text
+        assert "numerical" in source_text.lower()
+        # No biological provenance category is claimed for derived geometry.
+        for category in (ParameterProvenance.PUBLISHED_MODEL_PARAMETER,
+                         ParameterProvenance.EXPERIMENTALLY_CONSTRAINED,
+                         ParameterProvenance.ESTIMATED,
+                         ParameterProvenance.DIRECTLY_MEASURED):
+            assert segment.subdivision_provenance.category != category
+        # The source section identity is referenced, not duplicated.
+        assert segment.source_section_id == "section"
+        assert "not restated per segment" in segment.source_geometry_provenance.source
+        assert "derived numerical discretization" in segment.derivation
+
+        # An explicit plan carries the same numerical provenance.
+        explicit = SubdivisionPlan(
+            sections=(SectionSubdivision("section", 4),)
+        ).section("section")
+        assert "not a source anatomical value" in explicit.provenance.source
+
+        network = PassiveCableModel(
+            profile_name=PROFILE_AUGUSTIN_2019_GFS_PASSIVE
+        ).prepare(model, _plan("section", 51))
+        electrical = network.compartment("section#seg0")
+        assert electrical.is_derived_segment is True
+        assert electrical.source_section_id == "section"
+        assert electrical.subdivision_provenance is not None
+
+    def test_placement_mapping_is_deterministic_and_preserves_distance(self):
+        """Source distances stay in original-section coordinates."""
+        from biological_brain.dynamics.passive_cable import PassiveCableModel
+        from biological_brain.subdivision import map_placement_to_segment
+
+        distances = (0.0, 50.0, 100.0, 199.9, 200.0, 350.0, 400.0)
+        model = _subdivided_uniform_model(distances=distances)
+        backend = PassiveCableModel(profile_name=PROFILE_AUGUSTIN_2019_GFS_PASSIVE)
+        network = backend.prepare(model, _plan("section", 2))
+
+        assert [m.distance_um for m in network.placement_mappings] == list(distances)
+        assert [m.segment_index for m in network.placement_mappings] == [0, 0, 0, 0, 1, 1, 1]
+        assert [m.segment_id for m in network.placement_mappings] == [
+            "section#seg0", "section#seg0", "section#seg0", "section#seg0",
+            "section#seg1", "section#seg1", "section#seg1",
+        ]
+        assert all(m.segment_count == 2 for m in network.placement_mappings)
+        assert all("computational mapping" in m.mapping_note
+                   for m in network.placement_mappings)
+
+        # The source placement records are untouched.
+        assert [p.distance_um for p in model.compartments["section"].placements] == \
+            list(distances)
+
+        # Deterministic across preparations.
+        again = backend.prepare(_subdivided_uniform_model(distances=distances),
+                                _plan("section", 2))
+        assert again.placement_mappings == network.placement_mappings
+
+        assert map_placement_to_segment(0.0, 400.0, 1) == 0
+        assert map_placement_to_segment(400.0, 400.0, 4) == 3
+
+    def test_exact_distal_placement_maps_to_final_segment(self):
+        """The exact distal endpoint clamps to the final segment."""
+        from biological_brain.dynamics.passive_cable import PassiveCableModel
+        from biological_brain.subdivision import map_placement_to_segment
+
+        assert map_placement_to_segment(400.0, 400.0, 2) == 1
+        assert map_placement_to_segment(400.0, 400.0, 51) == 50
+        assert map_placement_to_segment(400.0, 400.0, 100) == 99
+        # Beyond the section clamps to the last segment.
+        assert map_placement_to_segment(500.0, 400.0, 3) == 2
+
+        network = PassiveCableModel(
+            profile_name=PROFILE_AUGUSTIN_2019_GFS_PASSIVE
+        ).prepare(_subdivided_uniform_model(distances=(400.0,)), _plan("section", 51))
+        mapping = network.placement_mappings[0]
+        assert mapping.segment_index == 50
+        assert mapping.segment_id == "section#seg50"
+
+    def test_excluded_compartment_produces_no_segments(self):
+        """7I exclusions are respected: no derived segments for GF_soma."""
+        from biological_brain.dynamics.passive_cable import (
+            PassiveCableModel, PassiveGeometryError,
+        )
+        from biological_brain.morphology_builder import build_gfs_compartment_models
+        from biological_brain.subdivision import (
+            SectionSubdivision, SubdivisionPlan, derive_segments,
+        )
+
+        gf = build_gfs_compartment_models()["GF"]
+        gf.passive_profile_name = PROFILE_AUGUSTIN_2019_GFS_PASSIVE
+
+        # Even if a plan asks for it, the excluded soma gets no segments.
+        plan = SubdivisionPlan(
+            sections=(SectionSubdivision("GF_soma", 10),)
+        )
+        backend = PassiveCableModel(profile_name=PROFILE_AUGUSTIN_2019_GFS_PASSIVE)
+        with pytest.raises(PassiveGeometryError, match="'GF_axon'"):
+            backend.prepare(gf, plan)
+
+        assert gf.is_electrically_excluded("GF_soma") is True
+        assert gf.compartments["GF_soma"].geometry.diameter_um == 8.0
+        assert gf.compartments["GF_axon"].geometry.diameter_um is None
+
+    def test_dlmn_taper_remains_electrically_representable(self):
+        """7J behaviour is preserved with and without subdivision."""
+        from biological_brain.dynamics.passive_cable import PassiveCableModel
+
+        backend = PassiveCableModel(profile_name=PROFILE_AUGUSTIN_2019_GFS_PASSIVE)
+        for plan in (None, _plan("axon", 5)):
+            network = backend.prepare(_subdivided_taper_model(), plan)
+            segments = [c for c in network.compartments
+                        if c.source_section_id == "axon"]
+            assert all(c.axial_resistance_ohm is not None for c in segments)
+            assert sum(c.axial_resistance_ohm for c in segments) == pytest.approx(
+                self.TOTAL_R_OHM, rel=1e-9
+            )
+            assert network.excluded == ()
+
+    def test_dlmn_model_still_blocked_by_soma_geometry(self):
+        """7J did not touch the soma: DLMn remains blocked, now by DLMn_soma."""
+        from biological_brain.dynamics.passive_cable import (
+            PassiveCableModel, PassiveGeometryError,
+        )
+        from biological_brain.morphology_builder import build_gfs_compartment_models
+
+        dlmn = build_gfs_compartment_models()["DLMn"]
+        dlmn.passive_profile_name = PROFILE_AUGUSTIN_2019_GFS_PASSIVE
+
+        # No taper convention issue remains; the soma is the blocker.
+        assert dlmn.is_electrically_excluded("DLMn_soma") is False
+        with pytest.raises(PassiveGeometryError, match="'DLMn_soma'"):
+            PassiveCableModel(
+                profile_name=PROFILE_AUGUSTIN_2019_GFS_PASSIVE
+            ).prepare(dlmn)
