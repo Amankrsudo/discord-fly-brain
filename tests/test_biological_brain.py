@@ -7676,15 +7676,51 @@ class TestComputationalSectionConnectivity:
         }
 
     def test_no_chemical_synapse_object_is_created(self):
+        """The PASSIVE BACKEND never creates a chemical synapse.
+
+        3.0D-8G MINIMAL COMPATIBILITY FIX. This guard originally also scanned
+        ``biological_brain/__init__.py`` for the substring "chemicalsynapse",
+        which asserted that the PACKAGE exported no live chemical synapse
+        anywhere. 3.0D-8G deliberately makes the PSI->DLMn chemical synapse
+        live, so that half of the guard is now false by design and by decision.
+
+        What is NOT negotiable is the invariant this test actually protects, and
+        it is kept in full and strengthened below: ``passive_cable`` creates no
+        synapse object of any kind, and an ``AxialConnection`` remains a plain
+        axial cable with no synaptic attribute. A live synapse living in
+        ``biological_brain/dynamics/chemical_synapse.py`` does not weaken that;
+        the passive backend is simply not where synapses live.
+        """
+        import ast
+
         import biological_brain
         import biological_brain.dynamics.passive_cable as module
 
-        for path in (module.__file__, biological_brain.__file__):
-            with open(path, encoding="utf-8") as handle:
-                text = handle.read().lower()
-            for forbidden in ("class synapse", "synapticconductance",
-                              "chemicalsynapse", "class synapsekinetics"):
-                assert forbidden not in text
+        with open(module.__file__, encoding="utf-8") as handle:
+            text = handle.read().lower()
+        for forbidden in ("class synapse", "synapticconductance",
+                          "chemicalsynapse", "class synapsekinetics",
+                          "synapsekinetics", "doubleexponential"):
+            assert forbidden not in text, forbidden
+        # The passive backend also imports no synapse module at all.
+        tree = ast.parse(open(module.__file__, encoding="utf-8").read())
+        imported = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and node.module:
+                imported.append(node.module)
+            elif isinstance(node, ast.Import):
+                imported.extend(a.name for a in node.names)
+        for forbidden in ("chemical_synapse", "synaptic_mechanism_registry",
+                          "synaptic_abstraction"):
+            assert not any(forbidden in name for name in imported), forbidden
+        # And 8G's live synapse lives in its own module, reachable only
+        # deliberately, never from the passive path.
+        from biological_brain.dynamics import chemical_synapse
+
+        assert chemical_synapse.__name__.endswith("chemical_synapse")
+        assert biological_brain.DoubleExponentialSynapse is (
+            chemical_synapse.DoubleExponentialSynapse
+        )
 
         # The GFS circuit data still records its chemical synapse type, but
         # the passive backend never converts it into an object.
@@ -22279,3 +22315,1093 @@ class TestDLMnActiveNeuron:
         assert get_looming_abstraction() is not None
         assert get_sensorimotor_integration() is not None
         assert get_motor_output_abstraction() is not None
+
+
+# =============================================================================
+# 3.0D-8G: the published phenomenological chemical synapse, PSI -> DLMn
+# =============================================================================
+#
+# Analytic fixtures for tau_rise = 0.1 ms and tau_decay = 1.0 ms. These are
+# DERIVED from the closed-form double-exponential, not copied from anywhere:
+#   t_peak = tau_rise*tau_decay/(tau_decay-tau_rise) * ln(tau_decay/tau_rise)
+#          = 0.2558427881 ms
+#   f_peak = exp(-t_peak/tau_decay) - exp(-t_peak/tau_rise)
+# The t_peak value below was confirmed to 10 decimals by a dense independent
+# search over the raw shape. The f_peak value is the one this implementation
+# derives; it is 0.6968373144, NOT 0.6979, and the tests assert the derived
+# value rather than a rounded guess.
+FIXTURE_T1_RISE_MS = 0.1
+FIXTURE_T2_DECAY_MS = 1.0
+FIXTURE_PEAK_TIME_MS = 0.2558427881
+FIXTURE_DELAY_MS = 0.15
+FIXTURE_PEAK_FROM_EVENT_MS = FIXTURE_PEAK_TIME_MS + FIXTURE_DELAY_MS
+
+
+def _eight_g_synapse(peak_conductance_uS=80.0, delay_ms=FIXTURE_DELAY_MS):
+    """A GENERIC mechanism, with no biology attached."""
+    from biological_brain.dynamics.chemical_synapse import (
+        DoubleExponentialSynapse,
+    )
+
+    return DoubleExponentialSynapse(
+        tau_rise_ms=FIXTURE_T1_RISE_MS,
+        tau_decay_ms=FIXTURE_T2_DECAY_MS,
+        reversal_mV=0.0,
+        peak_conductance_uS=peak_conductance_uS,
+        delay_ms=delay_ms,
+    )
+
+
+def _eight_g_connection(peak_conductance_source="paper"):
+    from biological_brain.dynamics.chemical_synapse import (
+        PSI_DLMnChemicalSynapse,
+    )
+
+    return PSI_DLMnChemicalSynapse(peak_conductance_source=peak_conductance_source)
+
+
+def _eight_g_dlmn():
+    from biological_brain.morphology_builder import build_gfs_compartment_models
+
+    model = build_gfs_compartment_models()["DLMn"]
+    model.passive_profile_name = PROFILE_AUGUSTIN_2019_GFS_PASSIVE
+    return model
+
+
+def _eight_g_raw_shape(t_ms, tau_rise_ms=FIXTURE_T1_RISE_MS,
+                       tau_decay_ms=FIXTURE_T2_DECAY_MS):
+    """The UNNORMALIZED difference of exponentials, for independent checking."""
+    import math
+
+    return (
+        math.exp(-t_ms / tau_decay_ms) - math.exp(-t_ms / tau_rise_ms)
+    )
+
+
+class TestChemicalSynapse:
+    """3.0D-8G: the live published phenomenological chemical synapse.
+
+    THE POINT OF THIS CHECKPOINT IS THAT A SYNAPSE IS NOW LIVE, and that it is
+    live in a way that is defensible rather than merely operational. Three things
+    are therefore pinned hard here.
+
+    First, the WAVEFORM. The conductance must match the closed-form
+    double exponential exactly: nothing before the delayed arrival, exactly zero
+    at the arrival, a single peak at the analytic time, monotonic decay toward
+    zero afterwards, and never a negative value. The normalization is the part
+    most likely to be got wrong, so the tests check that the peak equals the
+    requested peak conductance AND that the raw exponential coefficient is NOT
+    the peak (it is about 1.435x larger, so treating it as the peak would
+    overstate the synapse by 44 percent).
+
+    Second, PROVENANCE. The paper's 80 uS and gfpn.py's 0.08 differ by a factor
+    of 1000 and the project has NOT resolved which is right. The tests therefore
+    assert that both numbers survive, separately labelled, that neither is
+    silently converted into the other, and that 0 mV stays a MODEL reversal
+    potential rather than becoming a measured Dalpha7 reversal.
+
+    Third, WHAT IS NOT THERE. Dalpha7 kinetics, release probability, vesicle
+    pools, short-term plasticity and desensitization are all refused by name,
+    and the mechanism's own instance state is inspected to prove the synapse
+    holds nothing but the event list.
+    """
+
+    # --- 1, 2: construction and kind --------------------------------------
+
+    def test_01_the_synapse_constructs_and_is_a_double_exponential(self):
+        """A live double-exponential chemical synapse, not a placeholder."""
+        from biological_brain.dynamics.chemical_synapse import (
+            MODEL_NAME_CHEMICAL_SYNAPSE_V0,
+            SYNAPSE_KIND_DOUBLE_EXPONENTIAL,
+        )
+
+        synapse = _eight_g_synapse()
+        assert isinstance(synapse, DoubleExponentialSynapseType())
+        assert synapse.kind == SYNAPSE_KIND_DOUBLE_EXPONENTIAL
+        assert synapse.kind == "double_exponential_chemical_synapse"
+        assert synapse.name == MODEL_NAME_CHEMICAL_SYNAPSE_V0
+        assert synapse.event_count == 0
+
+    def test_02_the_published_time_constants_are_used_exactly(self):
+        """tau_rise 0.1 ms, tau_decay 1.0 ms, and decay strictly exceeds rise."""
+        synapse = _eight_g_synapse()
+        assert synapse.tau_rise_ms == pytest.approx(0.1)
+        assert synapse.tau_decay_ms == pytest.approx(1.0)
+        assert synapse.tau_decay_ms > synapse.tau_rise_ms
+        # And internally they are SI, which is the declared representation.
+        assert synapse.tau_rise_s == pytest.approx(0.1e-3, rel=1e-12)
+        assert synapse.tau_decay_s == pytest.approx(1.0e-3, rel=1e-12)
+        # A shape with decay <= rise is refused rather than silently accepted.
+        from biological_brain.dynamics.chemical_synapse import (
+            DoubleExponentialSynapse, SynapseShapeError,
+        )
+
+        with pytest.raises(SynapseShapeError):
+            DoubleExponentialSynapse(1.0, 0.1, 0.0, 80.0, 0.15)
+        with pytest.raises(SynapseShapeError):
+            DoubleExponentialSynapse(0.5, 0.5, 0.0, 80.0, 0.15)
+
+    def test_03_the_reversal_potential_and_delay_are_the_published_values(self):
+        """E_syn = 0 mV, delay = 0.15 ms."""
+        synapse = _eight_g_synapse()
+        assert synapse.reversal_mV == pytest.approx(0.0)
+        assert synapse.reversal_V == pytest.approx(0.0)
+        assert synapse.delay_ms == pytest.approx(0.15)
+        assert synapse.delay_s == pytest.approx(0.15e-3, rel=1e-12)
+        # A negative delay would deliver an event before it happened.
+        from biological_brain.dynamics.chemical_synapse import (
+            DoubleExponentialSynapse, SynapseUnitError,
+        )
+
+        with pytest.raises(SynapseUnitError):
+            DoubleExponentialSynapse(0.1, 1.0, 0.0, 80.0, -0.15)
+
+    def test_04_the_mechanism_knows_nothing_about_any_neuron(self):
+        """By AST inspection, the mechanism carries no biology at all.
+
+        The generic layer must be reusable, so it must not name PSI, DLMn, any
+        literature value, or any ModelDB parameter. The docstring does discuss
+        PSI->DLMn in prose, so the check is on CODE, not on text.
+        """
+        import ast
+        import inspect
+
+        from biological_brain.dynamics import chemical_synapse
+
+        tree = ast.parse(inspect.getsource(chemical_synapse))
+        # Find the class that implements the mechanism and check ITS body only.
+        mechanism = next(
+            node for node in tree.body
+            if isinstance(node, ast.ClassDef)
+            and node.name == "DoubleExponentialSynapse"
+        )
+        literals = {
+            node.value for node in ast.walk(mechanism)
+            if isinstance(node, ast.Constant) and isinstance(node.value, str)
+        }
+        numbers = {
+            node.value for node in ast.walk(mechanism)
+            if isinstance(node, ast.Constant)
+            and isinstance(node.value, (int, float))
+            and not isinstance(node.value, bool)
+        }
+        for banned in ("PSI", "DLMn", "GF", "TTMn", "Exp2Syn", "Augustin",
+                       "Dalpha7", "gfpn"):
+            assert not any(banned in text for text in literals), banned
+        # No published biological value is hard-coded in the mechanism: every
+        # one of them arrives through the constructor. Only 0.0 (the default
+        # zero delay) and 1.0 (the mathematical unit in 1/f_peak) appear, and
+        # neither is a biological quantity.
+        for banned in (0.1, 0.15, 80.0, 0.08, 0.9, 0.25, 0.85, 12.5):
+            assert banned not in numbers, banned
+        assert numbers <= {0.0, 1.0}
+        # The unit conversion constants do live here, deliberately and once.
+        assert "peak_conductance_uS" in {
+            arg.arg for arg in mechanism.body[
+                [i for i, n in enumerate(mechanism.body)
+                 if isinstance(n, ast.FunctionDef) and n.name == "__init__"][0]
+            ].args.args
+        }
+
+    # --- 13, 14, 15, 16, 17, 18, 19, 20, 21: the waveform ----------------
+
+    def test_05_the_analytic_peak_time_matches_the_closed_form(self):
+        """t_peak = 0.2558427881 ms after the DELAYED arrival.
+
+        Verified independently by a dense search over the raw shape, not
+        asserted from the implementation's own arithmetic alone.
+        """
+        synapse = _eight_g_synapse()
+        assert synapse.peak_time_ms == pytest.approx(
+            FIXTURE_PEAK_TIME_MS, abs=1e-9
+        )
+        # The independent closed form.
+        import math
+
+        t1, t2 = FIXTURE_T1_RISE_MS, FIXTURE_T2_DECAY_MS
+        expected = t1 * t2 / (t2 - t1) * math.log(t2 / t1)
+        assert synapse.peak_time_ms == pytest.approx(expected, abs=1e-12)
+        # And a dense grid search over the raw shape finds the same time.
+        steps = 200000
+        best_t, best_f = 0.0, -1.0
+        for i in range(1, steps + 1):
+            t = t2 * i / steps
+            f = _eight_g_raw_shape(t)
+            if f > best_f:
+                best_t, best_f = t, f
+        assert best_t == pytest.approx(expected, rel=1e-5)
+        # The shape value at the peak is the normalization denominator.
+        assert synapse.shape_peak() == pytest.approx(
+            _eight_g_raw_shape(expected), rel=1e-9
+        )
+        # The DERIVED f_peak. This is 0.6968373144; it is NOT 0.6979.
+        assert synapse.shape_peak() == pytest.approx(0.6968373144, abs=1e-9)
+
+    def test_06_the_delay_places_the_peak_0_4058427881_ms_after_the_event(self):
+        """With delay 0.15 ms the peak sits at 0.4058427881 ms from the event.
+
+        The two times are DIFFERENT quantities and reporting the wrong one would
+        misplace a synaptic event by the entire transmission delay, so both
+        accessors are checked explicitly.
+        """
+        synapse = _eight_g_synapse()
+        assert synapse.peak_time_from_event_ms == pytest.approx(
+            FIXTURE_PEAK_FROM_EVENT_MS, abs=1e-9
+        )
+        assert synapse.peak_time_from_event_ms == pytest.approx(
+            0.4058427881, abs=1e-9
+        )
+        assert synapse.peak_time_from_event_ms - synapse.peak_time_ms == (
+            pytest.approx(FIXTURE_DELAY_MS, abs=1e-12)
+        )
+        # And the sampled waveform peaks at that same absolute time.
+        synapse.deliver_event(0.0)
+        trace = synapse.trace(1.0e-3, 1e-6, n_events=0)
+        peak_index = trace.peak_index()
+        assert trace.times_s[peak_index] == pytest.approx(
+            synapse.peak_time_from_event_ms * 1e-3, abs=2e-6
+        )
+
+    def test_07_nothing_occurs_before_the_delay_and_onset_is_exactly_zero(self):
+        """Checks 13 and 14: zero before the delay, zero AT the arrival."""
+        synapse = _eight_g_synapse()
+        arrival = synapse.deliver_event(0.0)
+        assert arrival == pytest.approx(0.15e-3, rel=1e-12)
+        # Before the delayed arrival, at every sampled instant.
+        for t_ms in (0.0, 0.01, 0.05, 0.10, 0.14999):
+            assert synapse.conductance_S(t_ms * 1e-3) == 0.0, t_ms
+        # Exactly AT the arrival, the waveform is exactly zero: both exponentials
+        # are 1 there, so their difference vanishes.
+        assert synapse.conductance_S(arrival) == 0.0
+        assert synapse.unit_response_S(0.0) == 0.0
+        assert synapse.unit_response_S(-1.0) == 0.0
+        assert synapse.unit_response_S(-1e6) == 0.0
+
+    def test_08_the_waveform_rises_to_exactly_one_peak_then_decays(self):
+        """Checks 15, 16, 19, 20: rise, single peak, decay, never negative."""
+        synapse = _eight_g_synapse()
+        synapse.deliver_event(0.0)
+        trace = synapse.trace(8.0e-3, 1e-6, n_events=0)
+        times_ms = [t * 1e3 for t in trace.times_s]
+        values = list(trace.conductances_S)
+        # Never negative anywhere, which is guaranteed by tau_decay > tau_rise.
+        assert not trace.is_ever_negative()
+        assert all(v >= 0.0 for v in values)
+        # It RISES: strictly increasing up to the peak.
+        peak_index = trace.peak_index()
+        rising = values[:peak_index + 1]
+        assert all(
+            rising[i + 1] >= rising[i] for i in range(len(rising) - 1)
+        )
+        assert rising[-1] > rising[0]
+        # EXACTLY ONE peak. Before the delayed arrival the waveform is a flat
+        # zero, so strict monotonicity is only meaningful once it has risen;
+        # after that it increases strictly to the peak and then decreases
+        # strictly. A second maximum would mean the normalization is wrong.
+        arrival_ms = FIXTURE_DELAY_MS
+        before = [
+            i for i, t in enumerate(times_ms) if t <= arrival_ms
+        ]
+        rising = [i for i in range(len(values)) if times_ms[i] > arrival_ms]
+        after_peak = [i for i in rising if i > peak_index]
+        assert peak_index in rising
+        assert all(
+            values[rising[k + 1]] > values[rising[k]]
+            for k in range(len(rising) - 1)
+            if rising[k + 1] <= peak_index
+        )
+        assert all(
+            values[after_peak[k + 1]] < values[after_peak[k]]
+            for k in range(len(after_peak) - 1)
+        )
+        # The pre-arrival region really is flat zero.
+        assert all(values[i] == 0.0 for i in before)
+        # It DECAYS toward zero over the sampled window.
+        late = values[-1]
+        assert late < values[peak_index] * 0.01
+        assert late >= 0.0
+        # The TAIL follows exp(-t/tau_decay) exactly. It is worth being precise
+        # about why the 1/e-of-peak crossing is NOT exactly tau_decay: the
+        # rising exponential still contributes about 11 percent of the peak
+        # value at the peak itself, so the descending curve crosses 1/e of its
+        # peak slightly LATE (measured: about 1.105 ms). DEEP in the tail the
+        # rising term is dead and the decay constant is exact, so the exact
+        # statement is made there.
+        import math
+
+        def at(t_ms):
+            return values[
+                min(range(len(times_ms)), key=lambda i: abs(times_ms[i] - t_ms))
+            ]
+
+        deep_a = FIXTURE_DELAY_MS + 5.0
+        deep_b = deep_a + FIXTURE_T2_DECAY_MS
+        ratio = at(deep_b) / at(deep_a)
+        assert ratio == pytest.approx(math.exp(-1.0), rel=1e-3)
+        # And the crossing of 1/e of the peak is measurably LATE but within 15
+        # percent of one decay constant, which is the residual rise term.
+        peak_value = values[peak_index]
+        target = peak_value * math.exp(-1.0)
+        descending = [
+            i for i in range(peak_index, len(values)) if values[i] <= target
+        ]
+        assert descending, "the waveform must fall through 1/e of its peak"
+        first_below = descending[0]
+        t_cross_ms = (
+            times_ms[first_below - 1]
+            + (values[first_below - 1] - target)
+            / (values[first_below - 1] - values[first_below])
+            * (times_ms[first_below] - times_ms[first_below - 1])
+        )
+        assert t_cross_ms - times_ms[peak_index] == pytest.approx(
+            FIXTURE_T2_DECAY_MS, rel=0.15
+        )
+
+    def test_09_the_peak_normalization_is_exact_and_not_the_raw_coefficient(self):
+        """Check 21: g(t_peak) == g_peak, and the coefficient is NOT g_peak.
+
+        This is the normalization error the mechanism is most exposed to. The
+        coefficient multiplying the exponentials is 1/f_peak = 1.435, so
+        multiplying the raw shape by the peak conductance instead of by the peak
+        conductance divided by f_peak would overstate the synapse by about 44
+        percent.
+        """
+        synapse = _eight_g_synapse(peak_conductance_uS=80.0)
+        assert synapse.peak_conductance_uS == pytest.approx(80.0)
+        assert synapse.peak_conductance_S == pytest.approx(80.0e-6, rel=1e-12)
+        # The peak of the waveform IS exactly the requested peak conductance.
+        assert synapse.unit_response_S(synapse.peak_time_s) == pytest.approx(
+            synapse.peak_conductance_S, rel=1e-12
+        )
+        # And the sampled waveform reaches it.
+        synapse.deliver_event(0.0)
+        trace = synapse.trace(1.0e-3, 1e-6, n_events=0)
+        assert trace.max_conductance_S() <= synapse.peak_conductance_S + 1e-15
+        assert trace.max_conductance_S() == pytest.approx(
+            synapse.peak_conductance_S, rel=1e-4
+        )
+        # The normalization coefficient is 1/f_peak, which is NOT 1.
+        assert synapse.normalization_coefficient() == pytest.approx(
+            1.0 / 0.6968373144, rel=1e-9
+        )
+        assert synapse.normalization_coefficient() == pytest.approx(
+            1.4350551833, abs=1e-9
+        )
+        # The consequence, stated as a number: using the raw coefficient as the
+        # peak would overstate the conductance.
+        overstated = synapse.peak_conductance_S * synapse.normalization_coefficient()
+        assert overstated > synapse.peak_conductance_S
+        assert overstated / synapse.peak_conductance_S == pytest.approx(
+            1.4350551833, rel=1e-9
+        )
+        # And the shape peak is not 1, which is exactly why it is divided out.
+        assert synapse.shape_peak() != pytest.approx(1.0, abs=1e-3)
+
+    # --- 22, 23, 24: summation, determinism and the current ---------------
+
+    def test_10_two_events_sum_exactly_and_linearly(self):
+        """Check 22: overlapping responses add, with no interaction."""
+        synapse = _eight_g_synapse()
+        t = 0.30e-3  # after both arrivals, between the two peaks
+        # Two events.
+        synapse.deliver_events([0.0, 0.10e-3])
+        together = synapse.conductance_S(t)
+        # The same two, computed one at a time.
+        separate = _eight_g_synapse()
+        first = separate.unit_response_S(t - 0.15e-3)
+        second = separate.unit_response_S(t - 0.25e-3)
+        assert together == pytest.approx(first + second, rel=1e-12)
+        # Superposition holds at the total peak too.
+        synapse2 = _eight_g_synapse()
+        synapse2.deliver_events([0.0, 0.10e-3])
+        t2 = 0.2558427881e-3 + 0.10e-3
+        total = synapse2.conductance_S(t2)
+        parts = (
+            synapse2.unit_response_S(t2 - 0.15e-3)
+            + synapse2.unit_response_S(t2 - 0.25e-3)
+        )
+        assert total == pytest.approx(parts, rel=1e-12)
+        # Summing is exactly additive over many events too.
+        synapse3 = _eight_g_synapse()
+        times = [0.0, 0.05e-3, 0.10e-3, 0.15e-3, 0.20e-3]
+        synapse3.deliver_events(times)
+        reference = _eight_g_synapse()
+        assert synapse3.conductance_S(0.4e-3) == pytest.approx(
+            sum(reference.unit_response_S(0.4e-3 - t - 0.15e-3) for t in times),
+            rel=1e-12,
+        )
+
+    def test_11_event_summation_is_fully_deterministic(self):
+        """Check 23: identical input, bit-identical output, every time.
+
+        There is no random state, so this is not a statistical check. It is the
+        structural claim that the synapse is reproducible, which is what makes
+        the 100 Hz train result a statement about the waveform.
+        """
+        synapse = _eight_g_synapse()
+        first = synapse.trace(0.6e-3, 1e-6, n_events=3, event_interval_s=0.1e-3)
+        second = synapse.trace(0.6e-3, 1e-6, n_events=3, event_interval_s=0.1e-3)
+        assert first.conductances_S == second.conductances_S
+        assert first.times_s == second.times_s
+        # Delivery ORDER does not change the result either.
+        a = _eight_g_synapse()
+        a.deliver_events([0.0, 0.2e-3, 0.1e-3])
+        b = _eight_g_synapse()
+        b.deliver_events([0.0, 0.1e-3, 0.2e-3])
+        for i in range(0, 600):
+            t = i * 1e-6
+            assert a.conductance_S(t) == b.conductance_S(t)
+        # And the mechanism advertises its own determinism.
+        assert synapse.is_stochastic is False
+        assert synapse.event_count == 3
+        assert synapse.arrival_times_s == (
+            0.15e-3, 0.25e-3, 0.35e-3
+        )
+
+    def test_12_the_current_sign_follows_the_projects_one_convention(self):
+        """Check 24: outward-positive current, inward-positive injected.
+
+        The project fixes a single convention in 3.0D-8A: ionic currents outward
+        positive, injected current inward positive. This module must match it
+        exactly and must not introduce a second one.
+        """
+        synapse = _eight_g_synapse()
+        synapse.deliver_event(0.0)
+        t = 0.30e-3
+        g = synapse.conductance_S(t)
+        assert g > 0.0
+        for v_mV in (-85.0, -75.0, -20.0, 0.0, 30.0):
+            v = v_mV * 1e-3
+            outward = synapse.current_A(t, v)
+            # I_syn = g * (V - E), E = 0, so I = g*V.
+            assert outward == pytest.approx(g * v, rel=1e-12)
+            # The injected form is the exact negative, and is what step() takes.
+            assert synapse.injected_current_A(t, v) == pytest.approx(
+                -outward, rel=1e-12
+            )
+            # Below the reversal potential the current is INWARD (excitatory),
+            # which is the expected polarity for a cholinergic EPSP. Exactly AT
+            # the reversal potential the synaptic current is exactly zero.
+            if v_mV < 0.0:
+                assert outward < 0.0
+                assert synapse.injected_current_A(t, v) > 0.0
+            elif v_mV > 0.0:
+                assert outward > 0.0
+            else:
+                assert outward == 0.0
+        # The two forms agree in magnitude and disagree only in sign.
+        assert abs(synapse.current_A(t, -0.075)) == pytest.approx(
+            abs(synapse.injected_current_A(t, -0.075)), rel=1e-12
+        )
+        # And the compartment-keyed form is ready for the existing step().
+        keyed = synapse.injected_currents_A(t, -0.075, "DLMn_axon#seg2")
+        assert list(keyed) == ["DLMn_axon#seg2"]
+        assert keyed["DLMn_axon#seg2"] == pytest.approx(
+            synapse.injected_current_A(t, -0.075), rel=1e-12
+        )
+
+    # --- 8, 9, 10, 11: the PSI -> DLMn connection ------------------------
+
+    def test_13_the_psi_to_dlmn_connection_is_configured_from_the_registry(self):
+        """Checks 8, 9, 10, and 29: identity, provenance, no conflation."""
+        from biological_brain.synaptic_mechanism_registry import (
+            DISCREPANCY_UNRESOLVED, PEAK_DISCREPANCY_FACTOR, SOURCE_DLMN_WEIGHT,
+            SYNAPSE_PSI_DLMN,
+        )
+
+        connection = _eight_g_connection()
+        assert connection.synapse_id == SYNAPSE_PSI_DLMN == "PSI_DLMn"
+        assert connection.source_neuron == "PSI"
+        assert connection.target_neuron == "DLMn"
+        assert connection.kind == "double_exponential_chemical_synapse"
+        # The four agreed values come from the registry, not from this module.
+        mechanism = connection.mechanism
+        assert mechanism.tau_rise_ms == pytest.approx(0.1)
+        assert mechanism.tau_decay_ms == pytest.approx(1.0)
+        assert mechanism.reversal_mV == pytest.approx(0.0)
+        assert mechanism.delay_ms == pytest.approx(0.15)
+        # The peak: BOTH numbers survive, separately, with the discrepancy
+        # intact. Neither is converted into the other.
+        parameters = {p.name: p for p in connection.parameters}
+        peak = parameters["peak_conductance"]
+        assert peak.source_value == pytest.approx(SOURCE_DLMN_WEIGHT)
+        assert peak.source_value == pytest.approx(0.08)
+        assert peak.source_unit is None, "the source declares NO unit"
+        assert peak.paper_value == pytest.approx(80.0)
+        assert peak.paper_unit == "uS"
+        assert peak.value_agreement == DISCREPANCY_UNRESOLVED
+        assert peak.paper_label == "'estimated'"
+        # The observed ratio, recorded but NOT applied as a conversion.
+        assert PEAK_DISCREPANCY_FACTOR == 1000.0
+        assert peak.paper_value / peak.source_value == pytest.approx(1000.0)
+        # The default runs on the PAPER number, and says which it is.
+        assert connection.peak_conductance_source == "paper"
+        assert mechanism.peak_conductance_uS == pytest.approx(80.0)
+        # Choosing the source weight is explicit, and is NOT a conversion: the
+        # bare 0.08 is used verbatim with no 1e-6 applied by this module.
+        alternative = _eight_g_connection(
+            peak_conductance_source="source_weight_as_written"
+        )
+        assert alternative.mechanism.peak_conductance_uS == pytest.approx(0.08)
+        assert alternative.peak_conductance_source == "source_weight_as_written"
+        # And the two configurations are genuinely different synapses, not
+        # aliases of one number.
+        assert (
+            alternative.mechanism.peak_conductance_S
+            != mechanism.peak_conductance_S
+        )
+        with pytest.raises(Exception):
+            _eight_g_connection(peak_conductance_source="guess")
+
+    def test_14_the_postsynaptic_site_stays_the_source_backed_placement(self):
+        """Check 11: 12.5 um, and the normalized fractions are not imported."""
+        from biological_brain.subdivision import map_placement_to_segment
+
+        connection = _eight_g_connection()
+        model = _eight_g_dlmn()
+        assert connection.postsynaptic_distance_um(model) == pytest.approx(12.5)
+        # The ModelDB normalized sites are reported, not used as geometry.
+        sites = connection.modeldb_normalized_sites()
+        assert sites["post_location"] == pytest.approx(0.25)
+        assert sites["pre_location"] == pytest.approx(0.85)
+        # And they happen to AGREE with the physical layer exactly, which is
+        # worth recording: 0.25 * 50 um = 12.5 um on the DLMn axon, and
+        # 0.85 * 90 um = 76.5 um is the source-backed PSI->DLMn contact. The
+        # agreement is a cross-check, NOT a licence to import the fraction.
+        axon = model.compartments["DLMn_axon"].geometry
+        assert axon.length_um == pytest.approx(50.0)
+        assert sites["post_location"] * axon.length_um == pytest.approx(12.5)
+        # The physical layer remains what maps to a segment.
+        assert connection.postsynaptic_segment_id(model, 11) == "DLMn_axon#seg2"
+        assert map_placement_to_segment(12.5, 50.0, 11) == 2
+        assert connection.postsynaptic_segment_id(model, 1) == "DLMn_axon#seg0"
+
+    def test_15_the_synapse_can_drive_the_dlmn_membrane(self):
+        """The smallest clean live interface: event -> g -> I -> membrane.
+
+        This uses a SYNTHETIC presynaptic event, deliberately. 3.0D-8G does not
+        build the GF->PSI->DLMn circuit, and the real PSI is not driven here.
+        """
+        import math
+
+        from biological_brain.dynamics.dlmn_active import DLMNActiveAxonModel
+
+        connection = _eight_g_connection(peak_conductance_source="paper")
+        model = _eight_g_dlmn()
+        network = DLMNActiveAxonModel().prepare_dlmn(model, segment_count=11)
+        segment_id = connection.postsynaptic_segment_id(model, 11)
+        assert segment_id == "DLMn_axon#seg2"
+        state = DLMNActiveAxonModel().initial_state(network)
+        mechanism = connection.mechanism
+        # A SYNTHETIC event, not a real presynaptic spike.
+        mechanism.deliver_event(0.0)
+        before = state[segment_id].voltage_mV
+        for k in range(60):
+            t = k * 0.01 * 1e-3
+            voltage = state[segment_id].voltage_mV
+            current = mechanism.injected_current_A(t, voltage * 1e-3)
+            DLMNActiveAxonModel().step(
+                network, state,
+                injected_currents_A={segment_id: current},
+                timestep_ms=0.01,
+            )
+        after = state[segment_id].voltage_mV
+        # The membrane responded, stayed finite, and the injected current had
+        # the inward-positive sign the engine expects.
+        assert math.isfinite(after)
+        assert after != before
+        # The synapse current is consistent with the conductance that drove it.
+        voltage = -0.075
+        assert mechanism.injected_current_A(0.3e-3, voltage) > 0.0
+        # Everything else about the neuron is untouched: the dendrite is still
+        # passive and the other segments still finite.
+        dendrite = state["DLMn_dendrite"]
+        for mechanism_name in ("nat", "nap", "k"):
+            assert dendrite.last_conductances_mS_per_cm2[mechanism_name] == 0.0
+        for segment in state.values():
+            assert segment.all_finite() is True
+
+    # --- 12: the GF -> TTMn and GF -> PSI paths stay unimplemented --------
+
+    def test_16_no_synapse_exists_on_the_gf_ttmn_or_gf_psi_live_path(self):
+        """Check 12: this checkpoint implements ONE chemical synapse only."""
+        connection = _eight_g_connection()
+        # Only PSI->DLMn is configured, and the mechanism is instantiated for
+        # it alone.
+        assert connection.synapse_id == "PSI_DLMn"
+        assert connection.target_neuron == "DLMn"
+        # The registry records the other two as MIXED synapses whose chemical
+        # weight is ZERO in the source's parameter set, and 8G leaves them that
+        # way: nothing here builds a GF_TTMn or GF_PSI synapse.
+        from biological_brain.synaptic_mechanism_registry import (
+            SOURCE_GF_PSI_WEIGHT, SOURCE_GF_TTMN_WEIGHT, SYNAPSE_GF_PSI,
+            SYNAPSE_GF_TTMN, TOPOLOGY_MIXED, get_synaptic_mechanism_registry,
+        )
+
+        registry = get_synaptic_mechanism_registry()
+        for synapse_id in (SYNAPSE_GF_TTMN, SYNAPSE_GF_PSI):
+            record = registry.synapse(synapse_id)
+            assert record.topology == TOPOLOGY_MIXED
+            assert record.has_electrical_component is True
+        assert SOURCE_GF_TTMN_WEIGHT == 0.00
+        assert SOURCE_GF_PSI_WEIGHT == 0.00
+        # No gap junction is built, so the unresolved 7U conflict is untouched.
+        mechanism = connection.mechanism
+        for feature in ("gap2", "Exp2Syn"):
+            with pytest.raises(Exception) as excinfo:
+                mechanism.reject_unsupported_feature(feature)
+            assert "OUT OF SCOPE" in str(excinfo.value)
+
+    # --- 25, 26, 27, 28: what is deliberately absent ----------------------
+
+    def test_17_no_dalpha7_kinetic_parameters_are_introduced(self):
+        """Check 25: Dalpha7 stays an identity, refused as a mechanism."""
+        import ast
+        import inspect
+
+        from biological_brain.dynamics import chemical_synapse
+        from biological_brain.synaptic_mechanism_registry import (
+            get_synaptic_mechanism_registry,
+        )
+
+        mechanism = _eight_g_synapse()
+        for feature in ("Dalpha7", "dalpha7", "receptor", "nAChR"):
+            with pytest.raises(Exception) as excinfo:
+                mechanism.reject_unsupported_feature(feature)
+            assert "OUT OF SCOPE" in str(excinfo.value)
+        # The 7V registry still records Dalpha7 as identity-only, and this
+        # checkpoint did not upgrade it.
+        registry = get_synaptic_mechanism_registry()
+        receptor = registry.receptor("Dalpha7")
+        assert receptor.quantitative_kinetics_available is False
+        assert receptor.has_quantitative_value is False
+        assert registry.any_receptor_kinetics() is False
+        # No receptor parameter is introduced as a number in this module.
+        tree = ast.parse(inspect.getsource(chemical_synapse))
+        assigned = {
+            target.id
+            for node in ast.walk(tree) if isinstance(node, ast.Assign)
+            for target in node.targets if isinstance(target, ast.Name)
+        }
+        for banned in (
+            "g_Dalpha7", "alpha_rate", "beta_rate", "open_probability",
+            "desensitization", "receptor_density", "single_channel",
+        ):
+            assert banned not in assigned, banned
+        # And 0 mV stays a MODEL reversal potential, never a measured Dalpha7
+        # reversal.
+        note = mechanism.scope_note()
+        assert "NOT A Dalpha7 KINETIC MODEL" in note
+        assert "0 mV" in connection_scope_note_of()
+
+    def test_18_no_release_probability_and_no_stochastic_state(self):
+        """Checks 26 and 27: deterministic, and no release probability."""
+        from biological_brain.dynamics.chemical_synapse import (
+            DoubleExponentialSynapse,
+        )
+        from biological_brain.synaptic_mechanism_registry import (
+            get_synaptic_mechanism_registry,
+        )
+
+        mechanism = _eight_g_synapse()
+        for feature in ("release_probability", "vesicle_pool"):
+            with pytest.raises(Exception) as excinfo:
+                mechanism.reject_unsupported_feature(feature)
+            assert "OUT OF SCOPE" in str(excinfo.value)
+        assert mechanism.is_stochastic is False
+        assert mechanism.has_release_probability is False
+        # The instance holds NOTHING but the shape constants and the arrival
+        # list. This is a structural check, not a documented promise.
+        instance = DoubleExponentialSynapse(0.1, 1.0, 0.0, 80.0, 0.15)
+        instance.deliver_event(0.0)
+        expected = {
+            "_tau_rise_s", "_tau_decay_s", "_reversal_V",
+            "_peak_conductance_S", "_delay_s", "_peak_time_s", "_shape_peak",
+            "_normalization", "_arrivals_s",
+        }
+        assert set(vars(instance)) == expected
+        # Mutating the event list is the ONLY way to change the output.
+        assert instance.event_count == 1
+        instance.reset_events()
+        assert instance.event_count == 0
+        assert instance.conductance_S(1.0) == 0.0
+        # The 7V registry still lists these as excluded.
+        excluded = get_synaptic_mechanism_registry().excluded_names()
+        for name in (
+            "release_probability", "vesicle_pool_size", "calcium_dependent_release",
+            "dalpha7_single_channel_conductance", "dalpha7_receptor_density",
+            "q10_synaptic_scaling",
+        ):
+            assert name in excluded, name
+
+    def test_19_no_short_term_plasticity_or_recovery_state(self):
+        """Check 28: repeated events do not change the synapse itself."""
+        import math
+
+        mechanism = _eight_g_synapse()
+        assert mechanism.has_short_term_plasticity is False
+        for feature in (
+            "short_term_plasticity", "desensitization", "calcium", "Q10",
+        ):
+            with pytest.raises(Exception) as excinfo:
+                mechanism.reject_unsupported_feature(feature)
+            assert "OUT OF SCOPE" in str(excinfo.value)
+        # A long train leaves a LATE event's own waveform untouched, because
+        # there is no running variable to deplete. The LATE EVENT'S OWN
+        # CONTRIBUTION is compared, not the total, since the train's earlier
+        # events are still decaying underneath it.
+        quiet = _eight_g_synapse()
+        tired = _eight_g_synapse()
+        tired.deliver_events([i * 0.1e-3 for i in range(50)])
+        tired.deliver_event(10.0e-3)
+        for t_ms in (10.15, 10.4, 10.5, 11.0, 12.0):
+            assert tired.unit_response_S(t_ms * 1e-3 - 10.15e-3) == (
+                pytest.approx(
+                    quiet.unit_response_S(t_ms * 1e-3 - 10.15e-3), rel=1e-12
+                )
+            )
+        # The conductance of a synapse with no new event still decays toward
+        # zero on tau_decay, with no recovery state intervening. The late event
+        # PEAKS at its event time plus the DELAY plus the peak time, which is
+        # the same delay distinction test_06 checks.
+        peak_t = (
+            10.0e-3
+            + FIXTURE_DELAY_MS * 1e-3
+            + FIXTURE_PEAK_TIME_MS * 1e-3
+        )
+        peak_value = tired.conductance_S(peak_t)
+        assert peak_value > 0.0
+        assert (
+            tired.conductance_S(peak_t + 0.5 * FIXTURE_T2_DECAY_MS * 1e-3)
+            < peak_value
+        )
+        t = peak_t + 2.0 * FIXTURE_T2_DECAY_MS * 1e-3
+        value = tired.conductance_S(t)
+        assert value > 0.0
+        # Over two decay constants the tail has fallen to about 0.15 of the
+        # peak: the 1/e crossing is slightly LATE (about 1.105 tau) because the
+        # rising term still contributes at the peak, so the fall is somewhat
+        # slower than exp(-2) = 0.135 would suggest.
+        assert value < peak_value * 0.20
+        assert value > peak_value * 0.12
+        # And the late event's own tail is still exactly the analytic
+        # waveform. The TOTAL is larger than this by the residue of the 50
+        # earlier events, which is exactly the point: superposition, with no
+        # interaction term.
+        late_only = tired.unit_response_S(t - 10.15e-3)
+        assert late_only == pytest.approx(
+            80.0e-6
+            * _eight_g_raw_shape((t - 10.15e-3) * 1e3)
+            * tired.normalization_coefficient(),
+            rel=1e-9,
+        )
+        assert value > late_only
+        residue = value - late_only
+        assert 0.0 < residue < 1.0e-5
+
+    # --- high-frequency behaviour, as a waveform statement ---------------
+
+    def test_20_a_high_frequency_train_is_a_pure_sum_of_waveforms(self):
+        """The 100 Hz question, answered WITHOUT inventing a failure model.
+
+        The experimental literature reports DLM following 100 Hz 1:1 with
+        failures above it, and attributes that to the chemical synapse's
+        recovery time. 3.0D-8G does NOT implement that mechanism, so this test
+        makes only the claim that is actually true of the mechanism it built:
+        the train is an exact sum of independent double exponentials, the
+        inter-event decay follows tau_decay, and nothing accumulates.
+        """
+        import math
+
+        mechanism = _eight_g_synapse()
+        period_s = 1.0e-2  # 100 Hz: a 10 ms period, in SECONDS
+        n_events = 10
+        duration_s = 12.0 * period_s
+        trace = mechanism.trace(
+            duration_s=duration_s, dt_s=2e-5, n_events=n_events,
+            event_interval_s=period_s,
+        )
+        reference = _eight_g_synapse()
+        assert trace.event_count == n_events
+        assert trace.times_s[-1] == pytest.approx(duration_s, rel=1e-9)
+        # Every sample equals the explicit sum over all delivered events.
+        step = max(1, len(trace.conductances_S) // 40)
+        for index in range(0, len(trace.conductances_S), step):
+            t = trace.times_s[index]
+            expected = sum(
+                reference.unit_response_S(t - (i * period_s) - 0.15e-3)
+                for i in range(n_events)
+            )
+            assert trace.conductances_S[index] == pytest.approx(
+                expected, rel=1e-9
+            ), index
+        # The decay BETWEEN events is governed by tau_decay alone. With a 10 ms
+        # period and a 1 ms decay, successive events are effectively isolated
+        # (the previous one has fallen by exp(-10) ~ 4.5e-5 by the next
+        # arrival), so each hump crosses 1/e of its peak one decay constant
+        # later. That is located by interpolation, not by requiring a grid
+        # sample to land on it.
+        peak_value = trace.max_conductance_S()
+        assert peak_value > 0.0
+        target = peak_value * math.exp(-1.0)
+        times_ms = [t * 1e3 for t in trace.times_s]
+        peak_index = trace.peak_index()
+        crossing = None
+        for i in range(peak_index + 1, len(trace.conductances_S)):
+            a, b = trace.conductances_S[i - 1], trace.conductances_S[i]
+            if a > target >= b:
+                crossing = (
+                    times_ms[i - 1]
+                    + (a - target) / (a - b) * (times_ms[i] - times_ms[i - 1])
+                )
+                break
+        assert crossing is not None, "the train must fall through 1/e of a peak"
+        # As established in test_08, the 1/e-of-peak crossing sits slightly LATE
+        # because the rising exponential still contributes at the peak.
+        assert crossing - times_ms[peak_index] == pytest.approx(
+            FIXTURE_T2_DECAY_MS, rel=0.15
+        )
+        # Successive events do not accumulate: the second hump is as large as
+        # the first, within the exp(-10) residue.
+        first = max(
+            trace.conductances_S[: int(len(trace.conductances_S) / 4)]
+        )
+        second_window = trace.conductances_S[
+            int(len(trace.conductances_S) * 0.35):
+            int(len(trace.conductances_S) * 0.6)
+        ]
+        assert max(second_window) == pytest.approx(first, rel=1e-3)
+        # Nothing accumulates without bound: the peak of a 10-event train stays
+        # well under ten times the single-event peak.
+        assert peak_value < 10.0 * reference.peak_conductance_S
+        # And a longer train is still exactly additive, not self-amplifying.
+        longer = _eight_g_synapse()
+        longer_trace = longer.trace(
+            duration_s=26.0 * period_s, dt_s=2e-5, n_events=25,
+            event_interval_s=period_s,
+        )
+        assert longer_trace.max_conductance_S() <= (
+            25.0 * reference.peak_conductance_S
+        )
+        # Every sample remains non-negative throughout the train.
+        assert not trace.is_ever_negative()
+
+    # --- scope guard ------------------------------------------------------
+
+    def test_21_the_units_are_si_internally_and_converted_once(self):
+        """No mixing of uS, nS, S and mS anywhere in the module."""
+        import ast
+        import inspect
+
+        from biological_brain.dynamics import chemical_synapse
+
+        synapse = _eight_g_synapse(peak_conductance_uS=80.0)
+        # Internal storage is SI.
+        assert synapse.peak_conductance_S == pytest.approx(80.0e-6, rel=1e-12)
+        assert synapse.reversal_V == pytest.approx(0.0)
+        assert synapse.tau_rise_s == pytest.approx(1e-4, rel=1e-12)
+        assert synapse.delay_s == pytest.approx(1.5e-4, rel=1e-12)
+        # And the accessors round-trip.
+        assert synapse.peak_conductance_uS == pytest.approx(80.0, rel=1e-12)
+        assert synapse.reversal_mV == pytest.approx(0.0)
+        assert synapse.tau_rise_ms == pytest.approx(0.1, rel=1e-12)
+        assert synapse.delay_ms == pytest.approx(0.15, rel=1e-12)
+        # Only these four conversions exist in the whole module.
+        tree = ast.parse(inspect.getsource(chemical_synapse))
+        assigned = {
+            target.id: node.value.value
+            for node in ast.walk(tree) if isinstance(node, ast.Assign)
+            for target in node.targets if isinstance(target, ast.Name)
+            and isinstance(node.value, ast.Constant)
+            and isinstance(node.value.value, float)
+        }
+        for name in ("_MS_TO_S", "_US_TO_S", "_MV_TO_V",
+                     "_US_TO_SI_CONDUCTANCE"):
+            assert name in assigned, name
+        # There is no nano- or milli-siemens constant anywhere: the module
+        # converts microseconds once and never introduces a second conductance
+        # scale.
+        assert not any(
+            "NANO" in name or "MILLI_S" in name for name in assigned
+        )
+        # Guards fire on dimensionally impossible input.
+        from biological_brain.dynamics.chemical_synapse import (
+            DoubleExponentialSynapse, SynapseUnitError,
+        )
+
+        for kwargs in (
+            {"peak_conductance_uS": -1.0},
+            {"tau_rise_ms": 0.0},
+            {"tau_rise_ms": -0.1},
+        ):
+            with pytest.raises(SynapseUnitError):
+                DoubleExponentialSynapse(
+                    tau_rise_ms=kwargs.get("tau_rise_ms", 0.1),
+                    tau_decay_ms=1.0,
+                    reversal_mV=0.0,
+                    peak_conductance_uS=kwargs.get("peak_conductance_uS", 80.0),
+                    delay_ms=0.15,
+                )
+        for bad in (float("nan"), float("inf")):
+            with pytest.raises(SynapseUnitError):
+                DoubleExponentialSynapse(bad, 1.0, 0.0, 80.0, 0.15)
+
+    def test_22_the_paper_peak_conductance_is_numerically_unusable_here(self):
+        """A NUMERICAL finding, recorded rather than quietly worked around.
+
+        The paper's 80 uS is 760 times the DLMn postsynaptic segment's own
+        MAXIMUM sodium conductance, and its membrane time constant is about
+        2300 times shorter than the project timestep. The DLMn integration
+        therefore diverges with that value, while the source weight of 0.08 is
+        stable. This is a numerical fact about the unresolved discrepancy, and
+        it is deliberately NOT used to declare which number is correct.
+        """
+        import math
+
+        from biological_brain.dynamics.dlmn_active import DLMNActiveAxonModel
+
+        model = _eight_g_dlmn()
+        paper = _eight_g_connection(peak_conductance_source="paper")
+        report = paper.numerical_adequacy_report(model, 11, 0.01)
+        assert report["peak_conductance_source"] == "paper"
+        assert report["synaptic_over_sodium"] > 100.0
+        assert report["tau_over_timestep"] < 0.01
+        # The integration really does diverge with that number.
+        diverged = self._run(paper, 0.15e-3, 80.0)
+        assert diverged is False, "80 uS was expected to diverge at dt=0.01 ms"
+        # And it is stable with the source weight read verbatim.
+        stable = self._run(paper, 0.15e-3, 0.08)
+        assert stable is True
+        # This is a numerical fact ONLY. The discrepancy stays UNRESOLVED, and
+        # 3.0D-8G decides nothing from it.
+        from biological_brain.synaptic_mechanism_registry import (
+            get_synaptic_mechanism_registry,
+        )
+
+        registry = get_synaptic_mechanism_registry()
+        assert len(registry.discrepancies()) >= 1
+        assert all(
+            record.value_agreement == "unresolved_observed_discrepancy"
+            for record in registry.discrepancies()
+        )
+
+    def _run(self, connection, arrival_s, peak_uS):
+        """Integrate the DLMn with the synapse on it; False if it diverges."""
+        from biological_brain.dynamics.chemical_synapse import (
+            DoubleExponentialSynapse,
+        )
+        from biological_brain.dynamics.dlmn_active import DLMNActiveAxonModel
+
+        model = _eight_g_dlmn()
+        engine = DLMNActiveAxonModel()
+        network = engine.prepare_dlmn(model, segment_count=11)
+        segment_id = connection.postsynaptic_segment_id(model, 11)
+        state = engine.initial_state(network)
+        mechanism = DoubleExponentialSynapse(
+            tau_rise_ms=0.1, tau_decay_ms=1.0, reversal_mV=0.0,
+            peak_conductance_uS=peak_uS, delay_ms=0.15,
+        )
+        mechanism.deliver_event(0.0)
+        for k in range(200):
+            t = k * 0.01 * 1e-3
+            voltage = state[segment_id].voltage_mV
+            current = mechanism.injected_current_A(t, voltage * 1e-3)
+            engine.step(
+                network, state,
+                injected_currents_A={segment_id: current},
+                timestep_ms=0.01,
+            )
+            value = state[segment_id].voltage_mV
+            if value != value or abs(value) == float("inf") or abs(value) > 1e6:
+                return False
+        return True
+
+    def test_23_7u_is_untouched_and_the_abstraction_layers_still_load(self):
+        """Check 30: 7U unresolved; 7W/7X/7Y/7Z untouched by 8G."""
+        from biological_brain.source_reconciliation import (
+            ResolutionStatus, get_source_reconciliation_registry,
+        )
+
+        registry = get_source_reconciliation_registry()
+        assert len(registry.unresolved()) == 2
+        for conflict_id in registry.unresolved():
+            conflict = registry.get(conflict_id)
+            assert conflict.resolution_status == ResolutionStatus.UNRESOLVED
+            assert conflict.preferred_side is None
+            assert conflict.discrepancy_factor == 1000.0
+        # 8G did not add a third conflict to the 7U registry: the synaptic
+        # peak-conductance discrepancy lives in 7V, where 7V put it. Every 7U
+        # conflict is still a gap-junction unit conflict.
+        for conflict_id in registry.names():
+            assert "gap" in conflict_id or "g_gap" in conflict_id, conflict_id
+        assert len(registry.conflicts) == len(registry.names())
+        # The 7V registry is still provenance-only: 8G implemented a synapse,
+        # but did not flip any 7V record to live-eligible.
+        from biological_brain.synaptic_mechanism_registry import (
+            get_synaptic_mechanism_registry,
+        )
+
+        synaptic = get_synaptic_mechanism_registry()
+        assert synaptic.any_live_solver_eligible() is False
+        for record in synaptic.quantities:
+            assert record.live_solver_eligible is False
+        # And the four later abstraction layers still load.
+        from biological_brain.looming_abstraction import get_looming_abstraction
+        from biological_brain.motor_output_abstraction import (
+            get_motor_output_abstraction,
+        )
+        from biological_brain.sensorimotor_integration import (
+            get_sensorimotor_integration,
+        )
+
+        assert get_looming_abstraction() is not None
+        assert get_sensorimotor_integration() is not None
+        assert get_motor_output_abstraction() is not None
+
+    def test_24_the_scope_note_states_every_boundary(self):
+        """The 8G scope statement names what is and is not implemented."""
+        from biological_brain.dynamics.chemical_synapse import (
+            chemical_synapse_scope_note,
+        )
+
+        note = chemical_synapse_scope_note()
+        lowered = note.lower()
+        assert "double-exponential" in lowered
+        assert "NOT A Dalpha7 KINETIC MODEL" in note
+        assert "0 mV IS A MODEL REVERSAL POTENTIAL" in note
+        assert "NOT A MEASURED Dalpha7 REVERSAL POTENTIAL" in note
+        assert "7U" in note and "UNRESOLVED" in note
+        for absent in (
+            "gf->ttmn", "gf->psi", "gap junction", "vesicle", "calcium",
+            "short-term plasticity", "desensitization", "q10", "nmj", "muscle",
+            "behaviour",
+        ):
+            assert absent in lowered, absent
+        # The connection-level note additionally names the unresolved 1000x
+        # discrepancy and which number it is running on.
+        connection = _eight_g_connection()
+        connection_note = connection.scope_note()
+        assert "1000" in connection_note
+        assert "UNRESOLVED" in connection_note.upper() or (
+            "unresolved" in connection_note
+        )
+        assert "converts nothing, decides nothing" in connection_note
+        assert "'paper'" in connection_note
+
+
+def DoubleExponentialSynapseType():
+    """The mechanism CLASS, for the isinstance check in test 1."""
+    from biological_brain.dynamics.chemical_synapse import (
+        DoubleExponentialSynapse,
+    )
+
+    return DoubleExponentialSynapse
+
+
+def connection_scope_note_of():
+    """The 8G scope note, for the 0 mV assertion in test 17."""
+    from biological_brain.dynamics.chemical_synapse import (
+        chemical_synapse_scope_note,
+    )
+
+    return chemical_synapse_scope_note()
