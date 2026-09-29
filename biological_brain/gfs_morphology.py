@@ -11,13 +11,22 @@ This is a data-layer parameterization for future compartment construction
 Provenance classification:
 - All Augustin model anatomy values are classified as PUBLISHED_MODEL_PARAMETER
   (the paper states the anatomy is "simplified" and "chosen to capture general
-  cell proportions"; some parameters were "manually adjusted"). These are NOT
-  DIRECTLY_MEASURED.
+  cell proportions" and "active/passive membrane-area ratios"; some parameters
+  were "manually adjusted"). These are NOT DIRECTLY_MEASURED and are not
+  individual-neuron reconstructions.
 - The 170 μm PSI dendrite length is classified as ESTIMATED (the paper
   explicitly states this value was estimated).
 - Boerner & Godenschwege 2010 (PMC2946086) provides anatomical context
   (3D reconstructions, stereotyped contact regions) but no exact geometry
   is imported from that source.
+
+Section diameters (3.0D-7L):
+The published simplified model represents each neuron's sections as
+unbranched cylinders of a single reported diameter: 8 um for GF, 6 um for
+TTMn, 4.5 um for PSI. Those values are attached to each modeled section so
+that every modeled section has a complete source-backed geometry for the
+passive cable representation. They remain PUBLISHED_MODEL_PARAMETER values
+of a simplified model, not per-section anatomical measurements.
 """
 
 from dataclasses import dataclass, field
@@ -134,6 +143,7 @@ def get_gfs_morphology() -> GFSMorphology:
     gf.compartments.append(CompartmentSpec(
         name="axon",
         length=_mk(400.0, prov_pub, _SOURCE_AUGUSTIN),
+        diameter=_mk(8.0, prov_pub, _SOURCE_AUGUSTIN),
     ))
     # GF→PSI contact distance from GF proximal end
     gf.placements.append(PlacementSpec(
@@ -167,17 +177,22 @@ def get_gfs_morphology() -> GFSMorphology:
         soma_diameter=_mk(6.0, prov_pub, _SOURCE_AUGUSTIN),
         context_sources=[_SOURCE_BOERNER],
     )
+    # 3.0D-7L: the published simplified model uses a single 6 um diameter for
+    # TTMn. No source-backed length exists for the TTMn soma; none is invented.
     ttmn.compartments.append(CompartmentSpec(
         name="axon",
         length=_mk(50.0, prov_pub, _SOURCE_AUGUSTIN),
+        diameter=_mk(6.0, prov_pub, _SOURCE_AUGUSTIN),
     ))
     ttmn.compartments.append(CompartmentSpec(
         name="medial_dendrite",
         length=_mk(60.0, prov_pub, _SOURCE_AUGUSTIN),
+        diameter=_mk(6.0, prov_pub, _SOURCE_AUGUSTIN),
     ))
     ttmn.compartments.append(CompartmentSpec(
         name="lateral_dendrite",
         length=_mk(30.0, prov_pub, _SOURCE_AUGUSTIN),
+        diameter=_mk(6.0, prov_pub, _SOURCE_AUGUSTIN),
     ))
     gfs.neurons["TTMn"] = ttmn
 
@@ -187,14 +202,20 @@ def get_gfs_morphology() -> GFSMorphology:
         soma_diameter=_mk(4.5, prov_pub, _SOURCE_AUGUSTIN),
         context_sources=[_SOURCE_BOERNER],
     )
+    # 3.0D-7L: the published simplified model uses a single 4.5 um diameter
+    # for PSI. No source-backed length exists for the PSI soma; none is invented.
     psi.compartments.append(CompartmentSpec(
         name="axon",
         length=_mk(90.0, prov_pub, _SOURCE_AUGUSTIN),
+        diameter=_mk(4.5, prov_pub, _SOURCE_AUGUSTIN),
     ))
-    # PSI dendrite length — EXPLICITLY estimated per source
+    # PSI dendrite length — EXPLICITLY estimated per source.
+    # The 4.5 um section diameter is a published model parameter; the length
+    # stays ESTIMATED and is not upgraded.
     psi.compartments.append(CompartmentSpec(
         name="dendrite",
         length=_mk(170.0, prov_est, _SOURCE_AUGUSTIN),
+        diameter=_mk(4.5, prov_pub, _SOURCE_AUGUSTIN),
     ))
     # GF input on PSI axon
     psi.placements.append(PlacementSpec(

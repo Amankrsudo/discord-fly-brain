@@ -33,6 +33,9 @@ from .gfs_morphology import (
     PlacementSpec,
     get_gfs_morphology,
 )
+from .computational_topology import (
+    AUGUSTIN_2019_GFS_COMPUTATIONAL_TOPOLOGY,
+)
 
 
 def _build_geometry(comp_spec: CompartmentSpec) -> CompartmentGeometry:
@@ -85,42 +88,88 @@ def _match_placements(comp_spec: CompartmentSpec, neuron_spec: NeuronSpec) -> li
     return records
 
 
+# Sections the Augustin 2019 simplified computational abstraction does not
+# model, even though the anatomical/context morphology retains them (3.0D-7N).
+# The published model represents the GF as a single modeled section, so its
+# medial dendrite is outside the selected computational scope. This is NOT a
+# generic "medial dendrite" rule: TTMn's medial dendrite IS modeled by the
+# published abstraction (6 um, 60 um) and must remain representable.
+_AUGUSTIN_UNMODELLED_SECTIONS = {
+    "GF": ("GF_medial_dendrite",),
+}
+
+
 def _declare_electrical_exclusions(model: CompartmentModel, soma_id: str) -> None:
     """Declare compartments that are anatomical but not electrically representable.
 
-    The GF soma is reported in the source with a diameter only. Membrane
+    Every GFS soma is reported in the source with a diameter only. Membrane
     capacitance and leak conductance require a membrane SURFACE AREA, and no
-    cylindrical soma length is available, so no area can be derived. The soma
+    cylindrical soma length is available, so no area can be derived. Each soma
     is therefore declared excluded from passive electrical representation.
 
     This declaration is a COMPUTATIONAL LIMITATION, not a biological claim:
-    the soma is real, it is not described as having zero membrane area, and
-    no axial, capacitance, or leak value is invented for it. The anatomical
-    compartment keeps its diameter and provenance untouched.
+    the soma is real, it is NOT described as having zero membrane area or as
+    having no electrical role, and no axial, capacitance, or leak value is
+    invented for it. The anatomical compartment keeps its diameter and
+    provenance untouched.
 
-    Scope note: only the GF soma is declared here, as scoped for 3.0D-7I. The
-    TTMn, PSI, and DLMn somas have the same geometric insufficiency and are
-    NOT declared excluded; they continue to be rejected by explicit geometry
-    errors rather than being silently omitted. That asymmetry is a known
-    open question, not a biological difference between neurons.
+    3.0D-7L: this declaration is applied uniformly to all four GFS somata.
+    The GF-only asymmetry introduced in 3.0D-7I was a scoping artifact, not a
+    biological difference between neurons: TTMn, PSI, and DLMn have exactly the
+    same geometric insufficiency as GF (a source-backed diameter with no
+    source-backed length).
+
+    3.0D-7N: GF_medial_dendrite is additionally declared excluded from the
+    SELECTED COMPUTATIONAL REPRESENTATION, for a different and separately
+    recorded reason. That section exists in the anatomical/context morphology
+    and carries a source-backed input placement, but the Augustin 2019
+    simplified model represents the GF as a single modeled section and
+    specifies no separate computational geometry for it. The exclusion is a
+    statement about the scope of the selected computational abstraction; it is
+    NOT a claim that the biological GF lacks a medial dendrite, and the
+    compartment is retained untouched in the morphology.
     """
     from .electrical_representation import (
-        ElectricalRepresentation, insufficient_geometry_exclusion,
+        ElectricalRepresentation,
+        computational_scope_exclusion,
+        insufficient_geometry_exclusion,
     )
 
-    if model.neuron_id != "GF":
-        return
+    soma_diameter = model.compartments[soma_id].geometry.diameter_um
+
+    exclusions = [
+        insufficient_geometry_exclusion(
+            soma_id,
+            f"{model.neuron_id} soma has a source-backed diameter "
+            f"({soma_diameter} um) but no source-backed length, so no "
+            f"membrane surface area can be computed. A diameter alone is "
+            f"NOT converted into an area, and no soma length is invented. "
+            f"This is a computational limitation of the published "
+            f"simplified section model, NOT a claim that the biological "
+            f"soma has no electrical role.",
+        )
+    ]
+
+    medial_dendrite_ids = _AUGUSTIN_UNMODELLED_SECTIONS.get(model.neuron_id, ())
+    for medial_dendrite_id in medial_dendrite_ids:
+        if medial_dendrite_id not in model.compartments:
+            continue
+        exclusions.append(
+            computational_scope_exclusion(
+                medial_dendrite_id,
+                "The Augustin 2019 simplified computational model represents "
+                "the GF as a single modeled section and does not specify "
+                "separate computational geometry for the GF medial dendrite. "
+                "This compartment is therefore excluded from the selected "
+                "Augustin-style computational representation. It is retained "
+                "in the anatomical/context morphology with its source-backed "
+                "input placement and provenance untouched, and no length or "
+                "diameter is invented for it.",
+            )
+        )
 
     model.electrical_representation = ElectricalRepresentation(
-        exclusions=(
-            insufficient_geometry_exclusion(
-                soma_id,
-                "GF soma has a source-backed diameter (8 um) but no "
-                "source-backed length, so no membrane surface area can be "
-                "computed. A diameter alone is NOT converted into an area, and "
-                "no soma length is invented.",
-            ),
-        )
+        exclusions=tuple(exclusions)
     )
 
 
@@ -169,6 +218,15 @@ def build_compartment_model(neuron_spec: NeuronSpec) -> CompartmentModel:
             soma.neighbor_ids.append(comp.compartment_id)
 
     _declare_electrical_exclusions(model, soma_id)
+
+    # 3.0D-7P: declare the source-backed computational section connectivity of
+    # the selected Augustin 2019 abstraction. This is recorded SEPARATELY from
+    # the anatomical parent_id/neighbor_ids above, which are left untouched. It
+    # exists because the published abstraction wires the modelled sections
+    # directly with child.connect(parent, 0, 0), while our anatomical topology
+    # routes every section through a soma that the electrical representation
+    # excludes. No connection is invented across a soma.
+    model.computational_topology = AUGUSTIN_2019_GFS_COMPUTATIONAL_TOPOLOGY
 
     return model
 

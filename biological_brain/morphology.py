@@ -21,6 +21,7 @@ from typing import Dict, List, Optional, Tuple, TYPE_CHECKING
 from .provenance import ParameterProvenance, ProvenanceRecord
 
 if TYPE_CHECKING:  # pragma: no cover
+    from .computational_topology import ComputationalTopology
     from .electrical_representation import ElectricalRepresentation
 
 
@@ -159,6 +160,13 @@ class CompartmentModel:
     electrical network. This is a computational limitation, not a
     biological claim.
 
+    computational_topology declares the source-backed COMPUTATIONAL section
+    connectivity of a selected abstraction (3.0D-7P), separately from the
+    anatomical parent_id/neighbor_ids above. It is None by default, in which
+    case electrical parentage follows the anatomical parentage unchanged. A
+    declared topology is authoritative only for the sections it names and
+    never rewrites the anatomical topology.
+
     No passive cable solver, HH, or biological values are implemented here.
     """
 
@@ -171,6 +179,7 @@ class CompartmentModel:
     compartments: Dict[str, Compartment] = field(default_factory=dict)
     passive_profile_name: Optional[str] = None
     electrical_representation: Optional["ElectricalRepresentation"] = None
+    computational_topology: Optional["ComputationalTopology"] = None
 
     def add_compartment(self, compartment: Compartment) -> None:
         """Add a compartment to the model."""

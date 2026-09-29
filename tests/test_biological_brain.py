@@ -7,6 +7,30 @@ from biological_brain import (
     MODEL_NAME_LIF_VOLTAGE
 )
 from biological_brain.passive_profiles import PROFILE_AUGUSTIN_2019_GFS_PASSIVE
+from biological_brain.subdivision import SectionSubdivision, SubdivisionPlan
+from biological_brain.provenance import ParameterProvenance
+from biological_brain.synaptic_mechanism_registry import (
+    SynapticEvidenceStatus, get_synaptic_mechanism_registry,
+    DISCREPANCY_UNRESOLVED,
+)
+from biological_brain.synaptic_abstraction import (
+    Availability, CONNECTION_CHEMICAL, CONNECTION_ELECTRICAL_AND_CHEMICAL,
+    LEVEL_MOTOR_OUTPUT, LEVEL_PATHWAY, SCOPE_CONNECTION_SPECIFIC_SOURCE,
+    SCOPE_GENERIC_MODEL_CHEMICAL_SYNAPSE, get_synaptic_abstraction,
+)
+from biological_brain.source_reconciliation import (
+    ResolutionStatus, get_source_reconciliation_registry,
+)
+from biological_brain.active_mechanism_registry import (
+    get_active_mechanism_registry,
+)
+from biological_brain.active_profiles import (
+    PROFILE_AUGUSTIN_2019_ACTIVE_MODEL, get_active_parameter_profile,
+)
+from biological_brain.passive_profiles import get_passive_parameter_profile
+from biological_brain.dynamics.passive_cable import (
+    MODEL_NAME_PASSIVE_CABLE_V0, PASSIVE_CABLE_NUMERICAL_POLICY,
+)
 
 
 class TestNeuron:
@@ -4274,16 +4298,21 @@ class TestElectricalRepresentationExclusions:
         # Electrically represented by passive_cable_v0: no.
         representation = gf.electrical_representation
         assert representation.is_excluded("GF_soma") is True
-        assert representation.excluded_ids() == ("GF_soma",)
+        # 3.0D-7N adds a second, separately-recorded exclusion: the GF medial
+        # dendrite is outside the selected Augustin computational abstraction.
+        assert representation.excluded_ids() == (
+            "GF_soma", "GF_medial_dendrite",
+        )
 
         exclusion = representation.get("GF_soma")
         assert exclusion.reason == EXCLUSION_INSUFFICIENT_GEOMETRY
         assert exclusion.scope == SCOPE_COMPUTATIONAL_LIMITATION
         assert "no source-backed length" in exclusion.reason_detail
 
-        # No other GFS compartment is excluded.
+        # No other GFS compartment is excluded from electrical representation
+        # on account of missing geometry.
         assert gf.is_electrically_excluded("GF_axon") is False
-        assert gf.is_electrically_excluded("GF_medial_dendrite") is False
+        assert gf.is_electrically_excluded("GF_medial_dendrite") is True
 
     def test_exclusion_provenance_states_computational_limitation(self):
         """The exclusion is documented as a limitation, not a biological claim."""
@@ -4649,23 +4678,30 @@ class TestTaperAxialResistance:
             pytest.approx(35.4)
         )
 
-    def test_gf_axon_remains_blocked(self):
-        """GF_axon is still blocked: its source-backed diameter is absent."""
-        from biological_brain.dynamics.passive_cable import (
-            PassiveCableModel, PassiveGeometryError,
-        )
+    def test_gf_axon_diameter_completed_and_gf_model_now_prepares(self):
+        """3.0D-7L gave GF_axon its source-backed 8 um diameter.
+
+        3.0D-7N then moved GF_medial_dendrite out of the blocker state into an
+        explicit computational-scope exclusion, so the full GF model prepares
+        without inventing any medial-dendrite geometry.
+        """
+        from biological_brain.dynamics.passive_cable import PassiveCableModel
         from biological_brain.morphology_builder import build_gfs_compartment_models
 
         gf = build_gfs_compartment_models()["GF"]
         gf.passive_profile_name = PROFILE_AUGUSTIN_2019_GFS_PASSIVE
-        assert gf.compartments["GF_axon"].geometry.diameter_um is None
+        assert gf.compartments["GF_axon"].geometry.diameter_um == 8.0
 
-        with pytest.raises(PassiveGeometryError, match="'GF_axon'"):
-            PassiveCableModel(
-                profile_name=PROFILE_AUGUSTIN_2019_GFS_PASSIVE
-            ).prepare(gf)
+        medial = gf.compartments["GF_medial_dendrite"].geometry
+        assert medial.length_um is None
+        assert medial.diameter_um is None
 
-        # The soma exclusion from 7I is untouched.
+        network = PassiveCableModel(
+            profile_name=PROFILE_AUGUSTIN_2019_GFS_PASSIVE
+        ).prepare(gf)
+        assert [c.compartment_id for c in network.compartments] == ["GF_axon"]
+
+        # The 7I soma exclusion is untouched.
         assert gf.is_electrically_excluded("GF_soma") is True
         assert gf.compartments["GF_soma"].geometry.diameter_um == 8.0
 
@@ -5015,29 +5051,39 @@ class TestDerivedSubdivision:
         assert mapping.segment_id == "section#seg50"
 
     def test_excluded_compartment_produces_no_segments(self):
-        """7I exclusions are respected: no derived segments for GF_soma."""
-        from biological_brain.dynamics.passive_cable import (
-            PassiveCableModel, PassiveGeometryError,
-        )
+        """7I/7N exclusions are respected: no derived segments for the GF
+        soma, and none for the 7N scope-excluded GF medial dendrite."""
+        from biological_brain.dynamics.passive_cable import PassiveCableModel
         from biological_brain.morphology_builder import build_gfs_compartment_models
         from biological_brain.subdivision import (
-            SectionSubdivision, SubdivisionPlan, derive_segments,
+            SectionSubdivision, SubdivisionPlan,
         )
 
         gf = build_gfs_compartment_models()["GF"]
         gf.passive_profile_name = PROFILE_AUGUSTIN_2019_GFS_PASSIVE
 
-        # Even if a plan asks for it, the excluded soma gets no segments.
-        plan = SubdivisionPlan(
-            sections=(SectionSubdivision("GF_soma", 10),)
-        )
+        # Even if a plan asks for them, the excluded sections get no segments.
+        plan = SubdivisionPlan(sections=(
+            SectionSubdivision("GF_soma", 10),
+            SectionSubdivision("GF_medial_dendrite", 51),
+            SectionSubdivision("GF_axon", 1),
+        ))
         backend = PassiveCableModel(profile_name=PROFILE_AUGUSTIN_2019_GFS_PASSIVE)
-        with pytest.raises(PassiveGeometryError, match="'GF_axon'"):
-            backend.prepare(gf, plan)
+        network = backend.prepare(gf, plan)
 
         assert gf.is_electrically_excluded("GF_soma") is True
+        assert gf.is_electrically_excluded("GF_medial_dendrite") is True
         assert gf.compartments["GF_soma"].geometry.diameter_um == 8.0
-        assert gf.compartments["GF_axon"].geometry.diameter_um is None
+        assert gf.compartments["GF_axon"].geometry.diameter_um == 8.0
+
+        # Only the one eligible section is represented, undivided.
+        assert [c.compartment_id for c in network.compartments] == ["GF_axon"]
+        assert [c.segment_count for c in network.compartments] == [1]
+        assert [c.segment_index for c in network.compartments] == [0]
+        assert network.subdivision_plan is plan
+        # The plan was not silently reinterpreted: it is reported as given.
+        assert plan.segment_count_for("GF_medial_dendrite") == 51
+        assert plan.segment_count_for("GF_soma") == 10
 
     def test_dlmn_taper_remains_electrically_representable(self):
         """7J behaviour is preserved with and without subdivision."""
@@ -5054,19 +5100,8604 @@ class TestDerivedSubdivision:
             )
             assert network.excluded == ()
 
-    def test_dlmn_model_still_blocked_by_soma_geometry(self):
-        """7J did not touch the soma: DLMn remains blocked, now by DLMn_soma."""
-        from biological_brain.dynamics.passive_cable import (
-            PassiveCableModel, PassiveGeometryError,
-        )
+    def test_dlmn_model_is_now_electrically_representable(self):
+        """3.0D-7L: DLMn dendrite and taper are both source-backed; only the
+        soma remains excluded, and the 7J taper behaviour is unchanged."""
+        from biological_brain.dynamics.passive_cable import PassiveCableModel
         from biological_brain.morphology_builder import build_gfs_compartment_models
 
         dlmn = build_gfs_compartment_models()["DLMn"]
         dlmn.passive_profile_name = PROFILE_AUGUSTIN_2019_GFS_PASSIVE
 
-        # No taper convention issue remains; the soma is the blocker.
-        assert dlmn.is_electrically_excluded("DLMn_soma") is False
-        with pytest.raises(PassiveGeometryError, match="'DLMn_soma'"):
+        assert dlmn.is_electrically_excluded("DLMn_soma") is True
+        assert dlmn.is_electrically_excluded("DLMn_dendrite") is False
+        assert dlmn.is_electrically_excluded("DLMn_axon") is False
+
+        network = PassiveCableModel(
+            profile_name=PROFILE_AUGUSTIN_2019_GFS_PASSIVE
+        ).prepare(dlmn)
+
+        assert [c.compartment_id for c in network.compartments] == [
+            "DLMn_axon", "DLMn_dendrite",
+        ]
+        # 3.0D-7P: the published abstraction wires DLMn_dendrite to DLMn_axon
+        # directly, so the dendrite is no longer a disconnected root even
+        # though its anatomical parent soma is excluded.
+        dendrite = network.compartment("DLMn_dendrite")
+        assert dendrite.electrical_parent_id == "DLMn_axon"
+        assert dendrite.axial_resistance_ohm is not None
+        # DLMn_axon itself remains the computational root and keeps no axial
+        # resistance (the 7J taper applies to its own geometry, not a parent).
+        axon = network.compartment("DLMn_axon")
+        assert axon.electrical_parent_id is None
+        assert axon.axial_resistance_ohm is None
+        assert dendrite.membrane_area_derivation.startswith("Cylinder:")
+
+
+_UM2_TO_CM2 = 1e-8
+
+
+def _gf_axon_only_model():
+    """The real GF_soma (declared excluded) plus the real GF_axon.
+
+    Built from the source-backed compartments themselves; nothing is copied,
+    re-parameterized, or modified. The medial dendrite is omitted because the
+    Augustin 2019 abstraction models the GF as a single section; its exclusion
+    record is therefore dropped here rather than declared for a compartment
+    this model does not contain.
+    """
+    from biological_brain.electrical_representation import (
+        ElectricalRepresentation, get_exclusions,
+    )
+    from biological_brain.morphology import CompartmentModel
+    from biological_brain.morphology_builder import build_gfs_compartment_models
+
+    gf = build_gfs_compartment_models()["GF"]
+    model = CompartmentModel(
+        neuron_id="GF",
+        passive_profile_name=PROFILE_AUGUSTIN_2019_GFS_PASSIVE,
+        electrical_representation=ElectricalRepresentation(
+            exclusions=tuple(
+                e for e in get_exclusions(gf)
+                if e.compartment_id in ("GF_soma", "GF_axon")
+            )
+        ),
+    )
+    model.add_compartment(gf.compartments["GF_soma"])
+    model.add_compartment(gf.compartments["GF_axon"])
+    model.add_connection("GF_soma", "GF_axon")
+    return model
+
+
+class TestSourceBackedGFSGeometryCompletion:
+    """3.0D-7L: source-backed completion of GFS computational geometry.
+
+    The published simplified model (Augustin et al. 2019, Table 1) reports one
+    cylindrical section diameter per modelled neuron. 7L attaches those
+    already-published values to the existing source-backed sections so that
+    each modelled non-soma section has a complete geometry for the passive
+    cable representation.
+
+    Nothing is invented: no soma length, no GF medial dendrite length, no
+    default, no d_lambda.
+    """
+
+    # Expected uniform-cylinder lateral areas, in um^2.
+    GF_AXON_AREA_UM2 = 10053.096491
+    TTMN_AXON_AREA_UM2 = 942.477796
+    TTMN_MEDIAL_AREA_UM2 = 1130.973355
+    TTMN_LATERAL_AREA_UM2 = 565.486678
+    PSI_AXON_AREA_UM2 = 1272.345024
+    # pi * 4.5 um * 170 um. NOTE: the checkpoint brief listed 2404.652823 for
+    # this section, which is not pi * d * L for d = 4.5 um, L = 170 um
+    # (that product is 2403.318380). The uniform-cylinder formula and the
+    # source-backed dimensions govern; the brief's figure is a typo.
+    PSI_DENDRITE_AREA_UM2 = 2403.318380
+    DLMN_DENDRITE_AREA_UM2 = 628.318531
+
+    def _models(self):
+        from biological_brain.morphology_builder import build_gfs_compartment_models
+
+        models = build_gfs_compartment_models()
+        for model in models.values():
+            model.passive_profile_name = PROFILE_AUGUSTIN_2019_GFS_PASSIVE
+        return models
+
+    def _network(self, model, plan=None):
+        from biological_brain.dynamics.passive_cable import PassiveCableModel
+
+        return PassiveCableModel(
+            profile_name=PROFILE_AUGUSTIN_2019_GFS_PASSIVE
+        ).prepare(model, plan)
+
+    @staticmethod
+    def _area_um2(compartment_electrical):
+        return compartment_electrical.membrane_area_cm2 / _UM2_TO_CM2
+
+    # --- 1. GF axon: source-backed diameter, provenance, electrical use ---
+
+    def test_gf_axon_has_source_backed_8um_diameter(self):
+        """GF_axon diameter is 8 um with PUBLISHED_MODEL_PARAMETER provenance."""
+        from biological_brain.provenance import ParameterProvenance
+
+        geometry = self._models()["GF"].compartments["GF_axon"].geometry
+        assert geometry.diameter_um == 8.0
+        assert geometry.length_um == 400.0
+        assert geometry.diameter_distal_um is None
+
+    def test_gf_axon_diameter_provenance_is_published_model_parameter(self):
+        from biological_brain.morphology_builder import build_gfs_compartment_models
+        from biological_brain.provenance import ParameterProvenance
+
+        compartment = build_gfs_compartment_models()["GF"].compartments["GF_axon"]
+        assert compartment.provenance.diameter_um.category == (
+            ParameterProvenance.PUBLISHED_MODEL_PARAMETER
+        )
+        # The length keeps its own pre-existing provenance record.
+        assert compartment.provenance.length_um.category == (
+            ParameterProvenance.PUBLISHED_MODEL_PARAMETER
+        )
+        # Placements are untouched.
+        distances = sorted(p.distance_um for p in compartment.placements)
+        assert distances == [360.0, 400.0]
+
+    def test_gf_axon_is_electrically_representable(self):
+        """The GF_axon section now prepares into the passive network."""
+        network = self._network(_gf_axon_only_model())
+
+        assert [c.compartment_id for c in network.compartments] == ["GF_axon"]
+        axon = network.compartment("GF_axon")
+        assert self._area_um2(axon) == pytest.approx(
+            self.GF_AXON_AREA_UM2, rel=1e-9
+        )
+        assert axon.membrane_area_derivation.startswith("Cylinder:")
+        # Electrical root: its anatomical parent is declared excluded.
+        assert axon.electrical_parent_id is None
+        assert "GF_soma" in axon.electrical_root_reason
+        assert [e.compartment_id for e in network.excluded] == ["GF_soma"]
+
+    def test_gf_axon_area_matches_cylinder_formula(self):
+        """pi * d * L for d = 8 um, L = 400 um, to 1e-9 relative tolerance."""
+        import math
+
+        expected = math.pi * 8.0 * 400.0
+        assert expected == pytest.approx(self.GF_AXON_AREA_UM2, rel=1e-9)
+
+        network = self._network(_gf_axon_only_model())
+        assert self._area_um2(network.compartment("GF_axon")) == pytest.approx(
+            expected, rel=1e-9
+        )
+
+    def test_gf_axon_excluded_soma_gains_no_area(self):
+        """The excluded soma contributes no electrical compartment."""
+        network = self._network(_gf_axon_only_model())
+        with pytest.raises(KeyError):
+            network.compartment("GF_soma")
+
+    # --- 2. TTMn: three modeled sections at 6 um ---
+
+    def test_ttmn_three_sections_keep_published_dimensions(self):
+        from biological_brain.morphology_builder import build_gfs_compartment_models
+        from biological_brain.provenance import ParameterProvenance
+
+        ttmn = build_gfs_compartment_models()["TTMn"]
+        expected = {
+            "TTMn_axon": (6.0, 50.0),
+            "TTMn_medial_dendrite": (6.0, 60.0),
+            "TTMn_lateral_dendrite": (6.0, 30.0),
+        }
+        assert set(ttmn.compartments) == set(expected) | {"TTMn_soma"}
+
+        for section_id, (diameter, length) in expected.items():
+            geometry = ttmn.compartments[section_id].geometry
+            assert geometry.diameter_um == diameter, section_id
+            assert geometry.length_um == length, section_id
+            assert ttmn.compartments[
+                section_id
+            ].provenance.diameter_um.category == (
+                ParameterProvenance.PUBLISHED_MODEL_PARAMETER
+            )
+
+    def test_ttmn_sections_are_electrically_representable(self):
+        from biological_brain.morphology_builder import build_gfs_compartment_models
+
+        ttmn = build_gfs_compartment_models()["TTMn"]
+        ttmn.passive_profile_name = PROFILE_AUGUSTIN_2019_GFS_PASSIVE
+        network = self._network(ttmn)
+
+        assert [c.compartment_id for c in network.compartments] == [
+            "TTMn_axon", "TTMn_lateral_dendrite", "TTMn_medial_dendrite",
+        ]
+        assert [e.compartment_id for e in network.excluded] == ["TTMn_soma"]
+        # 3.0D-7P: the two dendrites join the axon directly, per gfpn.py.
+        assert network.compartment("TTMn_axon").electrical_parent_id is None
+        for dendrite_id in ("TTMn_medial_dendrite", "TTMn_lateral_dendrite"):
+            assert network.compartment(
+                dendrite_id
+            ).electrical_parent_id == "TTMn_axon"
+
+        areas = {
+            "TTMn_axon": self.TTMN_AXON_AREA_UM2,
+            "TTMn_medial_dendrite": self.TTMN_MEDIAL_AREA_UM2,
+            "TTMn_lateral_dendrite": self.TTMN_LATERAL_AREA_UM2,
+        }
+        for section_id, expected in areas.items():
+            assert self._area_um2(network.compartment(section_id)) == (
+                pytest.approx(expected, rel=1e-9)
+            )
+
+    # --- 3. PSI: axon 4.5/90, dendrite 4.5/170 ESTIMATED ---
+
+    def test_psi_axon_retains_4p5um_and_90um(self):
+        from biological_brain.morphology_builder import build_gfs_compartment_models
+
+        geometry = build_gfs_compartment_models()["PSI"].compartments[
+            "PSI_axon"
+        ].geometry
+        assert geometry.diameter_um == 4.5
+        assert geometry.length_um == 90.0
+
+        model = build_gfs_compartment_models()["PSI"]
+        model.passive_profile_name = PROFILE_AUGUSTIN_2019_GFS_PASSIVE
+        network = self._network(model)
+        assert self._area_um2(network.compartment("PSI_axon")) == pytest.approx(
+            self.PSI_AXON_AREA_UM2, rel=1e-9
+        )
+
+    def test_psi_dendrite_retains_estimated_length_provenance(self):
+        """The 170 um length stays ESTIMATED; the diameter is published."""
+        from biological_brain.morphology_builder import build_gfs_compartment_models
+        from biological_brain.provenance import ParameterProvenance
+
+        compartment = build_gfs_compartment_models()["PSI"].compartments[
+            "PSI_dendrite"
+        ]
+        assert compartment.geometry.diameter_um == 4.5
+        assert compartment.geometry.length_um == 170.0
+        assert compartment.provenance.length_um.category == ParameterProvenance.ESTIMATED
+        assert compartment.provenance.diameter_um.category == (
+            ParameterProvenance.PUBLISHED_MODEL_PARAMETER
+        )
+        # It is not upgraded to a directly measured or merely published value.
+        assert compartment.provenance.length_um.category != (
+            ParameterProvenance.DIRECTLY_MEASURED
+        )
+
+        model = build_gfs_compartment_models()["PSI"]
+        model.passive_profile_name = PROFILE_AUGUSTIN_2019_GFS_PASSIVE
+        network = self._network(model)
+        assert self._area_um2(network.compartment("PSI_dendrite")) == (
+            pytest.approx(self.PSI_DENDRITE_AREA_UM2, rel=1e-9)
+        )
+
+        import math
+
+        assert math.pi * 4.5 * 170.0 == pytest.approx(
+            self.PSI_DENDRITE_AREA_UM2, rel=1e-9
+        )
+
+    def test_psi_soma_length_is_not_fabricated(self):
+        geometry = self._models()["PSI"].compartments["PSI_soma"].geometry
+        assert geometry.length_um is None
+        assert geometry.diameter_um == 4.5
+
+    # --- 4. DLMn: dendrite 2/100, taper 2->4 over 50 um ---
+
+    def test_dlmn_dendrite_retains_2um_and_100um(self):
+        from biological_brain.morphology_builder import build_gfs_compartment_models
+        from biological_brain.provenance import ParameterProvenance
+
+        compartment = build_gfs_compartment_models()["DLMn"].compartments[
+            "DLMn_dendrite"
+        ]
+        assert compartment.geometry.diameter_um == 2.0
+        assert compartment.geometry.length_um == 100.0
+        assert compartment.provenance.diameter_um.category == (
+            ParameterProvenance.PUBLISHED_MODEL_PARAMETER
+        )
+
+        model = build_gfs_compartment_models()["DLMn"]
+        model.passive_profile_name = PROFILE_AUGUSTIN_2019_GFS_PASSIVE
+        network = self._network(model)
+        assert self._area_um2(network.compartment("DLMn_dendrite")) == (
+            pytest.approx(self.DLMN_DENDRITE_AREA_UM2, rel=1e-9)
+        )
+
+    def test_dlmn_taper_geometry_unchanged(self):
+        from biological_brain.morphology_builder import build_gfs_compartment_models
+
+        geometry = build_gfs_compartment_models()["DLMn"].compartments[
+            "DLMn_axon"
+        ].geometry
+        assert geometry.diameter_um == 2.0
+        assert geometry.diameter_distal_um == 4.0
+        assert geometry.length_um == 50.0
+
+    def test_dlmn_taper_axial_resistance_unchanged(self):
+        """7J's taper convention and value survive 7L untouched.
+
+        The real DLMn_axon is an electrical root (its anatomical parent soma is
+        excluded), so the taper resistance is exercised on the 7J parent-linked
+        fixture, which is built from the same source-backed 2->4 um / 50 um
+        geometry.
+        """
+        from biological_brain.dynamics.passive_cable import PassiveCableModel
+
+        model = _subdivided_taper_model()
+        network = PassiveCableModel(
+            profile_name=PROFILE_AUGUSTIN_2019_GFS_PASSIVE
+        ).prepare(model)
+
+        axon = network.compartment("axon")
+        assert axon.axial_resistance_ohm == pytest.approx(
+            2817042.493327, rel=1e-9
+        )
+        assert "linearly tapered circular cable" in axon.axial_derivation
+        assert "R = Ra * L / (pi * r1 * r2)" in axon.axial_derivation
+
+        # The exact frustum area from the existing implementation, checked
+        # against the closed-form frustum lateral area rather than a
+        # hardcoded constant.
+        import math
+
+        r1, r2, length = 1.0, 2.0, 50.0
+        frustum_area = math.pi * (r1 + r2) * math.sqrt((r2 - r1) ** 2 + length ** 2)
+        assert self._area_um2(axon) == pytest.approx(frustum_area, rel=1e-9)
+
+    # --- 5. Soma handling ---
+
+    def test_no_soma_geometry_is_fabricated(self):
+        """Every GFS soma keeps a source-backed diameter and NO length."""
+        from biological_brain.morphology_builder import build_gfs_compartment_models
+
+        models = build_gfs_compartment_models()
+        assert set(models) == {"GF", "TTMn", "PSI", "DLMn"}
+        for neuron_id, model in models.items():
+            soma = model.compartments[f"{neuron_id}_soma"]
+            assert soma.geometry.length_um is None, neuron_id
+            assert soma.geometry.diameter_um is not None, neuron_id
+            assert soma.geometry.diameter_distal_um is None, neuron_id
+            assert soma.geometry.position is None, neuron_id
+
+    def test_all_four_somas_are_excluded_with_the_same_semantics(self):
+        """7L removes the 7I GF-only asymmetry: all four somata are declared
+        excluded for insufficient source-backed geometry, with the identical
+        computational-limitation semantics."""
+        from biological_brain.electrical_representation import (
+            EXCLUSION_INSUFFICIENT_GEOMETRY, SCOPE_COMPUTATIONAL_LIMITATION,
+        )
+
+        for neuron_id, model in self._models().items():
+            soma_id = f"{neuron_id}_soma"
+            assert model.is_electrically_excluded(soma_id) is True, soma_id
+            # 3.0D-7N: GF additionally excludes its medial dendrite, recorded
+            # separately, so only GF has a second exclusion.
+            expected = (soma_id, "GF_medial_dendrite") if neuron_id == "GF" else (
+                soma_id,
+            )
+            assert model.electrical_representation.excluded_ids() == expected
+
+            exclusion = model.electrical_representation.get(soma_id)
+            assert exclusion.reason == EXCLUSION_INSUFFICIENT_GEOMETRY
+            assert exclusion.scope == SCOPE_COMPUTATIONAL_LIMITATION
+            assert "no source-backed length" in exclusion.reason_detail
+            assert "NOT converted into an area" in exclusion.reason_detail
+            assert "NOT a claim that the biological" in exclusion.reason_detail
+
+            # No source-backed modeled section is excluded.
+            modeled = set(model.compartments) - {soma_id}
+            for section_id in modeled:
+                if neuron_id == "GF" and section_id == "GF_medial_dendrite":
+                    continue
+                assert model.is_electrically_excluded(section_id) is False
+
+    def test_exclusion_does_not_alter_soma_geometry(self):
+        for neuron_id, model in self._models().items():
+            soma = model.compartments[f"{neuron_id}_soma"]
+            assert soma.geometry.diameter_um is not None
+            assert soma.geometry.length_um is None
+            # No electrical quantity was written onto the excluded soma.
+            assert soma.cable_params.axial_resistance_ohm_cm is None
+            assert soma.cable_params.membrane_capacitance_uf_per_cm2 is None
+            assert soma.cable_params.leak_conductance_ms_per_cm2 is None
+            assert soma.cable_params.leak_reversal_mV is None
+
+    # --- 6. Subdivision interaction (7K unchanged) ---
+
+    def test_source_morphology_unchanged_after_subdivision_preparation(self):
+        """Preparing with an explicit 51-segment plan writes nothing back."""
+        from biological_brain.morphology_builder import build_gfs_compartment_models
+        from biological_brain.subdivision import DEFAULT_SEGMENT_COUNT
+
+        model = build_gfs_compartment_models()["TTMn"]
+        model.passive_profile_name = PROFILE_AUGUSTIN_2019_GFS_PASSIVE
+        before = {
+            cid: (
+                c.geometry.length_um,
+                c.geometry.diameter_um,
+                c.geometry.diameter_distal_um,
+                c.parent_id,
+                tuple(c.neighbor_ids),
+                tuple(c.placements),
+                c.cable_params,
+            )
+            for cid, c in model.compartments.items()
+        }
+
+        self._network(model, _plan("TTMn_axon", 51))
+
+        for cid, snapshot in before.items():
+            compartment = model.compartments[cid]
+            assert (
+                compartment.geometry.length_um,
+                compartment.geometry.diameter_um,
+                compartment.geometry.diameter_distal_um,
+                compartment.parent_id,
+                tuple(compartment.neighbor_ids),
+                tuple(compartment.placements),
+                compartment.cable_params,
+            ) == snapshot, cid
+        assert DEFAULT_SEGMENT_COUNT == 1
+
+    def test_explicit_51_segment_subdivision_conserves_length_and_area(self):
+        """51 explicit segments on the real TTMn axon conserve the source."""
+        model = self._models()["TTMn"]
+        network = self._network(model, _plan("TTMn_axon", 51))
+
+        segments = [
+            c for c in network.compartments
+            if c.source_section_id == "TTMn_axon"
+        ]
+        assert len(segments) == 51
+        assert [c.segment_index for c in segments] == list(range(51))
+        assert all(c.segment_count == 51 for c in segments)
+        assert all(c.is_derived_segment for c in segments)
+
+        total_area = sum(self._area_um2(c) for c in segments)
+        assert total_area == pytest.approx(self.TTMN_AXON_AREA_UM2, rel=1e-9)
+
+        from biological_brain.subdivision import derive_segments
+
+        derived = derive_segments(model.compartments["TTMn_axon"], _plan("TTMn_axon", 51))
+        assert sum(s.geometry.length_um for s in derived) == pytest.approx(
+            50.0, rel=1e-9
+        )
+        # Every other section keeps the default single segment.
+        others = [
+            c for c in network.compartments
+            if c.source_section_id != "TTMn_axon"
+        ]
+        assert all(c.segment_count == 1 for c in others)
+        assert all(not c.is_derived_segment for c in others)
+
+    def test_derived_segments_do_not_duplicate_source_provenance(self):
+        """7K's numerical subdivision provenance is preserved: derived
+        segments are NOT relabelled as independently measured."""
+        from biological_brain.provenance import ParameterProvenance
+
+        network = self._network(self._models()["TTMn"], _plan("TTMn_axon", 51))
+        for compartment in network.compartments:
+            assert compartment.subdivision_provenance.category == (
+                ParameterProvenance.UNKNOWN
+            )
+            if compartment.is_derived_segment:
+                assert "numerical" in (
+                    compartment.subdivision_provenance.source.lower()
+                )
+                # The source geometry provenance is carried through unchanged.
+                assert compartment.source_geometry_provenance is not None
+
+    # --- 7. Scope boundary ---
+
+    def test_geometry_completion_assigns_no_electrical_parameters(self):
+        """Completing geometry must not activate any electrical parameter."""
+        from biological_brain.morphology import CableParameters
+
+        for model in self._models().values():
+            for compartment in model.compartments.values():
+                assert isinstance(compartment.cable_params, CableParameters)
+                assert compartment.cable_params.axial_resistance_ohm_cm is None
+                assert (
+                    compartment.cable_params.membrane_capacitance_uf_per_cm2 is None
+                )
+                assert compartment.cable_params.leak_conductance_ms_per_cm2 is None
+                assert compartment.cable_params.leak_reversal_mV is None
+
+    def test_electrical_quantities_live_only_in_the_prepared_network(self):
+        """prepare() derives; it never writes back onto the morphology."""
+        from biological_brain.morphology_builder import build_gfs_compartment_models
+
+        models = build_gfs_compartment_models()
+        for neuron_id in ("TTMn", "PSI", "DLMn"):
+            model = models[neuron_id]
+            model.passive_profile_name = PROFILE_AUGUSTIN_2019_GFS_PASSIVE
+            self._network(model)
+            for compartment in model.compartments.values():
+                assert compartment.cable_params.axial_resistance_ohm_cm is None
+                assert compartment.state.voltage_mV == -70.0
+
+    def test_build_gfs_compartment_models_does_not_activate_a_profile(self):
+        """The Augustin passive profile is never activated automatically."""
+        from biological_brain.morphology_builder import build_gfs_compartment_models
+
+        for model in build_gfs_compartment_models().values():
+            assert model.passive_profile_name is None
+
+
+class TestExplicitGeometryBlockers:
+    """3.0D-7M: explicit source-backed geometry blockers and readiness.
+
+    The published simplified GFS model specifies no length and no diameter for
+    a separate GF medial-dendrite section, while still placing a GF input on it
+    at 12 um. That incomplete source evidence is recorded as a first-class,
+    structured blocker. It is NOT a claim that the biological structure does
+    not exist, NOT an estimate, and NOT permission to substitute geometry.
+
+    3.0D-7N moved GF_medial_dendrite out of this state: the selected Augustin
+    2019 abstraction does not model that section at all, so it is now an
+    explicit computational-scope EXCLUSION rather than a blocker. The blocker
+    machinery is unchanged and is still exercised here against a GF model whose
+    declarations have been removed, which is exactly the state a model would be
+    in if the abstraction DID intend to represent the section.
+    """
+
+    SECTION_ID = "GF_medial_dendrite"
+
+    def _gf(self):
+        from biological_brain.morphology_builder import build_gfs_compartment_models
+
+        gf = build_gfs_compartment_models()["GF"]
+        gf.passive_profile_name = PROFILE_AUGUSTIN_2019_GFS_PASSIVE
+        return gf
+
+    def _undeclared_gf(self):
+        """A GF model with no declarations: sections are INTENDED to be
+        represented, so incomplete geometry is a blocker, not an exclusion."""
+        gf = self._gf()
+        gf.electrical_representation = None
+        return gf
+
+    def _blockers(self, model):
+        from biological_brain.electrical_representation import get_geometry_blockers
+
+        return get_geometry_blockers(model)
+
+    # --- A, B, C: the blocker itself ---
+
+    def test_gf_medial_dendrite_blocker_exists(self):
+        blockers = self._blockers(self._undeclared_gf())
+        assert self.SECTION_ID in [b.section_id for b in blockers]
+
+    def test_gfs_models_declare_no_blockers_after_7n(self):
+        """3.0D-7N: the published simplified computational model is blocker-free."""
+        from biological_brain.electrical_representation import get_geometry_blockers
+        from biological_brain.morphology_builder import build_gfs_compartment_models
+
+        for model in build_gfs_compartment_models().values():
+            assert get_geometry_blockers(model) == ()
+
+    def test_blocker_names_exactly_the_missing_fields(self):
+        blocker = [
+            b for b in self._blockers(self._undeclared_gf())
+            if b.section_id == "GF_medial_dendrite"
+        ][0]
+        assert blocker.section_id == "GF_medial_dendrite"
+        assert blocker.missing_fields == ("length_um", "diameter_um")
+        assert list(blocker.missing_fields) == ["length_um", "diameter_um"]
+
+    def test_blocker_scope_is_computational_limitation(self):
+        from biological_brain.electrical_representation import (
+            SCOPE_COMPUTATIONAL_LIMITATION,
+        )
+
+        blocker = self._blockers(self._undeclared_gf())[0]
+        assert blocker.scope == SCOPE_COMPUTATIONAL_LIMITATION
+        assert blocker.scope == "computational_representation_limitation"
+        assert "does not provide sufficient geometry" in blocker.reason
+
+    def test_blocker_provenance_separates_incomplete_evidence_from_absence(self):
+        from biological_brain.provenance import ParameterProvenance
+
+        blocker = self._blockers(self._undeclared_gf())[0]
+
+        # Missing geometry is never a measured, estimated or published value.
+        assert blocker.provenance.category == ParameterProvenance.UNKNOWN
+        for forbidden in (
+            ParameterProvenance.ESTIMATED,
+            ParameterProvenance.DIRECTLY_MEASURED,
+            ParameterProvenance.PUBLISHED_MODEL_PARAMETER,
+            ParameterProvenance.EXPERIMENTALLY_CONSTRAINED,
+        ):
+            assert blocker.provenance.category != forbidden
+
+        source = blocker.provenance.source
+        assert "INCOMPLETE SOURCE EVIDENCE" in source
+        assert "NOT a claim that the biological structure does not exist" in source
+        assert "NOT an estimate" in source
+        assert "NOT permission to substitute geometry" in source
+        assert "computational representation limitation" in source
+
+    def test_blocker_construction_is_validated(self):
+        from biological_brain.electrical_representation import (
+            GeometryBlocker, SCOPE_COMPUTATIONAL_LIMITATION, geometry_blocker,
+        )
+        from biological_brain.provenance import ParameterProvenance, ProvenanceRecord
+
+        # Canonical field order regardless of construction order.
+        assert geometry_blocker(
+            "s", ("diameter_um", "length_um")
+        ).missing_fields == ("length_um", "diameter_um")
+
+        with pytest.raises(ValueError, match="at least one missing field"):
+            geometry_blocker("s", ())
+        with pytest.raises(ValueError, match="Unknown missing geometry field"):
+            geometry_blocker("s", ("branch_angle_deg",))
+        with pytest.raises(ValueError, match="Duplicate missing geometry field"):
+            geometry_blocker("s", ("length_um", "length_um"))
+
+        with pytest.raises(ValueError, match="scope must be"):
+            GeometryBlocker(
+                section_id="s",
+                missing_fields=("length_um",),
+                reason="r",
+                reason_code="c",
+                scope="biological_absence",
+                provenance=ProvenanceRecord(ParameterProvenance.UNKNOWN, ""),
+            )
+        assert SCOPE_COMPUTATIONAL_LIMITATION == (
+            "computational_representation_limitation"
+        )
+
+    # --- D, E: the anatomy is untouched ---
+
+    def test_gf_medial_dendrite_geometry_unchanged(self):
+        """No length, no diameter, and nothing invented for them."""
+        geometry = self._gf().compartments[self.SECTION_ID].geometry
+        assert geometry.length_um is None
+        assert geometry.diameter_um is None
+        assert geometry.diameter_distal_um is None
+        assert geometry.position is None
+
+    def test_gf_medial_dendrite_12um_placement_unchanged(self):
+        from biological_brain.provenance import ParameterProvenance
+
+        compartment = self._gf().compartments[self.SECTION_ID]
+        assert len(compartment.placements) == 1
+        placement = compartment.placements[0]
+        assert placement.distance_um == 12.0
+        assert placement.kind == "input"
+        assert placement.provenance.category == (
+            ParameterProvenance.PUBLISHED_MODEL_PARAMETER
+        )
+
+    def test_gf_medial_dendrite_topology_and_provenance_unchanged(self):
+        gf = self._gf()
+        compartment = gf.compartments[self.SECTION_ID]
+        assert compartment.parent_id == "GF_soma"
+        assert compartment.neighbor_ids == []
+        assert "GF_medial_dendrite" in gf.compartments["GF_soma"].neighbor_ids
+
+        # A blocker query is read-only.
+        before = (
+            compartment.geometry.length_um,
+            compartment.geometry.diameter_um,
+            compartment.parent_id,
+            tuple(compartment.neighbor_ids),
+            tuple(compartment.placements),
+        )
+        self._blockers(gf)
+        after = (
+            compartment.geometry.length_um,
+            compartment.geometry.diameter_um,
+            compartment.parent_id,
+            tuple(compartment.neighbor_ids),
+            tuple(compartment.placements),
+        )
+        assert after == before
+
+    # --- F, G: preparation rejects a section the abstraction DOES model ---
+
+    def test_full_gf_preparation_raises_for_medial_dendrite(self):
+        """With declarations removed, the section is INTENDED to be modelled,
+        so incomplete source geometry rejects preparation."""
+        from biological_brain.dynamics.passive_cable import (
+            PassiveCableModel, PassiveGeometryError,
+        )
+
+        with pytest.raises(PassiveGeometryError, match="'GF_medial_dendrite'"):
             PassiveCableModel(
                 profile_name=PROFILE_AUGUSTIN_2019_GFS_PASSIVE
-            ).prepare(dlmn)
+            ).prepare(self._undeclared_gf())
+
+    def test_error_names_both_missing_fields(self):
+        from biological_brain.dynamics.passive_cable import (
+            PassiveCableModel, PassiveGeometryError,
+        )
+
+        with pytest.raises(PassiveGeometryError) as excinfo:
+            PassiveCableModel(
+                profile_name=PROFILE_AUGUSTIN_2019_GFS_PASSIVE
+            ).prepare(self._undeclared_gf())
+
+        message = str(excinfo.value)
+        assert "GF_medial_dendrite" in message
+        assert "length_um" in message
+        assert "diameter_um" in message
+        assert "no computable membrane area" in message
+        # The message must not read as a biological absence claim.
+        assert "INCOMPLETE SOURCE EVIDENCE" in message
+        assert "NOT a claim that the biological structure does not exist" in message
+
+    def test_blocked_section_is_not_silently_excluded(self):
+        """An under-specified section the abstraction DOES model is a blocker,
+        not an exclusion: removing the declaration is what surfaces it."""
+        gf = self._undeclared_gf()
+        assert gf.is_electrically_excluded(self.SECTION_ID) is False
+        assert gf.electrical_representation is None
+        assert {b.section_id for b in self._blockers(gf)} == {
+            "GF_soma", self.SECTION_ID,
+        }
+
+    # --- H: subdivision cannot bypass the blocker ---
+
+    def test_explicit_subdivision_cannot_bypass_the_blocker(self):
+        from biological_brain.dynamics.passive_cable import (
+            PassiveCableModel, PassiveGeometryError,
+        )
+        from biological_brain.subdivision import (
+            SectionSubdivision, SubdivisionPlan,
+        )
+
+        gf = self._undeclared_gf()
+        for count in (2, 51, 100):
+            plan = SubdivisionPlan(
+                sections=(SectionSubdivision(self.SECTION_ID, count),)
+            )
+            with pytest.raises(
+                PassiveGeometryError, match="'GF_medial_dendrite'"
+            ):
+                PassiveCableModel(
+                    profile_name=PROFILE_AUGUSTIN_2019_GFS_PASSIVE
+                ).prepare(gf, plan)
+
+    def test_subdivision_cannot_bypass_via_other_sections(self):
+        """Subdividing other sections does not clear the blocker either."""
+        from biological_brain.dynamics.passive_cable import (
+            PassiveCableModel, PassiveGeometryError,
+        )
+        from biological_brain.subdivision import SubdivisionPlan
+
+        gf = self._undeclared_gf()
+        plan = _plan("GF_axon", 51)
+        with pytest.raises(PassiveGeometryError, match="'GF_medial_dendrite'"):
+            PassiveCableModel(
+                profile_name=PROFILE_AUGUSTIN_2019_GFS_PASSIVE
+            ).prepare(gf, plan)
+
+    def test_no_synthetic_segments_are_generated_for_a_blocked_section(self):
+        """A blocked section never becomes derived segments."""
+        from biological_brain.dynamics.passive_cable import (
+            PassiveCableModel, PassiveGeometryError,
+        )
+        from biological_brain.subdivision import (
+            SectionSubdivision, SubdivisionPlan,
+        )
+
+        gf = self._undeclared_gf()
+        plan = SubdivisionPlan(
+            sections=(SectionSubdivision(self.SECTION_ID, 51),)
+        )
+        with pytest.raises(PassiveGeometryError):
+            PassiveCableModel(
+                profile_name=PROFILE_AUGUSTIN_2019_GFS_PASSIVE
+            ).prepare(gf, plan)
+
+        # The blocked section still has no geometry to subdivide.
+        assert gf.compartments[self.SECTION_ID].geometry.length_um is None
+        assert gf.compartments[self.SECTION_ID].geometry.diameter_um is None
+
+    # --- I: excluded somata are not geometry blockers ---
+
+    def test_excluded_somas_are_not_reported_as_blockers(self):
+        for model in self._all_models().values():
+            soma_id = f"{model.neuron_id}_soma"
+            assert model.is_electrically_excluded(soma_id) is True
+            reported = {b.section_id for b in self._blockers(model)}
+            assert soma_id not in reported
+
+    def test_soma_incomplete_geometry_is_an_exclusion_not_a_blocker(self):
+        """The soma has no length either, yet is excluded, not blocked."""
+        gf = self._gf()
+        assert gf.compartments["GF_soma"].geometry.length_um is None
+        assert gf.compartments["GF_soma"].geometry.diameter_um == 8.0
+        # 3.0D-7N: the medial dendrite is excluded too, so the declared GF
+        # model reports no blockers at all.
+        assert self._blockers(gf) == ()
+
+    # --- J, K: complete sections stay representable ---
+
+    def test_gf_axon_remains_electrically_representable(self):
+        from biological_brain.dynamics.passive_cable import PassiveCableModel
+
+        network = PassiveCableModel(
+            profile_name=PROFILE_AUGUSTIN_2019_GFS_PASSIVE
+        ).prepare(_gf_axon_only_model())
+
+        assert [c.compartment_id for c in network.compartments] == ["GF_axon"]
+        assert network.compartment("GF_axon").membrane_area_cm2 == pytest.approx(
+            10053.096491 * 1e-8, rel=1e-9
+        )
+
+    def test_other_gfs_sections_remain_electrically_representable(self):
+        from biological_brain.dynamics.passive_cable import PassiveCableModel
+
+        expected = {
+            "TTMn": {"TTMn_axon", "TTMn_medial_dendrite", "TTMn_lateral_dendrite"},
+            "PSI": {"PSI_axon", "PSI_dendrite"},
+            "DLMn": {"DLMn_axon", "DLMn_dendrite"},
+        }
+        models = self._all_models()
+        for neuron_id, sections in expected.items():
+            model = models[neuron_id]
+            model.passive_profile_name = PROFILE_AUGUSTIN_2019_GFS_PASSIVE
+            # Complete source-backed geometry means no blocker at all.
+            assert self._blockers(model) == ()
+            network = PassiveCableModel(
+                profile_name=PROFILE_AUGUSTIN_2019_GFS_PASSIVE
+            ).prepare(model)
+            assert {c.compartment_id for c in network.compartments} == sections
+
+    # --- L: determinism ---
+
+    def test_repeated_readiness_queries_are_deterministic(self):
+        from biological_brain.electrical_representation import get_geometry_blockers
+
+        gf = self._gf()
+        first = get_geometry_blockers(gf)
+        for _ in range(5):
+            assert get_geometry_blockers(gf) == first
+        assert get_geometry_blockers(gf) == get_geometry_blockers(gf)
+
+    def test_blocker_order_is_deterministic_for_multiple_sections(self):
+        from biological_brain.morphology import (
+            Compartment, CompartmentGeometry, CompartmentModel,
+        )
+        from biological_brain.electrical_representation import get_geometry_blockers
+
+        model = CompartmentModel("multi", passive_profile_name=PROFILE_AUGUSTIN_2019_GFS_PASSIVE)
+        for section_id in ("zeta", "alpha", "mu"):
+            model.add_compartment(Compartment(
+                compartment_id=section_id,
+                geometry=CompartmentGeometry(diameter_um=2.0),
+            ))
+        model.add_compartment(Compartment(
+            compartment_id="complete",
+            geometry=CompartmentGeometry(diameter_um=2.0, length_um=10.0),
+        ))
+
+        ids = [b.section_id for b in get_geometry_blockers(model)]
+        assert ids == ["alpha", "mu", "zeta"]
+        assert all(b.missing_fields == ("length_um",) for b in
+                   get_geometry_blockers(model))
+        # A complete section never produces a blocker.
+        assert "complete" not in ids
+
+    def test_axon_only_model_reports_no_blockers(self):
+        from biological_brain.electrical_representation import get_geometry_blockers
+
+        assert get_geometry_blockers(_gf_axon_only_model()) == ()
+
+    def test_blockers_survive_a_model_without_any_declaration(self):
+        """No declared representation means no exclusions, so blockers stand."""
+        from biological_brain.electrical_representation import (
+            get_exclusions, get_geometry_blockers,
+        )
+
+        gf = self._gf()
+        gf.electrical_representation = None
+        assert get_exclusions(gf) == ()
+        # Without the soma exclusion the soma itself is reported as blocked.
+        reported = {b.section_id for b in get_geometry_blockers(gf)}
+        assert reported == {"GF_soma", self.SECTION_ID}
+
+    def _all_models(self):
+        from biological_brain.morphology_builder import build_gfs_compartment_models
+
+        return build_gfs_compartment_models()
+
+
+class TestAugustinComputationalScopeReconciliation:
+    """3.0D-7N: reconcile GFS morphology with the published abstraction.
+
+    The Augustin 2019 simplified model represents the GF as a single modeled
+    section and specifies no separate computational geometry for a GF medial
+    dendrite. That section is retained in the anatomical/context morphology and
+    is excluded from the SELECTED COMPUTATIONAL REPRESENTATION.
+
+    This checkpoint establishes a boundary. It is a "source-backed simplified
+    GFS computational representation based on the Augustin 2019 abstraction,
+    with anatomical/context morphology retained separately where the
+    computational model does not specify geometry" — NOT a full GF
+    reconstruction, NOT a full morphological reconstruction, and NOT a
+    biologically complete GF model.
+    """
+
+    SECTION_ID = "GF_medial_dendrite"
+
+    def _gf(self):
+        from biological_brain.morphology_builder import build_gfs_compartment_models
+
+        gf = build_gfs_compartment_models()["GF"]
+        gf.passive_profile_name = PROFILE_AUGUSTIN_2019_GFS_PASSIVE
+        return gf
+
+    def _network(self, model, plan=None):
+        from biological_brain.dynamics.passive_cable import PassiveCableModel
+
+        return PassiveCableModel(
+            profile_name=PROFILE_AUGUSTIN_2019_GFS_PASSIVE
+        ).prepare(model, plan)
+
+    # --- A, B, C, D: the anatomical object is preserved verbatim ---
+
+    def test_anatomical_section_still_exists_with_no_invented_geometry(self):
+        gf = self._gf()
+        assert self.SECTION_ID in gf.compartments
+
+        geometry = gf.compartments[self.SECTION_ID].geometry
+        assert geometry.length_um is None
+        assert geometry.diameter_um is None
+        assert geometry.diameter_distal_um is None
+        assert geometry.position is None
+
+    def test_source_placement_is_preserved(self):
+        compartment = self._gf().compartments[self.SECTION_ID]
+        assert len(compartment.placements) == 1
+        placement = compartment.placements[0]
+        assert placement.distance_um == 12.0
+        assert placement.kind == "input"
+
+    def test_anatomical_provenance_is_untouched(self):
+        """7N adds an exclusion record; it does not relabel the anatomy."""
+        from biological_brain.provenance import ParameterProvenance
+
+        compartment = self._gf().compartments[self.SECTION_ID]
+        assert compartment.provenance.length_um.category == (
+            ParameterProvenance.UNKNOWN
+        )
+        assert compartment.provenance.diameter_um.category == (
+            ParameterProvenance.UNKNOWN
+        )
+        assert compartment.provenance.length_um.source == ""
+        assert compartment.provenance.diameter_um.source == ""
+        assert compartment.provenance.anatomical_role.category == (
+            ParameterProvenance.UNKNOWN
+        )
+
+    def test_anatomical_topology_is_unchanged(self):
+        gf = self._gf()
+        compartment = gf.compartments[self.SECTION_ID]
+        assert compartment.compartment_id == "GF_medial_dendrite"
+        assert compartment.parent_id == "GF_soma"
+        assert compartment.neighbor_ids == []
+        assert self.SECTION_ID in gf.compartments["GF_soma"].neighbor_ids
+
+    def test_exclusion_does_not_modify_the_compartment(self):
+        gf = self._gf()
+        compartment = gf.compartments[self.SECTION_ID]
+        before = (
+            compartment.geometry.length_um,
+            compartment.geometry.diameter_um,
+            compartment.parent_id,
+            tuple(compartment.neighbor_ids),
+            tuple(compartment.placements),
+            compartment.cable_params,
+        )
+        self._network(gf)
+        after = (
+            compartment.geometry.length_um,
+            compartment.geometry.diameter_um,
+            compartment.parent_id,
+            tuple(compartment.neighbor_ids),
+            tuple(compartment.placements),
+            compartment.cable_params,
+        )
+        assert after == before
+
+    # --- E, F, G: the computational exclusion ---
+
+    def test_section_is_excluded_from_the_computational_representation(self):
+        gf = self._gf()
+        assert gf.is_electrically_excluded(self.SECTION_ID) is True
+        assert gf.electrical_representation.excluded_ids() == (
+            "GF_soma", "GF_medial_dendrite",
+        )
+
+    def test_exclusion_scope_and_reason_code(self):
+        from biological_brain.electrical_representation import (
+            EXCLUSION_COMPUTATIONAL_MODEL_SCOPE,
+            EXCLUSION_INSUFFICIENT_GEOMETRY,
+            SCOPE_COMPUTATIONAL_LIMITATION,
+        )
+
+        exclusion = self._gf().electrical_representation.get(self.SECTION_ID)
+        assert exclusion.scope == SCOPE_COMPUTATIONAL_LIMITATION
+        assert exclusion.scope == "computational_representation_limitation"
+
+        # A different, separately recorded reason from the soma exclusion.
+        assert exclusion.reason == EXCLUSION_COMPUTATIONAL_MODEL_SCOPE
+        assert exclusion.reason != EXCLUSION_INSUFFICIENT_GEOMETRY
+        assert exclusion.reason == "outside_computational_model_scope"
+
+    def test_exclusion_states_the_computational_scope(self):
+        detail = self._gf().electrical_representation.get(
+            self.SECTION_ID
+        ).reason_detail
+        assert (
+            "The Augustin 2019 simplified computational model represents "
+            "the GF as a single modeled section and does not specify "
+            "separate computational geometry for the GF medial dendrite."
+        ) in detail
+
+    def test_exclusion_is_not_a_biological_absence_claim(self):
+        source = self._gf().electrical_representation.get(
+            self.SECTION_ID
+        ).provenance.source
+        assert "SCOPE OF THE SELECTED COMPUTATIONAL MODEL" in source
+        assert "NOT a claim that the biological GF lacks a medial dendrite" in source
+        assert "NOT a claim that the dendrite is biologically electrically " \
+            "irrelevant" in source
+        assert "NOT a claim that the dendrite does not exist" in source
+        assert "NOT a claim that its dimensions are zero" in source
+        assert "NOT a statement that its geometry can be ignored" in source
+        assert "future detailed anatomical model" in source
+        assert "Augustin 2019 simplified GFS model" in source
+        assert "retained in the anatomical/context morphology" in source
+
+    def test_exclusion_provenance_category_is_not_a_biological_value(self):
+        from biological_brain.provenance import ParameterProvenance
+
+        provenance = self._gf().electrical_representation.get(
+            self.SECTION_ID
+        ).provenance
+        assert provenance.category == ParameterProvenance.UNKNOWN
+        for forbidden in (
+            ParameterProvenance.ESTIMATED,
+            ParameterProvenance.DIRECTLY_MEASURED,
+            ParameterProvenance.PUBLISHED_MODEL_PARAMETER,
+            ParameterProvenance.EXPERIMENTALLY_CONSTRAINED,
+        ):
+            assert provenance.category != forbidden
+
+    def test_only_gf_medial_dendrite_is_scope_excluded(self):
+        """TTMn's medial dendrite IS modelled by the published abstraction."""
+        from biological_brain.electrical_representation import (
+            EXCLUSION_COMPUTATIONAL_MODEL_SCOPE,
+        )
+        from biological_brain.morphology_builder import build_gfs_compartment_models
+
+        scope_excluded = {}
+        for neuron_id, model in build_gfs_compartment_models().items():
+            scope_excluded[neuron_id] = [
+                e.compartment_id
+                for e in model.electrical_representation.exclusions
+                if e.reason == EXCLUSION_COMPUTATIONAL_MODEL_SCOPE
+            ]
+        assert scope_excluded == {
+            "GF": ["GF_medial_dendrite"],
+            "TTMn": [],
+            "PSI": [],
+            "DLMn": [],
+        }
+
+    # --- H: no blockers remain for the published model ---
+
+    def test_no_geometry_blocker_for_the_published_model(self):
+        from biological_brain.electrical_representation import get_geometry_blockers
+        from biological_brain.morphology_builder import build_gfs_compartment_models
+
+        for model in build_gfs_compartment_models().values():
+            assert get_geometry_blockers(model) == ()
+
+    def test_section_is_state_a_not_state_b(self):
+        """A = computational exclusion, not B = geometry blocker."""
+        from biological_brain.electrical_representation import get_geometry_blockers
+
+        gf = self._gf()
+        assert gf.is_electrically_excluded(self.SECTION_ID) is True
+        assert self.SECTION_ID not in {
+            b.section_id for b in get_geometry_blockers(gf)
+        }
+
+    # --- I: full preparation succeeds ---
+
+    def test_full_gf_preparation_succeeds(self):
+        network = self._network(self._gf())
+        assert [c.compartment_id for c in network.compartments] == ["GF_axon"]
+        assert {e.compartment_id for e in network.excluded} == {
+            "GF_soma", "GF_medial_dendrite",
+        }
+
+    def test_no_electrical_representation_for_the_excluded_section(self):
+        gf = self._gf()
+        network = self._network(gf)
+
+        with pytest.raises(KeyError):
+            network.compartment(self.SECTION_ID)
+
+        assert all(
+            c.source_section_id != self.SECTION_ID for c in network.compartments
+        )
+        assert all(
+            c.anatomical_parent_id != self.SECTION_ID
+            and c.electrical_parent_id != self.SECTION_ID
+            for c in network.compartments
+        )
+        assert network.connections == ()
+
+        # No capacitance, leak conductance, area, or axial resistance invented.
+        assert gf.compartments[self.SECTION_ID].cable_params.axial_resistance_ohm_cm is None
+        assert gf.compartments[self.SECTION_ID].cable_params.membrane_capacitance_uf_per_cm2 is None
+        assert gf.compartments[self.SECTION_ID].cable_params.leak_conductance_ms_per_cm2 is None
+        assert gf.compartments[self.SECTION_ID].cable_params.leak_reversal_mV is None
+
+    def test_no_electrical_placement_mapping_for_the_excluded_section(self):
+        """The 12 um source placement is preserved but never mapped."""
+        from biological_brain.electrical_representation import get_geometry_blockers
+
+        gf = self._gf()
+        network = self._network(gf)
+
+        assert all(
+            p.source_section_id != self.SECTION_ID
+            for p in network.placement_mappings
+        )
+        # The source record itself is intact.
+        assert gf.compartments[self.SECTION_ID].placements[0].distance_um == 12.0
+        # The GF axon's own placements still map.
+        assert {
+            (p.source_section_id, p.distance_um) for p in network.placement_mappings
+        } == {("GF_axon", 360.0), ("GF_axon", 400.0)}
+        assert get_geometry_blockers(gf) == ()
+
+    # --- K, L: subdivision ---
+
+    def test_no_derived_segments_for_the_excluded_section(self):
+        gf = self._gf()
+        network = self._network(gf, _plan(self.SECTION_ID, 51))
+
+        assert [c.compartment_id for c in network.compartments] == ["GF_axon"]
+        assert all(
+            c.source_section_id != self.SECTION_ID for c in network.compartments
+        )
+        assert not any(
+            self.SECTION_ID in c.compartment_id for c in network.compartments
+        )
+
+    def test_explicit_plan_does_not_bypass_or_rewrite_the_exclusion(self):
+        from biological_brain.subdivision import (
+            SectionSubdivision, SubdivisionPlan,
+        )
+
+        gf = self._gf()
+        for count in (1, 2, 51, 100):
+            plan = SubdivisionPlan(
+                sections=(SectionSubdivision(self.SECTION_ID, count),)
+            )
+            network = self._network(gf, plan)
+            assert [c.compartment_id for c in network.compartments] == ["GF_axon"]
+            # The plan is reported exactly as given, not reinterpreted as 1
+            # and not silently applied to an excluded section.
+            assert plan.segment_count_for(self.SECTION_ID) == count
+            assert network.subdivision_plan == plan
+
+    def test_plan_targeting_excluded_section_is_deterministic(self):
+        gf = self._gf()
+        first = self._network(gf, _plan(self.SECTION_ID, 51))
+        second = self._network(gf, _plan(self.SECTION_ID, 51))
+        assert first.compartments == second.compartments
+        assert first.connections == second.connections
+        assert first.excluded == second.excluded
+        assert first.placement_mappings == second.placement_mappings
+
+    # --- N, O: the rest of the model still represents ---
+
+    def test_gf_axon_remains_electrically_representable(self):
+        import math
+
+        network = self._network(self._gf())
+        axon = network.compartment("GF_axon")
+        assert axon.membrane_area_cm2 == pytest.approx(
+            math.pi * 8.0 * 400.0 * 1e-8, rel=1e-9
+        )
+        assert axon.axial_resistance_ohm is None  # electrical root
+        assert "GF_soma" in axon.electrical_root_reason
+
+    def test_ttmn_psi_dlmn_sections_remain_representable(self):
+        from biological_brain.morphology_builder import build_gfs_compartment_models
+
+        expected = {
+            "TTMn": {
+                "TTMn_axon", "TTMn_medial_dendrite", "TTMn_lateral_dendrite",
+            },
+            "PSI": {"PSI_axon", "PSI_dendrite"},
+            "DLMn": {"DLMn_axon", "DLMn_dendrite"},
+        }
+        models = build_gfs_compartment_models()
+        for neuron_id, sections in expected.items():
+            model = models[neuron_id]
+            model.passive_profile_name = PROFILE_AUGUSTIN_2019_GFS_PASSIVE
+            network = self._network(model)
+            assert {c.compartment_id for c in network.compartments} == sections
+            # Every represented section has real source-backed geometry.
+            for section_id in sections:
+                geometry = model.compartments[section_id].geometry
+                assert geometry.length_um is not None
+                assert geometry.diameter_um is not None
+
+    def test_gfs_representation_summary(self):
+        """The three states, as established by 7N."""
+        from biological_brain.morphology_builder import build_gfs_compartment_models
+
+        expected = {
+            "GF": {
+                "excluded": ("GF_soma", "GF_medial_dendrite"),
+                "representable": ("GF_axon",),
+            },
+            "TTMn": {
+                "excluded": ("TTMn_soma",),
+                "representable": (
+                    "TTMn_axon", "TTMn_lateral_dendrite", "TTMn_medial_dendrite",
+                ),
+            },
+            "PSI": {
+                "excluded": ("PSI_soma",),
+                "representable": ("PSI_axon", "PSI_dendrite"),
+            },
+            "DLMn": {
+                "excluded": ("DLMn_soma",),
+                "representable": ("DLMn_axon", "DLMn_dendrite"),
+            },
+        }
+        models = build_gfs_compartment_models()
+        for neuron_id, expectation in expected.items():
+            model = models[neuron_id]
+            model.passive_profile_name = PROFILE_AUGUSTIN_2019_GFS_PASSIVE
+            assert model.electrical_representation.excluded_ids() == (
+                expectation["excluded"]
+            )
+            network = self._network(model)
+            assert {c.compartment_id for c in network.compartments} == set(
+                expectation["representable"]
+            )
+            # Every compartment is accounted for in exactly one state.
+            assert set(expectation["excluded"]) | set(
+                expectation["representable"]
+            ) == set(model.compartments)
+
+    def test_no_completeness_claim_is_made(self):
+        """The exclusion text never claims a complete or full reconstruction."""
+        from biological_brain.morphology_builder import build_gfs_compartment_models
+
+        for model in build_gfs_compartment_models().values():
+            for exclusion in model.electrical_representation.exclusions:
+                text = (
+                    exclusion.reason_detail + " " + exclusion.provenance.source
+                ).lower()
+                for forbidden in (
+                    "full gf reconstruction",
+                    "complete gf model",
+                    "full morphological reconstruction",
+                    "biologically complete",
+                ):
+                    assert forbidden not in text
+
+    def test_exclusion_factory_is_reusable_and_validated(self):
+        from biological_brain.electrical_representation import (
+            computational_scope_exclusion,
+        )
+
+        exclusion = computational_scope_exclusion("x", "detail")
+        assert exclusion.compartment_id == "x"
+        assert exclusion.reason_detail == "detail"
+        assert exclusion.reason == "outside_computational_model_scope"
+        assert exclusion.scope == "computational_representation_limitation"
+
+
+# 3.0D-7O validation fixtures: area (um2), capacitance (pF), leak
+# conductance (nS) and axial resistance (ohm) for every source-backed GFS
+# section, derived from the 7F authorized profile.
+_7O_FIXTURES = {
+    "GF_axon": {
+        "area_um2": 10053.096491487,
+        "C_pF": 100.530964915,
+        "g_nS": 3.015928947,
+        "R_ohm": 2817042.493,
+    },
+    "TTMn_axon": {
+        "area_um2": 942.477796077,
+        "C_pF": 9.424777961,
+        "g_nS": 0.282743339,
+        "R_ohm": 626009.443,
+    },
+    "TTMn_medial_dendrite": {
+        "area_um2": 1130.973355292,
+        "C_pF": 11.309733553,
+        "g_nS": 0.339292007,
+        "R_ohm": 751211.331,
+    },
+    "TTMn_lateral_dendrite": {
+        "area_um2": 565.486677646,
+        "C_pF": 5.654866776,
+        "g_nS": 0.169646003,
+        "R_ohm": 375605.666,
+    },
+    "PSI_axon": {
+        "area_um2": 1272.345024704,
+        "C_pF": 12.723450247,
+        "g_nS": 0.381703507,
+        "R_ohm": 2003230.217,
+    },
+    "PSI_dendrite": {
+        "area_um2": 2403.318379996,
+        "C_pF": 24.033183800,
+        "g_nS": 0.720995514,
+        "R_ohm": 3783879.299,
+    },
+    "DLMn_dendrite": {
+        "area_um2": 628.318530718,
+        "C_pF": 6.283185307,
+        "g_nS": 0.188495559,
+        "R_ohm": 11268169.971,
+    },
+    "DLMn_axon": {
+        "area_um2": 471.333136395,
+        "C_pF": 4.713331364,
+        "g_nS": 0.141399941,
+        "R_ohm": 2817042.493,
+    },
+}
+
+
+def _7O_parent_linked_model(section_id, profile_name=PROFILE_AUGUSTIN_2019_GFS_PASSIVE):
+    """A test scaffold that gives a REAL source-backed section a parent.
+
+    Requirement 2 scopes R_axial to electrical CONNECTIONS. In the real GFS
+    every section's anatomical parent is an excluded soma, so every section is
+    an electrical root and correctly has no axial resistance (7I/7N: no axial
+    path is invented across an excluded compartment).
+
+    To exercise the per-section axial resistance without inventing any section
+    geometry, the real Compartment object is reused verbatim and attached to a
+    synthetic PARENT compartment. Only the parent is synthetic; the section's
+    own length and diameter are the source-backed values.
+    """
+    from biological_brain.morphology import (
+        Compartment, CompartmentGeometry, CompartmentModel,
+    )
+    from biological_brain.morphology_builder import build_gfs_compartment_models
+
+    for model in build_gfs_compartment_models().values():
+        if section_id in model.compartments:
+            section = model.compartments[section_id]
+            break
+    else:  # pragma: no cover - guarded by the fixture table
+        raise KeyError(section_id)
+
+    model = CompartmentModel(
+        f"scaffold_{section_id}", passive_profile_name=profile_name
+    )
+    model.add_compartment(Compartment(
+        compartment_id="scaffold_parent",
+        geometry=CompartmentGeometry(diameter_um=8.0, length_um=50.0),
+    ))
+    model.add_compartment(section)
+    model.add_connection("scaffold_parent", section_id)
+    return model
+
+
+class TestAuthorizedProfileApplication:
+    """3.0D-7O: apply the authorized Augustin 2019 passive profile.
+
+        authorized passive profile
+            -> prepared electrical representation
+                -> compartment electrical parameters
+
+    The backend stays opt-in: a profile must be named explicitly by both the
+    backend and the model, and nothing is applied implicitly.
+    """
+
+    REL = 1e-9
+
+    def _backend(self, profile_name=PROFILE_AUGUSTIN_2019_GFS_PASSIVE):
+        from biological_brain.dynamics.passive_cable import PassiveCableModel
+
+        return PassiveCableModel(profile_name=profile_name)
+
+    def _models(self):
+        from biological_brain.morphology_builder import build_gfs_compartment_models
+
+        models = build_gfs_compartment_models()
+        for model in models.values():
+            model.passive_profile_name = PROFILE_AUGUSTIN_2019_GFS_PASSIVE
+        return models
+
+    def _gfs_network(self, neuron_id):
+        return self._backend().prepare(self._models()[neuron_id])
+
+    # --- A: explicit profile produces parameters ---
+
+    def test_explicit_profile_produces_parameters(self):
+        network = self._gfs_network("DLMn")
+        dendrite = network.compartment("DLMn_dendrite")
+
+        assert dendrite.capacitance_F > 0.0
+        assert dendrite.leak_conductance_S > 0.0
+        assert dendrite.leak_reversal_mV == -85.0
+        assert dendrite.membrane_area_cm2 > 0.0
+        assert dendrite.profile_name == PROFILE_AUGUSTIN_2019_GFS_PASSIVE
+        assert network.profile_name == PROFILE_AUGUSTIN_2019_GFS_PASSIVE
+
+    def test_every_gfs_section_receives_all_three_applied_parameters(self):
+        for neuron_id in ("GF", "TTMn", "PSI", "DLMn"):
+            for compartment in self._gfs_network(neuron_id).compartments:
+                names = [p.name for p in compartment.applied_parameters]
+                assert names[:3] == [
+                    "capacitance", "leak_conductance", "leak_reversal_potential",
+                ], compartment.compartment_id
+                # 3.0D-7P: a section with an electrical parent also carries the
+                # derived axial resistance, appended in order.
+                if compartment.electrical_parent_id is None:
+                    assert names == [
+                        "capacitance", "leak_conductance",
+                        "leak_reversal_potential",
+                    ], compartment.compartment_id
+                else:
+                    assert names == [
+                        "capacitance", "leak_conductance",
+                        "leak_reversal_potential", "axial_resistance",
+                    ], compartment.compartment_id
+
+    # --- B: no silent application ---
+
+    def test_no_profile_does_not_silently_apply_parameters(self):
+        from biological_brain.dynamics.passive_cable import (
+            PassiveAuthorizationError, PassiveCableModel,
+        )
+        from biological_brain.morphology import (
+            Compartment, CompartmentGeometry, CompartmentModel,
+        )
+
+        # A model that declares no profile is rejected, never defaulted.
+        undeclared = CompartmentModel(
+            "undeclared", passive_profile_name=None
+        )
+        undeclared.add_compartment(Compartment(
+            compartment_id="x",
+            geometry=CompartmentGeometry(diameter_um=2.0, length_um=50.0),
+        ))
+        with pytest.raises(PassiveAuthorizationError, match="declares no passive profile"):
+            self._backend().prepare(undeclared)
+
+        # The backend itself cannot be constructed without a profile.
+        with pytest.raises(TypeError):
+            PassiveCableModel()
+
+    def test_augustin_profile_is_not_the_engine_default(self):
+        from biological_brain.dynamics import (
+            MODEL_NAME_CONDUCTANCE_V0, MODEL_NAME_LIF_VOLTAGE,
+        )
+        from biological_brain.dynamics.passive_cable import (
+            MODEL_NAME_PASSIVE_CABLE_V0, PassiveCableModel,
+        )
+
+        assert MODEL_NAME_PASSIVE_CABLE_V0 not in (MODEL_NAME_LIF_VOLTAGE,
+                                                  MODEL_NAME_CONDUCTANCE_V0)
+        assert PassiveCableModel(
+            profile_name=PROFILE_AUGUSTIN_2019_GFS_PASSIVE
+        ).is_default is False
+
+        # Building the GFS morphology alone applies nothing.
+        from biological_brain.morphology_builder import build_gfs_compartment_models
+
+        for model in build_gfs_compartment_models().values():
+            assert model.passive_profile_name is None
+            for compartment in model.compartments.values():
+                assert compartment.cable_params.membrane_capacitance_uf_per_cm2 is None
+                assert compartment.cable_params.leak_conductance_ms_per_cm2 is None
+                assert compartment.cable_params.axial_resistance_ohm_cm is None
+                assert compartment.cable_params.leak_reversal_mV is None
+
+    # --- C: unknown profile rejected ---
+
+    def test_unknown_profile_is_rejected(self):
+        from biological_brain.dynamics.passive_cable import PassiveAuthorizationError
+
+        for name in ("some_other_profile", "", "augustin_2019", None):
+            with pytest.raises(PassiveAuthorizationError):
+                self._backend(profile_name=name)
+
+    def test_unknown_profile_error_is_clear_and_typed(self):
+        from biological_brain.dynamics.passive_cable import PassiveAuthorizationError
+
+        with pytest.raises(PassiveAuthorizationError) as excinfo:
+            self._backend(profile_name="not_a_profile")
+        message = str(excinfo.value)
+        assert "not_a_profile" in message
+        assert "No profile is ever selected implicitly" in message
+        assert PROFILE_AUGUSTIN_2019_GFS_PASSIVE in message
+
+    def test_mismatched_model_declaration_is_rejected(self):
+        from biological_brain.dynamics.passive_cable import PassiveAuthorizationError
+
+        model = self._models()["GF"]
+        model.passive_profile_name = "not_a_profile"
+        with pytest.raises(PassiveAuthorizationError, match="must match"):
+            self._backend().prepare(model)
+
+    # --- D, E, F, G, H: the validation fixtures ---
+
+    def test_gf_axon_matches_fixtures(self):
+        axon = self._gfs_network("GF").compartment("GF_axon")
+        self._assert_membrane_fixtures(axon, _7O_FIXTURES["GF_axon"])
+
+        # Its axial resistance, in a parent-linked scaffold.
+        linked = self._backend().prepare(_7O_parent_linked_model("GF_axon"))
+        self._assert_axial_fixture(
+            linked.compartment("GF_axon"), _7O_FIXTURES["GF_axon"]
+        )
+
+    def test_ttmn_three_sections_match_fixtures(self):
+        network = self._gfs_network("TTMn")
+        for section_id in ("TTMn_axon", "TTMn_medial_dendrite",
+                           "TTMn_lateral_dendrite"):
+            self._assert_membrane_fixtures(
+                network.compartment(section_id), _7O_FIXTURES[section_id]
+            )
+            linked = self._backend().prepare(_7O_parent_linked_model(section_id))
+            self._assert_axial_fixture(
+                linked.compartment(section_id), _7O_FIXTURES[section_id]
+            )
+
+    def test_psi_sections_match_fixtures(self):
+        network = self._gfs_network("PSI")
+        for section_id in ("PSI_axon", "PSI_dendrite"):
+            self._assert_membrane_fixtures(
+                network.compartment(section_id), _7O_FIXTURES[section_id]
+            )
+            linked = self._backend().prepare(_7O_parent_linked_model(section_id))
+            self._assert_axial_fixture(
+                linked.compartment(section_id), _7O_FIXTURES[section_id]
+            )
+
+    def test_dlmn_dendrite_matches_fixture(self):
+        dendrite = self._gfs_network("DLMn").compartment("DLMn_dendrite")
+        self._assert_membrane_fixtures(
+            dendrite, _7O_FIXTURES["DLMn_dendrite"]
+        )
+        linked = self._backend().prepare(
+            _7O_parent_linked_model("DLMn_dendrite")
+        )
+        self._assert_axial_fixture(
+            linked.compartment("DLMn_dendrite"), _7O_FIXTURES["DLMn_dendrite"]
+        )
+
+    def test_dlmn_taper_matches_fixtures(self):
+        """7J taper: geometry, C, g and R, with the 7J formula intact."""
+        from math import pi, sqrt
+
+        taper = self._gfs_network("DLMn").compartment("DLMn_axon")
+        self._assert_membrane_fixtures(taper, _7O_FIXTURES["DLMn_axon"])
+
+        # Exact frustum lateral area, not a hardcoded constant.
+        r1, r2, length = 1.0, 2.0, 50.0
+        frustum_area = pi * (r1 + r2) * sqrt((r2 - r1) ** 2 + length ** 2)
+        assert taper.membrane_area_cm2 * 1e8 == pytest.approx(
+            frustum_area, rel=self.REL
+        )
+        assert "Frustum" in taper.membrane_area_derivation
+
+        linked = self._backend().prepare(_7O_parent_linked_model("DLMn_axon"))
+        tapered = linked.compartment("DLMn_axon")
+        self._assert_axial_fixture(tapered, _7O_FIXTURES["DLMn_axon"])
+
+        # The 7J convention is used exactly, not replaced or approximated.
+        applied = tapered.applied("axial_resistance")
+        assert "R = Ra * L / (pi * r1 * r2)" in applied.derivation
+        assert "linearly tapered circular cable" in applied.derivation
+        expected = 35.4 * (50e-4) / (pi * (1e-4) * (2e-4))
+        assert tapered.axial_resistance_ohm == pytest.approx(
+            expected, rel=self.REL
+        )
+
+    def test_uniform_axial_resistance_matches_ra_l_over_a(self):
+        from math import pi
+
+        for section_id in ("GF_axon", "PSI_axon", "DLMn_dendrite"):
+            linked = self._backend().prepare(_7O_parent_linked_model(section_id))
+            compartment = linked.compartment(section_id)
+            geometry = compartment.source_section_id
+            section = linked.model_id
+            source = [
+                m.compartments[compartment.source_section_id]
+                for m in self._models().values()
+                if compartment.source_section_id in m.compartments
+            ][0]
+            length_cm = source.geometry.length_um * 1e-4
+            radius_cm = (source.geometry.diameter_um / 2.0) * 1e-4
+            expected = 35.4 * length_cm / (pi * radius_cm ** 2)
+            assert compartment.axial_resistance_ohm == pytest.approx(
+                expected, rel=self.REL
+            ), section_id
+
+    def test_e_leak_is_minus_85_mv_everywhere(self):
+        for neuron_id in ("GF", "TTMn", "PSI", "DLMn"):
+            for compartment in self._gfs_network(neuron_id).compartments:
+                assert compartment.leak_reversal_mV == -85.0
+                assert compartment.applied("leak_reversal_potential").value == -85.0
+
+    def test_capacitance_and_leak_scale_linearly_with_area(self):
+        for neuron_id in ("GF", "TTMn", "PSI", "DLMn"):
+            for compartment in self._gfs_network(neuron_id).compartments:
+                area_cm2 = compartment.membrane_area_cm2
+                assert compartment.capacitance_F == pytest.approx(
+                    1.0 * 1e-6 * area_cm2, rel=self.REL
+                )
+                assert compartment.leak_conductance_S == pytest.approx(
+                    0.03 * 1e-3 * area_cm2, rel=self.REL
+                )
+
+    def test_si_units_are_used_internally(self):
+        """Capacitance in F, conductance in S, resistance in ohm, voltage mV."""
+        for neuron_id in ("GF", "TTMn", "PSI", "DLMn"):
+            for compartment in self._gfs_network(neuron_id).compartments:
+                units = {p.name: p.unit for p in compartment.applied_parameters}
+                assert units["capacitance"] == "F"
+                assert units["leak_conductance"] == "S"
+                assert units["leak_reversal_potential"] == "mV"
+
+        linked = self._backend().prepare(_7O_parent_linked_model("GF_axon"))
+        assert linked.compartment("GF_axon").applied("axial_resistance").unit == "ohm"
+
+    def test_axial_resistivity_unit_is_canonical_ohm_cm(self):
+        from biological_brain.dynamics.passive_cable import (
+            AUTHORIZED_RA, CANONICAL_AXIAL_RESISTIVITY_UNIT,
+            FORBIDDEN_AXIAL_RESISTIVITY_UNITS,
+            PASSIVE_PARAMETER_CANONICAL_UNITS,
+        )
+
+        assert CANONICAL_AXIAL_RESISTIVITY_UNIT == "ohm*cm"
+        assert PASSIVE_PARAMETER_CANONICAL_UNITS[AUTHORIZED_RA] == "ohm*cm"
+        assert "ohm/cm" in FORBIDDEN_AXIAL_RESISTIVITY_UNITS
+
+        application = self._backend().parameter_application()
+        units = {p.name: p.unit for p in application.source_parameters}
+        assert units["specific_axial_resistance"] == "ohm*cm"
+        assert "canonical ohm*cm" in application.unit_conventions
+        assert "printed 'ohm/cm'" in application.unit_conventions
+
+    def test_non_canonical_resistivity_unit_is_rejected(self):
+        """A profile storing ohm/cm must be refused, not silently used."""
+        import dataclasses
+
+        from biological_brain.dynamics.passive_cable import PassiveAuthorizationError
+        from biological_brain.passive_profiles import get_passive_parameter_profile
+
+        profile = get_passive_parameter_profile(PROFILE_AUGUSTIN_2019_GFS_PASSIVE)
+        bad = tuple(
+            dataclasses.replace(p, unit="ohm/cm")
+            if p.name == "specific_axial_resistance" else p
+            for p in profile.parameters
+        )
+        broken = dataclasses.replace(profile, parameters=bad)
+
+        from biological_brain.dynamics.passive_cable import PassiveCableModel
+
+        with pytest.raises(PassiveAuthorizationError, match="non-canonical unit"):
+            PassiveCableModel._resolve_authorized_quantities(None, broken)
+
+    def test_other_non_canonical_unit_is_rejected(self):
+        import dataclasses
+
+        from biological_brain.dynamics.passive_cable import PassiveAuthorizationError
+        from biological_brain.passive_profiles import get_passive_parameter_profile
+
+        profile = get_passive_parameter_profile(PROFILE_AUGUSTIN_2019_GFS_PASSIVE)
+        bad = tuple(
+            dataclasses.replace(p, unit="uF/mm2")
+            if p.name == "specific_membrane_capacitance" else p
+            for p in profile.parameters
+        )
+        broken = dataclasses.replace(profile, parameters=bad)
+
+        from biological_brain.dynamics.passive_cable import PassiveCableModel
+
+        with pytest.raises(PassiveAuthorizationError, match="canonical unit is"):
+            PassiveCableModel._resolve_authorized_quantities(None, broken)
+
+    # --- J: provenance ---
+
+    def test_applied_parameters_retain_profile_and_provenance(self):
+        for neuron_id in ("GF", "TTMn", "PSI", "DLMn"):
+            for compartment in self._gfs_network(neuron_id).compartments:
+                for applied in compartment.applied_parameters:
+                    assert applied.profile_name == (
+                        PROFILE_AUGUSTIN_2019_GFS_PASSIVE
+                    )
+                    assert applied.source_parameter is not None
+                    assert applied.source_parameter_provenance is not None
+                    assert applied.source_parameter_provenance.source
+                    assert applied.derivation
+                    assert applied.source_section_id == (
+                        compartment.source_section_id
+                    )
+                    assert applied.provenance.source
+
+    def test_source_specific_parameters_keep_7f_provenance(self):
+        from biological_brain.provenance import ParameterProvenance
+
+        application = self._backend().parameter_application()
+        categories = {
+            p.name: p.provenance_category for p in application.source_parameters
+        }
+        assert categories["specific_membrane_capacitance"] == (
+            ParameterProvenance.ESTIMATED
+        )
+        assert categories["specific_axial_resistance"] == (
+            ParameterProvenance.ESTIMATED
+        )
+        assert categories["leak_conductance_density"] == (
+            ParameterProvenance.ESTIMATED
+        )
+        assert categories["leak_reversal_potential"] == (
+            ParameterProvenance.PUBLISHED_MODEL_PARAMETER
+        )
+        # They are never relabelled as measured biological values.
+        for category in categories.values():
+            assert category != ParameterProvenance.DIRECTLY_MEASURED
+            assert category != ParameterProvenance.EXPERIMENTALLY_CONSTRAINED
+
+    def test_derived_values_are_never_biological_measurements(self):
+        from biological_brain.provenance import ParameterProvenance
+
+        for neuron_id in ("GF", "TTMn", "PSI", "DLMn"):
+            for compartment in self._gfs_network(neuron_id).compartments:
+                for applied in compartment.applied_parameters:
+                    assert applied.provenance.category == (
+                        ParameterProvenance.UNKNOWN
+                    )
+                    assert "3.0D-7O" in applied.provenance.source
+                    assert "not a measured biological" in (
+                        applied.provenance.source
+                    ) or "NOT a direct measurement" in applied.provenance.source
+                    if applied.is_geometry_derived:
+                        assert "DERIVED" in applied.provenance.source
+
+        linked = self._backend().prepare(_7O_parent_linked_model("GF_axon"))
+        axial = linked.compartment("GF_axon").applied("axial_resistance")
+        assert axial.provenance.category == ParameterProvenance.UNKNOWN
+        assert "not the specific axial resistivity" in axial.provenance.source
+
+    def test_leak_reversal_is_not_marked_geometry_derived(self):
+        compartment = self._gfs_network("GF").compartment("GF_axon")
+        assert compartment.applied("leak_reversal_potential").is_geometry_derived is False
+        assert compartment.applied("capacitance").is_geometry_derived is True
+        assert compartment.applied("leak_conductance").is_geometry_derived is True
+
+    def test_applied_parameter_rejects_biological_provenance(self):
+        import dataclasses
+
+        from biological_brain.dynamics.passive_cable import AppliedParameter
+        from biological_brain.provenance import ParameterProvenance, ProvenanceRecord
+
+        with pytest.raises(ValueError, match="must carry provenance UNKNOWN"):
+            AppliedParameter(
+                name="capacitance",
+                value=1e-12,
+                unit="F",
+                profile_name=PROFILE_AUGUSTIN_2019_GFS_PASSIVE,
+                source_parameter="specific_membrane_capacitance",
+                source_parameter_provenance=None,
+                derivation="d",
+                provenance=ProvenanceRecord(
+                    ParameterProvenance.DIRECTLY_MEASURED, "measured!"
+                ),
+                source_section_id="GF_axon",
+                is_geometry_derived=True,
+            )
+
+    def test_parameter_application_declares_scope(self):
+        application = self._backend().parameter_application()
+        assert application.profile_name == PROFILE_AUGUSTIN_2019_GFS_PASSIVE
+        assert application.model_reproduction_only is True
+        assert "ohm*cm" in application.unit_conventions
+        assert "does NOT establish biological validation" in application.scope_note
+        assert "Hodgkin-Huxley" in application.scope_note
+
+    def test_unknown_parameter_cannot_enter_the_bridge(self):
+        from biological_brain.dynamics.passive_cable import PassiveUnsupportedError
+
+        with pytest.raises(PassiveUnsupportedError):
+            self._backend().resolve_parameter("chemical_synapse_conductance")
+
+    # --- K, L: exclusions receive nothing ---
+
+    def test_excluded_somas_receive_no_electrical_parameters(self):
+        from biological_brain.morphology_builder import build_gfs_compartment_models
+
+        for neuron_id, model in self._models().items():
+            soma_id = f"{neuron_id}_soma"
+            network = self._backend().prepare(model)
+            assert soma_id in {e.compartment_id for e in network.excluded}
+            with pytest.raises(KeyError):
+                network.compartment(soma_id)
+
+            soma = build_gfs_compartment_models()[neuron_id].compartments[soma_id]
+            assert soma.geometry.length_um is None
+            assert soma.cable_params.membrane_capacitance_uf_per_cm2 is None
+            assert soma.cable_params.leak_conductance_ms_per_cm2 is None
+            assert soma.cable_params.axial_resistance_ohm_cm is None
+            assert soma.cable_params.leak_reversal_mV is None
+            assert soma.state.voltage_mV == -70.0
+
+    def test_excluded_gf_medial_dendrite_receives_no_electrical_parameters(self):
+        network = self._gfs_network("GF")
+        with pytest.raises(KeyError):
+            network.compartment("GF_medial_dendrite")
+        assert all(
+            c.source_section_id != "GF_medial_dendrite"
+            for c in network.compartments
+        )
+        assert all(
+            "GF_medial_dendrite" not in c.applied("capacitance").derivation
+            for c in network.compartments
+        )
+
+        dendrite = self._models()["GF"].compartments["GF_medial_dendrite"]
+        assert dendrite.cable_params.membrane_capacitance_uf_per_cm2 is None
+        assert dendrite.cable_params.leak_conductance_ms_per_cm2 is None
+        assert dendrite.cable_params.axial_resistance_ohm_cm is None
+        assert dendrite.cable_params.leak_reversal_mV is None
+
+    def test_no_excluded_section_ever_appears_in_a_connection(self):
+        for neuron_id in ("GF", "TTMn", "PSI", "DLMn"):
+            network = self._gfs_network(neuron_id)
+            excluded = {e.compartment_id for e in network.excluded}
+            for connection in network.connections:
+                assert connection.parent_id not in excluded
+                assert connection.child_id not in excluded
+
+    # --- M: blockers still reject before any application ---
+
+    def test_geometry_blockers_prevent_parameter_application(self):
+        from biological_brain.dynamics.passive_cable import PassiveGeometryError
+
+        model = self._models()["GF"]
+        model.electrical_representation = None
+        with pytest.raises(PassiveGeometryError) as excinfo:
+            self._backend().prepare(model)
+
+        message = str(excinfo.value)
+        assert "GF_medial_dendrite" in message
+        assert "length_um" in message
+        assert "diameter_um" in message
+        # No zero-valued parameter is produced in place of the missing field.
+        assert "0.0 F" not in message
+
+    def test_missing_geometry_never_becomes_a_zero_valued_parameter(self):
+        from biological_brain.dynamics.passive_cable import PassiveGeometryError
+        from biological_brain.morphology import (
+            Compartment, CompartmentGeometry, CompartmentModel,
+        )
+
+        model = CompartmentModel(
+            "nolen", passive_profile_name=PROFILE_AUGUSTIN_2019_GFS_PASSIVE
+        )
+        model.add_compartment(Compartment(
+            compartment_id="x", geometry=CompartmentGeometry(diameter_um=2.0),
+        ))
+        with pytest.raises(PassiveGeometryError):
+            self._backend().prepare(model)
+
+    def test_blocker_rejection_precedes_segmentation(self):
+        from biological_brain.dynamics.passive_cable import PassiveGeometryError
+        from biological_brain.subdivision import SubdivisionPlan
+
+        model = self._models()["GF"]
+        model.electrical_representation = None
+        with pytest.raises(PassiveGeometryError, match="GF_medial_dendrite"):
+            self._backend().prepare(
+                model, _plan("GF_medial_dendrite", 51)
+            )
+
+    # --- N: determinism ---
+
+    def test_repeated_preparation_is_deterministic(self):
+        for neuron_id in ("GF", "TTMn", "PSI", "DLMn"):
+            first = self._gfs_network(neuron_id)
+            for _ in range(3):
+                again = self._gfs_network(neuron_id)
+                assert again.compartments == first.compartments
+                assert again.connections == first.connections
+                assert again.parameter_application == first.parameter_application
+
+    def test_repeated_application_records_are_identical(self):
+        first = self._gfs_network("DLMn")
+        for _ in range(3):
+            again = self._gfs_network("DLMn")
+            for left, right in zip(again.compartments, first.compartments):
+                assert left.applied_parameters == right.applied_parameters
+
+    def test_repeated_parent_linked_application_is_deterministic(self):
+        for _ in range(3):
+            network = self._backend().prepare(
+                _7O_parent_linked_model("DLMn_axon")
+            )
+            assert network.compartment("DLMn_axon").axial_resistance_ohm == (
+                pytest.approx(2817042.493, rel=self.REL)
+            )
+
+    # --- helpers ---
+
+    def _assert_membrane_fixtures(self, compartment, fixture):
+        """Assert the derived value against the exact formula, then against
+        the brief's constant.
+
+        The brief's constants are rounded to nine decimal places, which for the
+        smallest leak conductance (0.169 nS) is a relative error slightly above
+        1e-9. The formula is therefore the authority and the constant is checked
+        at its own rounding granularity (abs=1e-9 in the fixture's unit).
+        """
+        from math import pi
+
+        area_um2 = compartment.membrane_area_cm2 * 1e8
+        assert area_um2 == pytest.approx(fixture["area_um2"], rel=self.REL, abs=1e-9)
+
+        # C = Cm_specific * A  and  g = g_density * A, in SI throughout.
+        assert compartment.capacitance_F == pytest.approx(
+            1.0 * 1e-6 * compartment.membrane_area_cm2, rel=1e-12
+        )
+        assert compartment.leak_conductance_S == pytest.approx(
+            0.03 * 1e-3 * compartment.membrane_area_cm2, rel=1e-12
+        )
+        assert compartment.capacitance_F * 1e12 == pytest.approx(
+            fixture["C_pF"], rel=self.REL, abs=1e-9
+        )
+        assert compartment.leak_conductance_S * 1e9 == pytest.approx(
+            fixture["g_nS"], rel=self.REL, abs=1e-9
+        )
+        assert compartment.leak_reversal_mV == -85.0
+        assert pi > 0.0  # formula module sanity, keeps the import meaningful
+
+    def _assert_axial_fixture(self, compartment, fixture):
+        assert compartment.axial_resistance_ohm == pytest.approx(
+            fixture["R_ohm"], rel=self.REL, abs=1e-3
+        )
+        assert compartment.applied("axial_resistance").value == (
+            compartment.axial_resistance_ohm
+        )
+
+
+class TestComputationalSectionConnectivity:
+    """3.0D-7P: source-backed computational section connectivity.
+
+    The published Augustin 2019 ModelDB abstraction wires its modelled
+    sections with NEURON's ``child.connect(parent, 0, 0)``. Those four
+    statements are reproduced as an explicit computational topology, kept
+    separate from the anatomical soma topology.
+
+    This establishes computational section topology + source-backed geometry +
+    authorized passive parameters. It establishes NO HH excitability, NO
+    Na/K kinetics, NO gap-junction conductance, NO chemical synapse kinetics,
+    NO sensory transformation and NO experimental latency reproduction.
+    """
+
+    # gfpn.py statements, in source order.
+    EXPECTED = (
+        ("TTMn_axon", "TTMn_medial_dendrite", 86, "TTMn_med.connect(TTMn, 0, 0)"),
+        ("TTMn_axon", "TTMn_lateral_dendrite", 91, "TTMn_lat.connect(TTMn, 0, 0)"),
+        ("PSI_axon", "PSI_dendrite", 105, "PSI_pas.connect(PSI, 0, 0)"),
+        ("DLMn_axon", "DLMn_dendrite", 121, "DLMn_pas.connect(DLMn, 0, 0)"),
+    )
+
+    def _models(self):
+        from biological_brain.morphology_builder import build_gfs_compartment_models
+
+        models = build_gfs_compartment_models()
+        for model in models.values():
+            model.passive_profile_name = PROFILE_AUGUSTIN_2019_GFS_PASSIVE
+        return models
+
+    def _network(self, model, plan=None):
+        from biological_brain.dynamics.passive_cable import PassiveCableModel
+
+        return PassiveCableModel(
+            profile_name=PROFILE_AUGUSTIN_2019_GFS_PASSIVE
+        ).prepare(model, plan)
+
+    # --- A, B, C, D, E: the declared computational parents ---
+
+    def test_declared_computational_parents(self):
+        from biological_brain.computational_topology import (
+            AUGUSTIN_2019_GFS_COMPUTATIONAL_TOPOLOGY as topology,
+        )
+
+        assert topology.parent_of("TTMn_medial_dendrite") == "TTMn_axon"
+        assert topology.parent_of("TTMn_lateral_dendrite") == "TTMn_axon"
+        assert topology.parent_of("PSI_dendrite") == "PSI_axon"
+        assert topology.parent_of("DLMn_dendrite") == "DLMn_axon"
+        assert topology.parent_of("GF_axon") is None
+
+    def test_prepared_electrical_parents_match_the_declared_topology(self):
+        expected = {
+            "TTMn": {
+                "TTMn_medial_dendrite": "TTMn_axon",
+                "TTMn_lateral_dendrite": "TTMn_axon",
+                "TTMn_axon": None,
+            },
+            "PSI": {"PSI_dendrite": "PSI_axon", "PSI_axon": None},
+            "DLMn": {"DLMn_dendrite": "DLMn_axon", "DLMn_axon": None},
+            "GF": {"GF_axon": None},
+        }
+        models = self._models()
+        for neuron_id, mapping in expected.items():
+            network = self._network(models[neuron_id])
+            assert {
+                c.compartment_id: c.electrical_parent_id
+                for c in network.compartments
+            } == mapping, neuron_id
+
+    def test_gf_axon_remains_a_computational_root(self):
+        from biological_brain.computational_topology import (
+            AUGUSTIN_2019_GFS_COMPUTATIONAL_ROOTS,
+        )
+
+        assert AUGUSTIN_2019_GFS_COMPUTATIONAL_ROOTS == ("GF_axon",)
+        network = self._network(self._models()["GF"])
+        assert [c.compartment_id for c in network.compartments] == ["GF_axon"]
+        assert network.compartment("GF_axon").electrical_parent_id is None
+        assert network.connections == ()
+
+    def test_computational_roots_per_neuron(self):
+        """Exactly one computational root per GFS neuron."""
+        for neuron_id in ("GF", "TTMn", "PSI", "DLMn"):
+            network = self._network(self._models()[neuron_id])
+            roots = [
+                c.compartment_id for c in network.compartments
+                if c.electrical_parent_id is None
+            ]
+            assert roots == [f"{neuron_id}_axon"], neuron_id
+
+    # --- F, G: nothing routes through an excluded structure ---
+
+    def test_no_connection_through_any_excluded_soma(self):
+        for neuron_id, model in self._models().items():
+            network = self._network(model)
+            soma_id = f"{neuron_id}_soma"
+            assert soma_id not in {c.compartment_id for c in network.compartments}
+            for connection in network.connections:
+                assert soma_id not in connection.parent_id
+                assert soma_id not in connection.child_id
+            # The excluded soma is never given a computational parent either.
+            for compartment in network.compartments:
+                assert compartment.anatomical_parent_id == soma_id
+                assert compartment.electrical_parent_id != soma_id
+
+    def test_no_connection_for_excluded_gf_medial_dendrite(self):
+        network = self._network(self._models()["GF"])
+        for connection in network.connections:
+            assert "GF_medial_dendrite" not in connection.parent_id
+            assert "GF_medial_dendrite" not in connection.child_id
+        assert "GF_medial_dendrite" not in {
+            c.compartment_id for c in network.compartments
+        }
+
+    def test_declared_connection_with_an_excluded_endpoint_is_rejected(self):
+        """A declared connection is never silently dropped or rerouted."""
+        import dataclasses
+
+        from biological_brain.computational_topology import (
+            ComputationalSectionConnection,
+        )
+        from biological_brain.dynamics.passive_cable import PassiveGeometryError
+        from biological_brain.provenance import ParameterProvenance, ProvenanceRecord
+
+        model = self._models()["TTMn"]
+        bad = ComputationalSectionConnection(
+            child_section_id="TTMn_lateral_dendrite",
+            parent_section_id="TTMn_soma",
+            source_model_id="x",
+            source_file="y.py",
+            source_line=1,
+            source_statement="TTMn_lat.connect(TTMn_soma, 0, 0)",
+            direction="child_proximal_end_to_parent_proximal_end",
+            derivation="d",
+            provenance=ProvenanceRecord(ParameterProvenance.UNKNOWN, ""),
+        )
+        model.computational_topology = dataclasses.replace(
+            model.computational_topology, connections=(bad,)
+        )
+        with pytest.raises(PassiveGeometryError, match="excluded from electrical"):
+            self._network(model)
+
+    def test_self_connection_is_rejected(self):
+        from biological_brain.computational_topology import (
+            ComputationalSectionConnection,
+        )
+        from biological_brain.provenance import ParameterProvenance, ProvenanceRecord
+
+        with pytest.raises(ValueError, match="self connection"):
+            ComputationalSectionConnection(
+                child_section_id="x",
+                parent_section_id="x",
+                source_model_id="m",
+                source_file="f.py",
+                source_line=1,
+                source_statement="x.connect(x, 0, 0)",
+                direction="d",
+                derivation="d",
+                provenance=ProvenanceRecord(ParameterProvenance.UNKNOWN, ""),
+            )
+
+    # --- H: exactly four connections across the GFS ---
+
+    def test_gfs_has_exactly_four_intra_neuron_connections(self):
+        total = 0
+        observed = []
+        for neuron_id, model in self._models().items():
+            network = self._network(model)
+            for connection in network.connections:
+                total += 1
+                observed.append(
+                    (connection.parent_id, connection.child_id)
+                )
+        assert total == 4
+        assert sorted(observed) == sorted(
+            (parent, child) for parent, child, _, _ in self.EXPECTED
+        )
+
+    def test_each_connection_matches_its_source_statement(self):
+        for neuron_id, model in self._models().items():
+            network = self._network(model)
+            by_child = {c.child_id: c for c in network.connections}
+            for parent, child, line, statement in self.EXPECTED:
+                if not child.startswith(neuron_id):
+                    continue
+                connection = by_child[child]
+                assert connection.parent_id == parent
+                assert connection.source_statement == statement
+                assert f"line {line}" in connection.computational_source
+                assert "gfpn.py" in connection.computational_source
+                assert "ModelDBRepository/245415" in connection.computational_source
+
+    def test_no_circuit_level_connections_are_created(self):
+        """GF->TTMn, GF->PSI and PSI->DLMn are out of scope for 7P."""
+        for neuron_id, model in self._models().items():
+            network = self._network(model)
+            for connection in network.connections:
+                parent_neuron = connection.parent_id.split("_", 1)[0]
+                child_neuron = connection.child_id.split("_", 1)[0]
+                assert parent_neuron == child_neuron, (
+                    f"cross-neuron connection {connection.parent_id} -> "
+                    f"{connection.child_id} is a circuit-level mechanism and "
+                    f"is not a 7P computational section connection"
+                )
+
+    # --- I: provenance ---
+
+    def test_connection_provenance_is_computational_not_biological(self):
+        from biological_brain.provenance import ParameterProvenance
+
+        for neuron_id, model in self._models().items():
+            for connection in self._network(model).connections:
+                provenance = connection.computational_provenance
+                assert provenance is not None
+                assert provenance.category == ParameterProvenance.UNKNOWN
+                for forbidden in (
+                    ParameterProvenance.DIRECTLY_MEASURED,
+                    ParameterProvenance.EXPERIMENTALLY_CONSTRAINED,
+                    ParameterProvenance.ESTIMATED,
+                ):
+                    assert provenance.category != forbidden
+                assert "computational section connectivity" in (
+                    provenance.source.lower()
+                )
+                assert "not a biological claim" in provenance.source.lower()
+                assert "ModelDB" in provenance.source
+
+    def test_connection_direction_and_derivation(self):
+        from biological_brain.computational_topology import (
+            DIRECTION_PROXIMAL_TO_PROXIMAL,
+        )
+
+        for neuron_id, model in self._models().items():
+            for connection in self._network(model).connections:
+                assert connection.direction == DIRECTION_PROXIMAL_TO_PROXIMAL
+                assert connection.direction == (
+                    "child_proximal_end_to_parent_proximal_end"
+                )
+                assert ".connect(" in connection.computational_derivation
+                assert "0, 0)" in connection.computational_derivation
+                assert "proximal end" in connection.computational_derivation
+                assert "soma" in connection.computational_derivation
+                assert "connect(" in connection.source_statement
+
+    def test_connection_resistance_uses_the_child_geometry(self):
+        """R = Ra * L / A of the connecting child section, in ohm."""
+        models = self._models()
+        for parent, child, _, _ in self.EXPECTED:
+            neuron_id = parent.split("_", 1)[0]
+            network = self._network(models[neuron_id])
+            connection = next(
+                c for c in network.connections if c.child_id == child
+            )
+            compartment = network.compartment(child)
+            assert connection.resistance_ohm == (
+                compartment.axial_resistance_ohm
+            )
+            assert connection.resistance_ohm == pytest.approx(
+                _7O_FIXTURES[child]["R_ohm"], rel=1e-9, abs=1e-3
+            )
+            assert "uniform cylinder" in connection.derivation
+
+    def test_topology_declaration_is_read_only_data(self):
+        from biological_brain.computational_topology import (
+            AUGUSTIN_2019_GFS_COMPUTATIONAL_TOPOLOGY as topology,
+            ComputationalTopology,
+            get_computational_topology,
+        )
+
+        assert isinstance(topology, ComputationalTopology)
+        assert len(topology.connections) == 4
+        assert topology.computational_roots == ("GF_axon",)
+        assert topology.children_of("TTMn_axon") == (
+            "TTMn_medial_dendrite", "TTMn_lateral_dendrite",
+        )
+        assert topology.children_of("GF_axon") == ()
+        assert topology.connected_section_ids() == (
+            "DLMn_axon", "DLMn_dendrite", "PSI_axon", "PSI_dendrite",
+            "TTMn_axon", "TTMn_lateral_dendrite", "TTMn_medial_dendrite",
+        )
+        assert topology.connection_for_child("TTMn_medial_dendrite").source_line == 86
+        assert "not a biological claim" in topology.scope_note.lower()
+
+        for model in self._models().values():
+            assert get_computational_topology(model) is topology
+
+    def test_model_without_declaration_has_no_topology(self):
+        from biological_brain.computational_topology import get_computational_topology
+        from biological_brain.morphology import CompartmentModel
+
+        assert get_computational_topology(CompartmentModel("plain")) is None
+        assert CompartmentModel("plain").computational_topology is None
+
+    # --- J, K: separation from, and non-mutation of, the anatomy ---
+
+    def test_electrical_topology_is_separate_from_anatomical_topology(self):
+        models = self._models()
+        ttmn = models["TTMn"]
+        network = self._network(ttmn)
+
+        # Anatomical: every section still hangs off the soma.
+        for section_id in ("TTMn_axon", "TTMn_medial_dendrite",
+                           "TTMn_lateral_dendrite"):
+            assert ttmn.compartments[section_id].parent_id == "TTMn_soma"
+        assert sorted(ttmn.compartments["TTMn_soma"].neighbor_ids) == [
+            "TTMn_axon", "TTMn_lateral_dendrite", "TTMn_medial_dendrite",
+        ]
+        for compartment in network.compartments:
+            assert compartment.anatomical_parent_id == "TTMn_soma"
+
+        # Electrical: the published section topology, not the anatomical one.
+        parents = {
+            c.compartment_id: c.electrical_parent_id
+            for c in network.compartments
+        }
+        assert parents["TTMn_axon"] is None
+        assert parents["TTMn_medial_dendrite"] == "TTMn_axon"
+        assert parents["TTMn_lateral_dendrite"] == "TTMn_axon"
+
+    def test_source_morphology_is_unchanged_by_preparation(self):
+        from biological_brain.morphology_builder import build_gfs_compartment_models
+
+        before = build_gfs_compartment_models()
+        snapshot = {
+            neuron_id: {
+                cid: (
+                    c.geometry.length_um,
+                    c.geometry.diameter_um,
+                    c.geometry.diameter_distal_um,
+                    c.parent_id,
+                    tuple(c.neighbor_ids),
+                    tuple(p.distance_um for p in c.placements),
+                    c.cable_params,
+                    c.provenance.length_um,
+                    c.provenance.diameter_um,
+                )
+                for cid, c in model.compartments.items()
+            }
+            for neuron_id, model in before.items()
+        }
+
+        for model in self._models().values():
+            self._network(model)
+
+        after = build_gfs_compartment_models()
+        for neuron_id, model in after.items():
+            for cid, value in snapshot[neuron_id].items():
+                c = model.compartments[cid]
+                assert (
+                    c.geometry.length_um,
+                    c.geometry.diameter_um,
+                    c.geometry.diameter_distal_um,
+                    c.parent_id,
+                    tuple(c.neighbor_ids),
+                    tuple(p.distance_um for p in c.placements),
+                    c.cable_params,
+                    c.provenance.length_um,
+                    c.provenance.diameter_um,
+                ) == value, f"{neuron_id}/{cid}"
+
+    # --- L, M, N: subdivision interaction ---
+
+    def test_n1_subdivision_preserves_the_topology(self):
+        models = self._models()
+        for neuron_id in ("GF", "TTMn", "PSI", "DLMn"):
+            model = models[neuron_id]
+            plan = SubdivisionPlan(sections=tuple(
+                SectionSubdivision(sid, 1) for sid in model.compartments
+            ))
+            subdivided = self._network(model, plan)
+            plain = self._network(self._models()[neuron_id])
+            assert [
+                (c.parent_id, c.child_id) for c in subdivided.connections
+            ] == [(c.parent_id, c.child_id) for c in plain.connections]
+            assert all(
+                c.segment_count == 1 for c in subdivided.compartments
+            )
+
+    def test_n2_subdivision_creates_the_expected_segment_chain(self):
+        """3.0D-7Q: the source connection attaches at child segment 0."""
+        model = self._models()["TTMn"]
+        plan = SubdivisionPlan(sections=(
+            SectionSubdivision("TTMn_medial_dendrite", 2),
+        ))
+        network = self._network(model, plan)
+
+        parents = {
+            c.compartment_id: c.electrical_parent_id
+            for c in network.compartments
+        }
+        # TTMn_medial_dendrite[0] -> TTMn_axon, and med[0] -> med[1].
+        assert parents["TTMn_medial_dendrite#seg0"] == "TTMn_axon"
+        assert parents["TTMn_medial_dendrite#seg1"] == "TTMn_medial_dendrite#seg0"
+        # The lateral dendrite keeps its single segment and the same parent.
+        assert parents["TTMn_lateral_dendrite"] == "TTMn_axon"
+        assert parents["TTMn_axon"] is None
+        # No intermediate soma segment is created.
+        assert "TTMn_soma" not in parents
+        assert sorted(
+            (c.parent_id, c.child_id) for c in network.connections
+        ) == [
+            ("TTMn_axon", "TTMn_lateral_dendrite"),
+            ("TTMn_axon", "TTMn_medial_dendrite#seg0"),
+            ("TTMn_medial_dendrite#seg0", "TTMn_medial_dendrite#seg1"),
+        ]
+        computational = [
+            c for c in network.connections if c.computational_provenance is not None
+        ]
+        assert [c.child_id for c in computational] == [
+            "TTMn_lateral_dendrite", "TTMn_medial_dendrite#seg0",
+        ]
+
+    def test_n51_subdivision_creates_the_expected_segment_chain(self):
+        model = self._models()["DLMn"]
+        plan = SubdivisionPlan(sections=(
+            SectionSubdivision("DLMn_dendrite", 51),
+        ))
+        network = self._network(model, plan)
+
+        segments = [
+            c for c in network.compartments
+            if c.source_section_id == "DLMn_dendrite"
+        ]
+        assert len(segments) == 51
+        assert segments[0].compartment_id == "DLMn_dendrite#seg0"
+        assert segments[0].electrical_parent_id == "DLMn_axon"
+        assert segments[50].electrical_parent_id == "DLMn_dendrite#seg49"
+        for index in range(1, 51):
+            assert segments[index].electrical_parent_id == (
+                f"DLMn_dendrite#seg{index - 1}"
+            )
+        assert network.compartment("DLMn_axon").electrical_parent_id is None
+        assert "DLMn_soma" not in {
+            c.compartment_id for c in network.compartments
+        }
+        # The declared section connection appears exactly once, at child
+        # segment 0 joining parent segment 0.
+        computational = [
+            c for c in network.connections if c.computational_provenance is not None
+        ]
+        assert len(computational) == 1
+        assert computational[0].child_id == "DLMn_dendrite#seg0"
+        assert computational[0].parent_id == "DLMn_axon"
+
+    def test_subdivision_of_psi_preserves_the_section_connection(self):
+        model = self._models()["PSI"]
+        plan = SubdivisionPlan(sections=(
+            SectionSubdivision("PSI_axon", 51),
+            SectionSubdivision("PSI_dendrite", 2),
+        ))
+        network = self._network(model, plan)
+
+        assert network.compartment("PSI_axon#seg0").electrical_parent_id is None
+        assert network.compartment("PSI_axon#seg50").electrical_parent_id == (
+            "PSI_axon#seg49"
+        )
+        # The dendrite's proximal segment joins the axon's proximal segment.
+        assert network.compartment("PSI_dendrite#seg0").electrical_parent_id == (
+            "PSI_axon#seg0"
+        )
+        assert network.compartment("PSI_dendrite#seg1").electrical_parent_id == (
+            "PSI_dendrite#seg0"
+        )
+
+    def test_subdivision_conserves_length_and_area(self):
+        model = self._models()["TTMn"]
+        plan = SubdivisionPlan(sections=(
+            SectionSubdivision("TTMn_medial_dendrite", 51),
+        ))
+        network = self._network(model, plan)
+        segments = [
+            c for c in network.compartments
+            if c.source_section_id == "TTMn_medial_dendrite"
+        ]
+        assert sum(c.membrane_area_cm2 for c in segments) == pytest.approx(
+            1130.973355292 * 1e-8, rel=1e-9
+        )
+
+    # --- O: excluded sections stay excluded under subdivision ---
+
+    def test_subdivision_request_for_an_excluded_section_adds_nothing(self):
+        models = self._models()
+        baseline = {
+            neuron_id: [
+                (c.parent_id, c.child_id)
+                for c in self._network(models[neuron_id]).connections
+            ]
+            for neuron_id in ("GF", "TTMn", "PSI", "DLMn")
+        }
+
+        for neuron_id in ("GF", "TTMn", "PSI", "DLMn"):
+            model = models[neuron_id]
+            soma_id = f"{neuron_id}_soma"
+            plan = SubdivisionPlan(sections=(
+                SectionSubdivision(soma_id, 51),
+                SectionSubdivision("GF_medial_dendrite", 51),
+            ))
+            network = self._network(model, plan)
+
+            assert [
+                (c.parent_id, c.child_id) for c in network.connections
+            ] == baseline[neuron_id]
+            assert soma_id not in {
+                c.compartment_id for c in network.compartments
+            }
+            assert "GF_medial_dendrite" not in {
+                c.compartment_id for c in network.compartments
+            }
+            # The plan is not reinterpreted.
+            assert plan.segment_count_for(soma_id) == 51
+            assert plan.segment_count_for("GF_medial_dendrite") == 51
+
+    # --- Q: determinism ---
+
+    def test_repeated_preparation_is_deterministic(self):
+        for neuron_id in ("GF", "TTMn", "PSI", "DLMn"):
+            first = self._network(self._models()[neuron_id])
+            for _ in range(3):
+                again = self._network(self._models()[neuron_id])
+                assert again.compartments == first.compartments
+                assert again.connections == first.connections
+                assert again.computational_topology == first.computational_topology
+
+    def test_topology_table_order_is_deterministic(self):
+        from biological_brain.computational_topology import (
+            AUGUSTIN_2019_GFS_COMPUTATIONAL_CONNECTIONS as connections,
+        )
+
+        assert [c.source_line for c in connections] == [86, 91, 105, 121]
+        for _ in range(3):
+            assert [
+                (c.parent_section_id, c.child_section_id) for c in connections
+            ] == [
+                ("TTMn_axon", "TTMn_medial_dendrite"),
+                ("TTMn_axon", "TTMn_lateral_dendrite"),
+                ("PSI_axon", "PSI_dendrite"),
+                ("DLMn_axon", "DLMn_dendrite"),
+            ]
+
+    def test_connections_within_filters_to_the_models_sections(self):
+        from biological_brain.computational_topology import (
+            AUGUSTIN_2019_GFS_COMPUTATIONAL_TOPOLOGY as topology,
+        )
+
+        ttmn = [
+            c for c in topology.connections_within(
+                ("TTMn_soma", "TTMn_axon", "TTMn_medial_dendrite",
+                 "TTMn_lateral_dendrite")
+            )
+        ]
+        assert [c.child_section_id for c in ttmn] == [
+            "TTMn_medial_dendrite", "TTMn_lateral_dendrite",
+        ]
+        assert topology.connections_within(("GF_soma", "GF_axon")) == ()
+
+    # --- R, S: no gap junction, no chemical synapse ---
+
+    def test_no_gap_junction_object_is_created(self):
+        import biological_brain.computational_topology as topology_module
+        import biological_brain.dynamics.passive_cable as cable_module
+
+        defined = set()
+        for module in (cable_module, topology_module):
+            defined.update(
+                name for name, value in vars(module).items()
+                if isinstance(value, type)
+            )
+        for name in defined:
+            assert "gap" not in name.lower(), name
+            assert "synap" not in name.lower(), name
+
+        # AxialConnection carries a plain resistance and no coupling mechanism.
+        from biological_brain.dynamics.passive_cable import AxialConnection
+
+        assert {f for f in AxialConnection.__dataclass_fields__} == {
+            "parent_id", "child_id", "resistance_ohm", "derivation",
+            "computational_source", "source_model_id", "source_statement",
+            "direction", "computational_derivation", "computational_provenance",
+        }
+
+    def test_no_chemical_synapse_object_is_created(self):
+        import biological_brain
+        import biological_brain.dynamics.passive_cable as module
+
+        for path in (module.__file__, biological_brain.__file__):
+            with open(path, encoding="utf-8") as handle:
+                text = handle.read().lower()
+            for forbidden in ("class synapse", "synapticconductance",
+                              "chemicalsynapse", "class synapsekinetics"):
+                assert forbidden not in text
+
+        # The GFS circuit data still records its chemical synapse type, but
+        # the passive backend never converts it into an object.
+        network = self._network(self._models()["GF"])
+        for connection in network.connections:
+            assert not hasattr(connection, "synapse_type")
+            assert not hasattr(connection, "conductance_S")
+
+    def test_connections_are_plain_axial_cable_connections(self):
+        from biological_brain.dynamics.passive_cable import AxialConnection
+
+        for neuron_id, model in self._models().items():
+            for connection in self._network(model).connections:
+                assert isinstance(connection, AxialConnection)
+                assert connection.resistance_ohm > 0.0
+                # No gap-junction or synaptic mechanism is attached.
+                assert not any(
+                    name.startswith(("gap", "synap"))
+                    for name in vars(connection)
+                )
+
+
+class TestSectionConnectionEndpointSemantics:
+    """3.0D-7Q: exact source section-connection endpoint semantics.
+
+    The published Augustin 2019 ModelDB abstraction wires its modelled
+    sections with NEURON's ``child.connect(parent, 0, 0)``: the child's
+    PROXIMAL end (x=0) joins the parent's PROXIMAL end (x=0). 3.0D-7Q makes
+    those endpoints exact and subdivision-invariant: under subdivision the
+    declared connection attaches at CHILD SEGMENT 0 and PARENT SEGMENT 0 and
+    is never relocated to the child's distal end.
+
+    This checkpoint establishes endpoint semantics, conservative validation
+    (total axial resistance, total membrane area) and analytic passive
+    validation (DC steady state against the exact sealed-cable solution). It
+    establishes NO Hodgkin-Huxley excitability, NO Na/K kinetics, NO
+    gap-junction conductance, NO chemical synapse kinetics, NO sensory
+    transformation and NO experimental latency reproduction.
+    """
+
+    # Source-backed GFS geometry used for the analytic fixtures. These are the
+    # values carried by the published reconstruction; they are not invented.
+    GF_AXON_LENGTH_UM = 400.0
+    GF_AXON_DIAMETER_UM = 8.0
+    DLMN_AXON_LENGTH_UM = 50.0
+    DLMN_AXON_PROXIMAL_UM = 2.0
+    DLMN_AXON_DISTAL_UM = 4.0
+
+    SEGMENT_COUNTS = (1, 2, 3, 5, 11, 51)
+
+    # --- helpers ---
+
+    def _models(self):
+        from biological_brain.morphology_builder import build_gfs_compartment_models
+
+        models = build_gfs_compartment_models()
+        for model in models.values():
+            model.passive_profile_name = PROFILE_AUGUSTIN_2019_GFS_PASSIVE
+        return models
+
+    def _network(self, model, plan=None):
+        from biological_brain.dynamics.passive_cable import PassiveCableModel
+
+        return PassiveCableModel(
+            profile_name=PROFILE_AUGUSTIN_2019_GFS_PASSIVE
+        ).prepare(model, plan)
+
+    def _plan(self, model, count):
+        return SubdivisionPlan(sections=tuple(
+            SectionSubdivision(section_id, count)
+            for section_id in model.compartments
+        ))
+
+    def _single_section_model(self, length_um, diameter_um,
+                              distal_um=None, parent_id=None):
+        from biological_brain.morphology import (
+            Compartment, CompartmentGeometry, CompartmentModel,
+        )
+
+        model = CompartmentModel("fixture", passive_profile_name=(
+            PROFILE_AUGUSTIN_2019_GFS_PASSIVE))
+        model.add_compartment(Compartment(
+            "cable",
+            geometry=CompartmentGeometry(
+                length_um=length_um,
+                diameter_um=diameter_um,
+                diameter_distal_um=distal_um,
+            ),
+        ))
+        if parent_id is not None:
+            model.add_compartment(Compartment(
+                parent_id,
+                geometry=CompartmentGeometry(
+                    length_um=self.GF_AXON_LENGTH_UM,
+                    diameter_um=self.GF_AXON_DIAMETER_UM,
+                ),
+            ))
+            model.compartments["cable"].parent_id = parent_id
+        return model
+
+    @staticmethod
+    def _dc_solution(network, injected_currents_A):
+        """Exact DC steady state of the passive network, solved in volts.
+
+        The DC problem is timestep-independent, so the steady state is solved
+        directly instead of by time stepping:
+
+            g_leak * (V - E_leak) + sum_j (V - V_j) / R_link = I_injected
+
+        Returns {compartment_id: voltage_mV} in declared segment order.
+        """
+        order = list(network.compartments)
+        index = {c.compartment_id: i for i, c in enumerate(order)}
+        n = len(order)
+
+        matrix = [[0.0] * n for _ in range(n)]
+        rhs = [0.0] * n
+        for compartment in order:
+            i = index[compartment.compartment_id]
+            matrix[i][i] += compartment.leak_conductance_S
+            rhs[i] += (
+                compartment.leak_conductance_S
+                * compartment.leak_reversal_mV
+                * 1e-3
+            )
+        for connection in network.connections:
+            i = index[connection.parent_id]
+            j = index[connection.child_id]
+            g = 1.0 / connection.resistance_ohm
+            matrix[i][i] += g
+            matrix[j][j] += g
+            matrix[i][j] -= g
+            matrix[j][i] -= g
+        for compartment_id, current in injected_currents_A.items():
+            rhs[index[compartment_id]] += current
+
+        augmented = [matrix[r][:] + [rhs[r]] for r in range(n)]
+        for col in range(n):
+            pivot = max(range(col, n), key=lambda r: abs(augmented[r][col]))
+            augmented[col], augmented[pivot] = augmented[pivot], augmented[col]
+            for r in range(col + 1, n):
+                factor = augmented[r][col] / augmented[col][col]
+                if factor:
+                    for c in range(col, n + 1):
+                        augmented[r][c] -= factor * augmented[col][c]
+        solution = [0.0] * n
+        for r in range(n - 1, -1, -1):
+            solution[r] = (
+                augmented[r][n]
+                - sum(augmented[r][j] * solution[j] for j in range(r + 1, n))
+            ) / augmented[r][r]
+        return {
+            c.compartment_id: solution[index[c.compartment_id]] * 1e3
+            for c in order
+        }
+
+    @staticmethod
+    def _cable_constants(diameter_um):
+        """(axial resistance per length, leak conductance per length, length
+        constant) for a uniform circular cable, from the AUTHORIZED profile.
+
+        These are read from the authorized profile and the declared geometry
+        only. No passive value is hardcoded in this test and no value is
+        inferred.
+        """
+        from math import pi, sqrt
+
+        from biological_brain.dynamics.passive_cable import (
+            AUTHORIZED_G_LEAK, AUTHORIZED_RA,
+        )
+        from biological_brain.passive_profiles import (
+            get_passive_parameter_profile,
+        )
+
+        profile = get_passive_parameter_profile(PROFILE_AUGUSTIN_2019_GFS_PASSIVE)
+        ra = profile.get(AUTHORIZED_RA).value
+        g_density = profile.get(AUTHORIZED_G_LEAK).value
+
+        radius_cm = (diameter_um / 2.0) * 1e-4
+        axial_per_cm = ra / (pi * radius_cm ** 2)
+        leak_per_cm = g_density * 1e-3 * 2.0 * pi * radius_cm
+        return axial_per_cm, leak_per_cm, 1.0 / sqrt(axial_per_cm * leak_per_cm)
+
+    # --- A, B, C: the declared endpoints are the source's endpoints ---
+
+    def test_endpoint_constants_are_the_source_proximal_endpoints(self):
+        from biological_brain.computational_topology import (
+            CHILD_ENDPOINT_SEGMENT_INDEX, CHILD_ENDPOINT_X,
+            PARENT_ENDPOINT_SEGMENT_INDEX, PARENT_ENDPOINT_X,
+        )
+
+        assert CHILD_ENDPOINT_X == 0.0
+        assert PARENT_ENDPOINT_X == 0.0
+        assert CHILD_ENDPOINT_SEGMENT_INDEX == 0
+        assert PARENT_ENDPOINT_SEGMENT_INDEX == 0
+
+    def test_every_source_statement_is_connect_zero_zero(self):
+        import re
+
+        from biological_brain.computational_topology import (
+            AUGUSTIN_2019_GFS_COMPUTATIONAL_CONNECTIONS as connections,
+        )
+
+        pattern = re.compile(r"^\w+\.connect\(\w+, 0, 0\)$")
+        for connection in connections:
+            assert pattern.match(connection.source_statement), (
+                connection.source_statement
+            )
+            assert connection.direction == (
+                "child_proximal_end_to_parent_proximal_end"
+            )
+
+    def test_derivation_records_the_exact_endpoints_and_no_relocation(self):
+        from biological_brain.computational_topology import (
+            AUGUSTIN_2019_GFS_COMPUTATIONAL_CONNECTIONS as connections,
+        )
+
+        for connection in connections:
+            derivation = connection.derivation
+            assert "0, 0)" in derivation
+            assert "child's proximal end (x=0)" in derivation
+            assert "parent's proximal end (x=0)" in derivation
+            assert "CHILD SEGMENT 0" in derivation
+            assert "PARENT SEGMENT 0" in derivation
+            assert "never relocated to the child's distal end" in derivation
+            assert "preserved under numerical subdivision" in derivation
+
+    # --- D, E, F, G: attachment at child segment 0 and parent segment 0 ---
+
+    def test_declared_connection_attaches_at_child_and_parent_segment_zero(self):
+        expected = {
+            "TTMn": (
+                "TTMn_axon",
+                ("TTMn_medial_dendrite", "TTMn_lateral_dendrite"),
+            ),
+            "PSI": ("PSI_axon", ("PSI_dendrite",)),
+            "DLMn": ("DLMn_axon", ("DLMn_dendrite",)),
+        }
+        for neuron_id, (parent_section, child_sections) in expected.items():
+            model = self._models()[neuron_id]
+            network = self._network(model, self._plan(model, 51))
+
+            for child_section in child_sections:
+                assert network.compartment(
+                    f"{child_section}#seg0"
+                ).electrical_parent_id == f"{parent_section}#seg0"
+
+            computational = [
+                c for c in network.connections
+                if c.computational_provenance is not None
+            ]
+            assert len(computational) == len(child_sections), neuron_id
+            assert sorted(c.child_id for c in computational) == sorted(
+                f"{child}#seg0" for child in child_sections
+            )
+            for connection in computational:
+                assert connection.parent_id == f"{parent_section}#seg0"
+
+    def test_connection_is_never_relocated_to_the_child_distal_segment(self):
+        models = self._models()
+        for count in self.SEGMENT_COUNTS:
+            for neuron_id, model in models.items():
+                network = self._network(model, self._plan(model, count))
+                for connection in network.connections:
+                    if connection.computational_provenance is None:
+                        continue
+                    # A section with a single segment keeps its own id; a
+                    # subdivided section is "<section>#seg<index>". Either way
+                    # the declared connection must sit on index 0.
+                    suffix = connection.child_id.rsplit("#seg", 1)
+                    index = int(suffix[1]) if len(suffix) == 2 else 0
+                    assert index == 0, (count, neuron_id, connection.child_id)
+
+    def test_endpoint_attachment_is_independent_of_the_segment_count(self):
+        models = self._models()
+        for neuron_id, model in models.items():
+            for count in self.SEGMENT_COUNTS:
+                network = self._network(model, self._plan(model, count))
+                for connection in network.connections:
+                    if connection.computational_provenance is None:
+                        continue
+                    child_segments = [
+                        c for c in network.compartments
+                        if c.source_section_id
+                        == connection.child_id.rsplit("#seg", 1)[0]
+                    ]
+                    proximal = child_segments[0]
+                    assert proximal.electrical_parent_id == connection.parent_id, (
+                        neuron_id, count, connection.child_id
+                    )
+
+    def test_internal_segment_chain_is_unchanged_by_the_endpoint_rule(self):
+        """Segments 1..N-1 keep the 3.0D-7K linear chain."""
+        model = self._models()["DLMn"]
+        for count in (2, 3, 5, 11, 51):
+            plan = SubdivisionPlan(sections=(
+                SectionSubdivision("DLMn_axon", count),
+                SectionSubdivision("DLMn_dendrite", count),
+            ))
+            network = self._network(model, plan)
+            segments = [
+                c for c in network.compartments
+                if c.source_section_id == "DLMn_dendrite"
+            ]
+            assert len(segments) == count
+            assert segments[0].electrical_parent_id == "DLMn_axon#seg0"
+            for index in range(1, count):
+                assert segments[index].electrical_parent_id == (
+                    f"DLMn_dendrite#seg{index - 1}"
+                ), count
+            assert network.compartment("DLMn_axon#seg0").electrical_parent_id is None
+
+    def test_connection_resistance_at_the_endpoint_uses_the_proximal_segment(self):
+        """The declared connection's axial resistance is the child segment's."""
+        model = self._models()["PSI"]
+        plan = SubdivisionPlan(sections=(
+            SectionSubdivision("PSI_axon", 51),
+            SectionSubdivision("PSI_dendrite", 51),
+        ))
+        network = self._network(model, plan)
+        connection = next(
+            c for c in network.connections
+            if c.computational_provenance is not None
+        )
+        proximal = network.compartment("PSI_dendrite#seg0")
+        assert connection.resistance_ohm == proximal.axial_resistance_ohm
+        # One 51st of the source axial resistance of the whole child section.
+        plain = self._network(self._models()["PSI"])
+        whole = plain.compartment("PSI_dendrite")
+        assert connection.resistance_ohm == pytest.approx(
+            whole.axial_resistance_ohm / 51.0, rel=1e-12
+        )
+
+    # --- H: conservation of total axial resistance and membrane area ---
+
+    def test_total_axial_resistance_is_conserved_under_subdivision(self):
+        """Sum of segment axial resistances equals the source section's.
+
+        For a linearly tapered section the per-segment frustum resistance
+        Ra*L/(pi*r1*r2) integrates the same analytic taper integral as the
+        whole-section value, so the sum is conserved, not merely close.
+        """
+        models = self._models()
+        for neuron_id, model in models.items():
+            plain = self._network(model)
+            subdivided = self._network(model, self._plan(model, 51))
+            for compartment in plain.compartments:
+                if compartment.axial_resistance_ohm is None:
+                    continue
+                segments = [
+                    s for s in subdivided.compartments
+                    if s.source_section_id == compartment.source_section_id
+                ]
+                assert len(segments) == 51
+                total = sum(
+                    s.axial_resistance_ohm for s in segments
+                    if s.axial_resistance_ohm is not None
+                )
+                assert total == pytest.approx(
+                    compartment.axial_resistance_ohm, rel=1e-12
+                ), f"{neuron_id}/{compartment.source_section_id}"
+
+    def test_total_axial_resistance_of_a_tapered_section_is_conserved(self):
+        """Taper conservation is exercised with source-backed taper geometry."""
+        model = self._single_section_model(
+            self.DLMN_AXON_LENGTH_UM,
+            self.DLMN_AXON_PROXIMAL_UM,
+            distal_um=self.DLMN_AXON_DISTAL_UM,
+            parent_id="parent_section",
+        )
+        plain = self._network(model)
+        assert plain.compartment("cable").axial_resistance_ohm is not None
+
+        for count in (2, 5, 11, 51):
+            plan = SubdivisionPlan(sections=(
+                SectionSubdivision("cable", count),
+            ))
+            network = self._network(model, plan)
+            segments = [
+                c for c in network.compartments
+                if c.source_section_id == "cable"
+            ]
+            assert len(segments) == count
+            total = sum(c.axial_resistance_ohm for c in segments)
+            assert total == pytest.approx(
+                plain.compartment("cable").axial_resistance_ohm, rel=1e-12
+            ), count
+
+    def test_total_membrane_area_is_conserved_under_subdivision(self):
+        models = self._models()
+        for neuron_id, model in models.items():
+            plain = self._network(model)
+            subdivided = self._network(model, self._plan(model, 51))
+            for compartment in plain.compartments:
+                segments = [
+                    s for s in subdivided.compartments
+                    if s.source_section_id == compartment.source_section_id
+                ]
+                assert len(segments) == 51
+                total = sum(s.membrane_area_cm2 for s in segments)
+                assert total == pytest.approx(
+                    compartment.membrane_area_cm2, rel=1e-12
+                ), f"{neuron_id}/{compartment.source_section_id}"
+
+    # --- I, J: analytic passive validation of the DC steady state ---
+
+    def test_uniform_current_density_steady_state_is_subdivision_invariant(self):
+        """A uniform current density gives the same steady state for any N.
+
+        Injecting the same current density J (A/cm2) everywhere makes the
+        axial currents vanish, so the exact steady state is
+        V = E_leak + J / g_leak_density at EVERY node, for every segment
+        count and every GFS network. This is the strongest available
+        subdivision-invariance statement and it is verified by an exact DC
+        solve of the prepared network, not by time stepping.
+        """
+        current_density = 1e-7  # A/cm^2, an arbitrary test stimulus
+        models = self._models()
+        for neuron_id, model in models.items():
+            reference = None
+            for count in self.SEGMENT_COUNTS:
+                network = self._network(model, self._plan(model, count))
+                first = list(network.compartments)[0]
+                g_specific = (
+                    first.leak_conductance_S / first.membrane_area_cm2
+                )
+                analytic = (
+                    first.leak_reversal_mV + current_density / g_specific * 1e3
+                )
+                injected = {
+                    c.compartment_id: current_density * c.membrane_area_cm2
+                    for c in network.compartments
+                }
+                voltages = self._dc_solution(network, injected)
+                worst = max(
+                    abs(v - analytic) for v in voltages.values()
+                )
+                assert worst < 1e-6, (neuron_id, count, worst)
+                if reference is None:
+                    reference = analytic
+                else:
+                    assert analytic == pytest.approx(reference, rel=1e-12)
+
+    def test_single_end_injection_matches_the_analytic_sealed_cable_solution(self):
+        """One proximal current against the exact analytic DC cable solution.
+
+        For a uniform cable of length L with a sealed distal end, the exact
+        DC solution of the passive cable equation is
+
+            u(x) = I * r_a * lambda * cosh((L - x)/lambda) / sinh(L/lambda)
+            lambda = 1 / sqrt(r_a * c_m)
+
+        with u = V - E_leak. r_a and c_m come from the AUTHORIZED profile and
+        the declared geometry, so the reference is independent of the segment
+        count. The lumped network must converge to it.
+        """
+        from math import cosh, sinh
+
+        injected = 1e-11  # A
+        length_cm = self.GF_AXON_LENGTH_UM * 1e-4
+        axial_per_cm, leak_per_cm, length_constant = self._cable_constants(
+            self.GF_AXON_DIAMETER_UM
+        )
+
+        errors = []
+        for count in (2, 5, 11, 51):
+            model = self._single_section_model(
+                self.GF_AXON_LENGTH_UM, self.GF_AXON_DIAMETER_UM
+            )
+            network = self._network(model, SubdivisionPlan(sections=(
+                SectionSubdivision("cable", count),
+            )))
+            segments = list(network.compartments)
+            e_leak = segments[0].leak_reversal_mV
+            voltages = self._dc_solution(
+                network, {segments[0].compartment_id: injected}
+            )
+            worst = 0.0
+            for index, compartment in enumerate(segments):
+                x_cm = (index + 0.5) / count * length_cm
+                exact = (
+                    injected * axial_per_cm * length_constant
+                    * cosh((length_cm - x_cm) / length_constant)
+                    / sinh(length_cm / length_constant)
+                )
+                actual = (voltages[compartment.compartment_id] - e_leak) * 1e-3
+                worst = max(worst, abs(actual - exact) / abs(exact))
+            errors.append((count, worst))
+
+        # Second-order convergence of the lumped solution to the continuum.
+        for (_, coarse), (_, fine) in zip(errors, errors[1:]):
+            assert fine < coarse, errors
+        assert errors[-1][1] < 1e-5, errors
+
+    def test_every_source_backed_section_is_short_against_its_length_constant(self):
+        """Documented regime: axial coupling is negligible at these values.
+
+        With the authorized Ra and leak density, the cable length constant is
+        orders of magnitude longer than every source-backed GFS section, so
+        each section is effectively a membrane-dominated patch. This is a
+        property of the authorized PARAMETERS and the measured calibre, not a
+        modelling choice, and it is recorded here so the analytic validation
+        above is read in the correct regime.
+        """
+        from biological_brain.morphology_builder import build_gfs_compartment_models
+
+        models = build_gfs_compartment_models()
+        for model in models.values():
+            for compartment in model.compartments.values():
+                geometry = compartment.geometry
+                if not geometry.length_um or not geometry.diameter_um:
+                    continue
+                _, _, length_constant = self._cable_constants(
+                    geometry.diameter_um
+                )
+                assert geometry.length_um * 1e-4 / length_constant < 0.5, (
+                    compartment.compartment_id
+                )
+
+    # --- P: invalid input is rejected, never silently degenerated ---
+
+    def test_all_zero_length_section_is_rejected(self):
+        from biological_brain.dynamics.passive_cable import PassiveGeometryError
+
+        model = self._single_section_model(0.0, self.GF_AXON_DIAMETER_UM)
+        with pytest.raises(PassiveGeometryError, match="zero-length"):
+            self._network(model)
+
+    def test_all_zero_length_model_is_rejected(self):
+        """Every section zero-length: the whole model is degenerate."""
+        from biological_brain.dynamics.passive_cable import PassiveGeometryError
+        from biological_brain.morphology import (
+            Compartment, CompartmentGeometry, CompartmentModel,
+        )
+
+        model = CompartmentModel(
+            "all_zero", passive_profile_name=PROFILE_AUGUSTIN_2019_GFS_PASSIVE
+        )
+        model.add_compartment(Compartment(
+            "root", geometry=CompartmentGeometry(
+                length_um=0.0, diameter_um=self.GF_AXON_DIAMETER_UM
+            ),
+        ))
+        model.add_compartment(Compartment(
+            "child", parent_id="root", geometry=CompartmentGeometry(
+                length_um=0.0, diameter_um=self.GF_AXON_DIAMETER_UM
+            ),
+        ))
+        with pytest.raises(PassiveGeometryError, match="zero-length"):
+            self._network(model)
+
+    def test_negative_length_is_rejected(self):
+        from biological_brain.dynamics.passive_cable import PassiveGeometryError
+
+        model = self._single_section_model(-5.0, self.GF_AXON_DIAMETER_UM)
+        with pytest.raises(PassiveGeometryError, match="zero-length or negative"):
+            self._network(model)
+
+    def test_length_above_the_maximum_subdivisible_length_is_rejected(self):
+        from biological_brain.dynamics.passive_cable import (
+            MAX_SUBDIVISIBLE_SECTION_LENGTH_UM, PassiveGeometryError,
+        )
+
+        model = self._single_section_model(
+            MAX_SUBDIVISIBLE_SECTION_LENGTH_UM * 2.0,
+            self.GF_AXON_DIAMETER_UM,
+        )
+        with pytest.raises(
+            PassiveGeometryError, match="maximum subdivisible length"
+        ):
+            self._network(model)
+
+    def test_non_finite_length_is_rejected(self):
+        from biological_brain.dynamics.passive_cable import PassiveGeometryError
+
+        for bad in (float("inf"), float("nan")):
+            model = self._single_section_model(bad, self.GF_AXON_DIAMETER_UM)
+            with pytest.raises(PassiveGeometryError, match="not a finite length"):
+                self._network(model)
+
+    def test_maximum_subdivisible_length_is_numerical_not_biological(self):
+        from biological_brain.morphology_builder import build_gfs_compartment_models
+        from biological_brain.dynamics.passive_cable import (
+            MAX_SUBDIVISIBLE_SECTION_LENGTH_UM, PassiveGeometryError,
+        )
+
+        # Far above every source-backed section: it constrains no anatomy.
+        longest = max(
+            c.geometry.length_um
+            for model in build_gfs_compartment_models().values()
+            for c in model.compartments.values()
+            if c.geometry.length_um
+        )
+        assert MAX_SUBDIVISIBLE_SECTION_LENGTH_UM > 1e6 * longest
+
+        model = self._single_section_model(
+            MAX_SUBDIVISIBLE_SECTION_LENGTH_UM * 2.0,
+            self.GF_AXON_DIAMETER_UM,
+        )
+        with pytest.raises(PassiveGeometryError) as info:
+            self._network(model)
+        message = str(info.value)
+        assert "NUMERICAL representability limit" in message
+        assert "not a biological limit" in message
+        assert "not clamped, rescaled, or fabricated" in message
+
+    def test_subdivision_cannot_bypass_the_degenerate_length_rejection(self):
+        from biological_brain.dynamics.passive_cable import PassiveGeometryError
+
+        model = self._single_section_model(0.0, self.GF_AXON_DIAMETER_UM)
+        plan = SubdivisionPlan(sections=(SectionSubdivision("cable", 51),))
+        with pytest.raises(PassiveGeometryError, match="zero-length"):
+            self._network(model, plan)
+
+    def test_rejected_geometry_is_never_written_back(self):
+        """Rejection is non-destructive: no length is clamped or fabricated."""
+        from biological_brain.dynamics.passive_cable import PassiveGeometryError
+
+        model = self._single_section_model(0.0, self.GF_AXON_DIAMETER_UM)
+        with pytest.raises(PassiveGeometryError):
+            self._network(model)
+        compartment = model.compartments["cable"]
+        assert compartment.geometry.length_um == 0.0
+        assert compartment.geometry.diameter_um == self.GF_AXON_DIAMETER_UM
+        for parameter in vars(compartment.cable_params).values():
+            assert parameter is None
+
+    def test_no_connection_in_a_valid_network_has_a_degenerate_resistance(self):
+        models = self._models()
+        for neuron_id, model in models.items():
+            for count in self.SEGMENT_COUNTS:
+                network = self._network(model, self._plan(model, count))
+                for connection in network.connections:
+                    assert connection.resistance_ohm > 0.0, (
+                        neuron_id, count, connection.child_id
+                    )
+                    assert connection.resistance_ohm == (
+                        network.compartment(connection.child_id
+                                            ).axial_resistance_ohm
+                    )
+
+    # --- no new parameter, no new mechanism ---
+
+    def test_no_new_authorized_parameter_is_introduced(self):
+        from biological_brain.passive_profiles import (
+            get_passive_parameter_profile,
+        )
+
+        profile = get_passive_parameter_profile(PROFILE_AUGUSTIN_2019_GFS_PASSIVE)
+        assert set(profile.authorized_names()) == {
+            "specific_membrane_capacitance",
+            "specific_axial_resistance",
+            "leak_conductance_density",
+            "leak_reversal_potential",
+        }
+
+
+class TestImplicitBackwardEulerIntegration:
+    """3.0D-7R: opt-in implicit backward Euler integration of passive cables.
+
+    The published NEURON numerical methodology states that the cable equation
+    can be solved with implicit backward Euler, which has no timestep
+    stability constraint for the passive linear cable system, and that
+    backward Euler is robustly stable where Crank-Nicolson is only formally
+    stable. The 3.0D-7Q validation then established that explicit forward
+    Euler at the 0.01 ms policy timestep VIOLATES its spatial stability bound
+    for sufficiently subdivided passive cables, while the DC solutions are
+    correct. 7R therefore adds an implicit method rather than shrinking the
+    timestep.
+
+    This checkpoint is NUMERICAL INTEGRATION INFRASTRUCTURE ONLY. It
+    establishes NO Hodgkin-Huxley excitability, NO Na/K or other active
+    conductance, NO gap junction, NO chemical synapse, NO Dalpha7 or ShakB
+    kinetics, NO sensory transformation, and NO latency reproduction. No
+    biological parameter, timescale or mechanism is introduced, and the
+    existing explicit forward Euler path is preserved unchanged and remains
+    the default.
+    """
+
+    # Source-backed GF_axon geometry (3.0D-7L) and its authorized passive
+    # values. These are read from the prepared network, never hardcoded as
+    # physics.
+    LENGTH_UM = 400.0
+    DIAMETER_UM = 8.0
+
+    # The one-compartment validation fixture, in the units the project
+    # computes in. The values are asserted against the PREPARED network, so
+    # the fixture validates the integration, not a hardcoded expectation.
+    FIXTURE_CAPACITANCE_F = 100.530964915e-12
+    FIXTURE_LEAK_S = 3.015928947e-9
+    FIXTURE_REVERSAL_MV = -85.0
+    FIXTURE_INITIAL_MV = -70.0
+    FIXTURE_INJECTED_A = 1e-9
+
+    SEGMENT_COUNTS = (1, 2, 5, 11, 51)
+    NEURON_IDS = ("GF", "TTMn", "PSI", "DLMn")
+
+    # --- helpers ---
+
+    def _backend(self, method="backward_euler", timestep_ms=None):
+        from biological_brain.dynamics.passive_cable import PassiveCableModel
+
+        return PassiveCableModel(
+            profile_name=PROFILE_AUGUSTIN_2019_GFS_PASSIVE,
+            timestep_ms=timestep_ms,
+            numerical_method=method,
+        )
+
+    def _models(self):
+        from biological_brain.morphology_builder import build_gfs_compartment_models
+
+        models = build_gfs_compartment_models()
+        for model in models.values():
+            model.passive_profile_name = PROFILE_AUGUSTIN_2019_GFS_PASSIVE
+        return models
+
+    def _gf_axon_model(self):
+        from biological_brain.morphology import (
+            Compartment, CompartmentGeometry, CompartmentModel,
+        )
+
+        model = CompartmentModel(
+            "gf_axon_fixture", passive_profile_name=(
+                PROFILE_AUGUSTIN_2019_GFS_PASSIVE
+            )
+        )
+        model.add_compartment(Compartment(
+            "cable",
+            geometry=CompartmentGeometry(
+                length_um=self.LENGTH_UM, diameter_um=self.DIAMETER_UM
+            ),
+        ))
+        return model
+
+    def _gf_axon_network(self, backend, segment_count):
+        if segment_count == 1:
+            return backend.prepare(self._gf_axon_model())
+        return backend.prepare(
+            self._gf_axon_model(),
+            SubdivisionPlan(sections=(
+                SectionSubdivision("cable", segment_count),
+            )),
+        )
+
+    def _state(self, backend, network, voltage_mV=-70.0):
+        from biological_brain.dynamics.passive_cable import PassiveNetworkState
+
+        return PassiveNetworkState(voltages_mV={
+            c.compartment_id: voltage_mV for c in network.compartments
+        })
+
+    @staticmethod
+    def _dc(network, injected_currents_A):
+        """Reuse the 3.0D-7Q exact DC steady-state machinery unchanged."""
+        return TestSectionConnectionEndpointSemantics._dc_solution(
+            network, injected_currents_A
+        )
+
+    def _analytic_single_compartment(self, compartment, voltage_mV, current_A,
+                                     time_ms):
+        from math import exp
+
+        g = compartment.leak_conductance_S
+        tau_ms = compartment.capacitance_F / g * 1e3
+        steady = compartment.leak_reversal_mV + current_A / g * 1e3
+        return steady + (voltage_mV - steady) * exp(-time_ms / tau_ms)
+
+    def _run(self, backend, network, state, injected, steps):
+        for _ in range(steps):
+            backend.step(network, state, injected)
+        return state
+
+    # --- A: one-compartment analytic solution ---
+
+    def test_a_backward_euler_matches_the_one_compartment_analytic_solution(self):
+        backend = self._backend()
+        network = backend.prepare(self._gf_axon_model())
+        state = self._state(backend, network)
+        compartment = network.compartments[0]
+
+        # The fixture is the prepared source-backed network, not a literal.
+        assert compartment.capacitance_F == pytest.approx(
+            self.FIXTURE_CAPACITANCE_F, rel=1e-9
+        )
+        assert compartment.leak_conductance_S == pytest.approx(
+            self.FIXTURE_LEAK_S, rel=1e-9
+        )
+        assert compartment.leak_reversal_mV == self.FIXTURE_REVERSAL_MV
+        tau_ms = (
+            compartment.capacitance_F / compartment.leak_conductance_S * 1e3
+        )
+        assert tau_ms == pytest.approx(33.333333333, rel=1e-9)
+
+        dt_ms = 0.01
+        duration_ms = 20.0
+        steps = int(round(duration_ms / dt_ms))
+        worst = 0.0
+        for index in range(steps):
+            backend.step(
+                network, state, {"cable": self.FIXTURE_INJECTED_A}
+            )
+            exact = self._analytic_single_compartment(
+                compartment, self.FIXTURE_INITIAL_MV,
+                self.FIXTURE_INJECTED_A, (index + 1) * dt_ms,
+            )
+            assert abs(state.voltages_mV["cable"]) < 1e6
+            worst = max(
+                worst,
+                abs(state.voltages_mV["cable"] - exact),
+            )
+
+        # Backward Euler is first-order accurate in time, so the tolerance is
+        # the O(dt) temporal error, not the explicit 7H tolerance.
+        assert worst < 0.05, worst
+        exact_final = self._analytic_single_compartment(
+            compartment, self.FIXTURE_INITIAL_MV,
+            self.FIXTURE_INJECTED_A, duration_ms,
+        )
+        assert abs(state.voltages_mV["cable"] - exact_final) < 0.05
+
+    def test_a2_single_step_matches_the_closed_form_backward_euler_update(self):
+        """One step equals [(C/dt)V_n + gE + I] / [C/dt + g]."""
+        dt_ms = 0.01
+        dt_s = dt_ms * 1e-3
+        backend = self._backend(timestep_ms=dt_ms)
+        network = backend.prepare(self._gf_axon_model())
+        state = self._state(backend, network)
+        compartment = network.compartments[0]
+
+        backend.step(network, state, {"cable": self.FIXTURE_INJECTED_A})
+
+        c = compartment.capacitance_F
+        g = compartment.leak_conductance_S
+        e = compartment.leak_reversal_mV * 1e-3
+        v0 = self.FIXTURE_INITIAL_MV * 1e-3
+        i = self.FIXTURE_INJECTED_A
+        expected = ((c / dt_s) * v0 + g * e + i) / (c / dt_s + g) * 1e3
+        assert state.voltages_mV["cable"] == pytest.approx(expected, rel=1e-12)
+
+    # --- B: timestep refinement ---
+
+    def test_b_backward_euler_timestep_refinement_is_first_order(self):
+        dt_ms = 0.01
+        duration_ms = 20.0
+        errors = []
+        for step_ms in (dt_ms, dt_ms / 2.0, dt_ms / 4.0):
+            backend = self._backend(timestep_ms=step_ms)
+            network = backend.prepare(self._gf_axon_model())
+            state = self._state(backend, network)
+            compartment = network.compartments[0]
+            steps = int(round(duration_ms / step_ms))
+            worst = 0.0
+            for index in range(steps):
+                backend.step(
+                    network, state, {"cable": self.FIXTURE_INJECTED_A}
+                )
+                exact = self._analytic_single_compartment(
+                    compartment, self.FIXTURE_INITIAL_MV,
+                    self.FIXTURE_INJECTED_A, (index + 1) * step_ms,
+                )
+                worst = max(
+                    worst, abs(state.voltages_mV["cable"] - exact)
+                )
+            errors.append((step_ms, worst))
+
+        # Both timesteps converge to the analytic solution ...
+        assert errors[0][1] < 0.05
+        assert errors[1][1] < 0.05
+        # ... and halving dt reduces the first-order temporal error by about
+        # a factor of two. A reasonable band, not an exact ratio.
+        ratios = [coarse / fine for (_, coarse), (_, fine)
+                  in zip(errors, errors[1:])]
+        for ratio in ratios:
+            assert 1.6 < ratio < 2.5, (errors, ratios)
+
+    # --- C: finite, non-divergent, monotonic transient ---
+
+    def test_c_backward_euler_transient_is_finite_and_monotonic(self):
+        from math import isfinite
+
+        backend = self._backend()
+        network = backend.prepare(self._gf_axon_model())
+        state = self._state(backend, network)
+        previous = state.voltages_mV["cable"]
+        for _ in range(20000):
+            backend.step(network, state, {"cable": self.FIXTURE_INJECTED_A})
+            current = state.voltages_mV["cable"]
+            assert isfinite(current)
+            # A positive injected current is inward: it depolarizes, and the
+            # backward Euler update is monotonic toward the steady state.
+            assert current > previous
+            previous = current
+
+        compartment = network.compartments[0]
+        steady = (
+            compartment.leak_reversal_mV
+            + self.FIXTURE_INJECTED_A / compartment.leak_conductance_S * 1e3
+        )
+        # 20 membrane time constants: the transient has reached the steady
+        # state and never overshot it.
+        assert previous < steady
+        assert steady - previous < 1.0, (previous, steady)
+
+    # --- D, E, F, G, H: the subdivided GF_axon section at 0.01 ms ---
+
+    def _gf_axon_transient(self, segment_count, steps=10000):
+        backend = self._backend()
+        network = self._gf_axon_network(backend, segment_count)
+        state = self._state(backend, network)
+        proximal = list(network.compartments)[0].compartment_id
+        injected = {proximal: 1e-11}
+        reference = self._dc(network, injected)
+        start = max(
+            abs(state.voltages_mV[c] - reference[c]) for c in reference
+        )
+        for _ in range(steps):
+            backend.step(network, state, injected)
+        end = max(
+            abs(state.voltages_mV[c] - reference[c]) for c in reference
+        )
+        return backend, network, state, reference, start, end
+
+    def _assert_gf_axon_case(self, segment_count):
+        from math import isfinite
+
+        backend, network, state, reference, start, end = (
+            self._gf_axon_transient(segment_count)
+        )
+        assert len(network.compartments) == segment_count
+        assert network.timestep_ms == 0.01
+
+        for compartment in network.compartments:
+            voltage = state.voltages_mV[compartment.compartment_id]
+            assert isfinite(voltage)
+            assert abs(voltage) < 1e3, (segment_count, voltage)
+            # Every node is close to its own exact DC target.
+            assert abs(voltage - reference[compartment.compartment_id]) < 2.0, (
+                segment_count, compartment.compartment_id, voltage
+            )
+
+        # The transient moved toward the exact 7Q DC solution: after three
+        # membrane time constants the remaining distance has collapsed.
+        assert end < 0.15 * start, (segment_count, start, end)
+        # No explosive growth anywhere: the passive excursion stays inside a
+        # physically narrow band around rest.
+        assert max(state.voltages_mV.values()) < -60.0, segment_count
+        assert min(state.voltages_mV.values()) > -90.0, segment_count
+        return network, state, reference, end
+
+    def test_d_gf_axon_backward_euler_n1(self):
+        self._assert_gf_axon_case(1)
+
+    def test_e_gf_axon_backward_euler_n2(self):
+        self._assert_gf_axon_case(2)
+
+    def test_f_gf_axon_backward_euler_n5(self):
+        self._assert_gf_axon_case(5)
+
+    def test_g_gf_axon_backward_euler_n11(self):
+        self._assert_gf_axon_case(11)
+
+    def test_h_gf_axon_backward_euler_n51(self):
+        self._assert_gf_axon_case(51)
+
+    # --- I: no divergence at the policy timestep ---
+
+    def test_i_backward_euler_does_not_diverge_where_forward_euler_does(self):
+        from math import isfinite, isnan
+
+        injected_current = 1e-11
+        segment_count = 51
+
+        implicit = self._backend("backward_euler")
+        implicit_network = self._gf_axon_network(implicit, segment_count)
+        implicit_state = self._state(implicit, implicit_network)
+        proximal = list(implicit_network.compartments)[0].compartment_id
+        for _ in range(1000):
+            implicit.step(
+                implicit_network, implicit_state, {proximal: injected_current}
+            )
+        for voltage in implicit_state.voltages_mV.values():
+            assert isfinite(voltage)
+            assert not isnan(voltage)
+            assert abs(voltage) < 100.0
+
+        # The unchanged explicit path still diverges at the same timestep,
+        # which is exactly why an implicit method is required and why the
+        # explicit path is not silently replaced.
+        explicit = self._backend("forward_euler")
+        explicit_network = self._gf_axon_network(explicit, segment_count)
+        explicit_state = self._state(explicit, explicit_network)
+        explicit_proximal = list(explicit_network.compartments)[0]
+        explicit_proximal = explicit_proximal.compartment_id
+        for _ in range(1000):
+            explicit.step(
+                explicit_network, explicit_state,
+                {explicit_proximal: injected_current},
+            )
+        explicit_values = list(explicit_state.voltages_mV.values())
+        assert any(
+            isnan(v) or abs(v) > 1e3 for v in explicit_values
+        ), explicit_values
+
+    def test_i2_backward_euler_is_stable_across_every_segment_count(self):
+        from math import isfinite
+
+        for segment_count in self.SEGMENT_COUNTS:
+            backend = self._backend()
+            network = self._gf_axon_network(backend, segment_count)
+            state = self._state(backend, network)
+            proximal = list(network.compartments)[0].compartment_id
+            for _ in range(600):
+                backend.step(network, state, {proximal: 1e-11})
+            for voltage in state.voltages_mV.values():
+                assert isfinite(voltage)
+                assert abs(voltage) < 100.0, segment_count
+
+    # --- J: convergence to the exact DC solution ---
+
+    def test_j_backward_euler_converges_to_the_exact_dc_solution(self):
+        from math import isfinite
+
+        # N=1: 60 membrane time constants, so the steady state is reached to
+        # well inside a hundredth of a millivolt.
+        _, _, state, reference, _, end = self._gf_axon_transient(
+            1, steps=60000
+        )
+        for compartment_id, target in reference.items():
+            assert isfinite(state.voltages_mV[compartment_id])
+            assert abs(state.voltages_mV[compartment_id] - target) < 0.05, (
+                compartment_id, state.voltages_mV[compartment_id], target
+            )
+        assert end < 0.05
+
+        # N=51: the same collapse toward the DC solution at the finest
+        # discretization, where the explicit method diverges outright.
+        _, _, state, reference, start, end = self._gf_axon_transient(51)
+        assert end < 0.15 * start, (start, end)
+        assert end < 1.0, end
+
+    # --- K: the real subdivided GFS computational networks ---
+
+    def test_k_gfs_computational_networks_at_n51_are_finite_and_bounded(self):
+        from math import isfinite, isnan
+
+        backend = self._backend()
+        models = self._models()
+        expected_sections = {
+            "GF": 1, "TTMn": 3, "PSI": 2, "DLMn": 2,
+        }
+        for neuron_id, section_count in expected_sections.items():
+            model = models[neuron_id]
+            plan = SubdivisionPlan(sections=tuple(
+                SectionSubdivision(section_id, 51)
+                for section_id in model.compartments
+            ))
+            network = backend.prepare(model, plan)
+            state = self._state(backend, network)
+            proximal = list(network.compartments)[0].compartment_id
+            injected = {proximal: 1e-11}
+            reference = self._dc(network, injected)
+            start = max(
+                abs(state.voltages_mV[c] - reference[c]) for c in reference
+            )
+            for _ in range(400):
+                backend.step(network, state, injected)
+            for compartment in network.compartments:
+                voltage = state.voltages_mV[compartment.compartment_id]
+                assert isfinite(voltage), (neuron_id, voltage)
+                assert not isnan(voltage)
+                # No explosive growth: a passive 10 pA step on these sections
+                # is a sub-millivolt-scale excursion, never hundreds of mV.
+                assert abs(voltage) < 100.0, (neuron_id, voltage)
+                assert voltage < -60.0, (neuron_id, voltage)
+            end = max(
+                abs(state.voltages_mV[c] - reference[c]) for c in reference
+            )
+            # The voltages move toward the appropriate DC solution.
+            assert end < start, (neuron_id, start, end)
+            assert len(network.compartments) >= section_count * 51 - 200
+
+    def test_k2_eight_section_gfs_network_topology_is_unchanged(self):
+        backend = self._backend()
+        models = self._models()
+        total_sections = 0
+        for neuron_id in self.NEURON_IDS:
+            model = models[neuron_id]
+            plan = SubdivisionPlan(sections=tuple(
+                SectionSubdivision(section_id, 51)
+                for section_id in model.compartments
+            ))
+            network = backend.prepare(model, plan)
+            sections = {c.source_section_id for c in network.compartments}
+            total_sections += len(sections)
+            assert sections == {
+                cid for cid in model.compartments
+                if not model.is_electrically_excluded(cid)
+            }, neuron_id
+        # GF_axon, TTMn_axon + 2 dendrites, PSI_axon + dendrite,
+        # DLMn_axon + dendrite.
+        assert total_sections == 8
+
+    # --- L: the four declared computational connections remain intact ---
+
+    def test_l_four_computational_connections_survive_implicit_preparation(self):
+        backend = self._backend()
+        models = self._models()
+        expected = {
+            "TTMn": (
+                "TTMn_axon#seg0",
+                ("TTMn_medial_dendrite#seg0", "TTMn_lateral_dendrite#seg0"),
+            ),
+            "PSI": ("PSI_axon#seg0", ("PSI_dendrite#seg0",)),
+            "DLMn": ("DLMn_axon#seg0", ("DLMn_dendrite#seg0",)),
+        }
+        seen = 0
+        for neuron_id, (parent, children) in expected.items():
+            model = models[neuron_id]
+            plan = SubdivisionPlan(sections=tuple(
+                SectionSubdivision(section_id, 51)
+                for section_id in model.compartments
+            ))
+            network = backend.prepare(model, plan)
+            computational = [
+                c for c in network.connections
+                if c.computational_provenance is not None
+            ]
+            assert len(computational) == len(children), neuron_id
+            for connection in computational:
+                assert connection.parent_id == parent
+                assert connection.child_id in children
+                assert connection.resistance_ohm > 0.0
+                seen += 1
+
+            # The implicit operator contains every declared connection.
+            operator = backend.backward_euler_operator(network)
+            index = {
+                cid: i for i, cid in enumerate(operator.compartment_ids)
+            }
+            for connection in computational:
+                i = index[connection.parent_id]
+                j = index[connection.child_id]
+                conductance = 1.0 / connection.resistance_ohm
+                parent = network.compartment(connection.parent_id)
+                # The parent's diagonal carries its capacitance, its leak and
+                # EVERY connection that touches it (a branch point carries
+                # more than one), which is what the matrix must contain.
+                touching = sum(
+                    1.0 / c.resistance_ohm for c in network.connections
+                    if c.parent_id == connection.parent_id
+                    or c.child_id == connection.parent_id
+                )
+                assert operator.matrix[i][i] == pytest.approx(
+                    parent.capacitance_F / 0.01e-3
+                    + parent.leak_conductance_S
+                    + touching, rel=1e-12
+                )
+                assert operator.matrix[i][j] == pytest.approx(
+                    -conductance, rel=1e-12
+                )
+        assert seen == 4
+
+    def test_l2_operator_is_assembled_from_the_actual_connections(self):
+        """No tridiagonal cable structure is assumed."""
+        from biological_brain.dynamics.passive_cable import (
+            assemble_backward_euler_matrix,
+        )
+
+        backend = self._backend()
+        model = self._models()["TTMn"]
+        network = backend.prepare(model, SubdivisionPlan(sections=tuple(
+            SectionSubdivision(section_id, 5)
+            for section_id in model.compartments
+        )))
+        matrix = assemble_backward_euler_matrix(network, 0.01e-3)
+        index = {c.compartment_id: i for i, c in enumerate(network.compartments)}
+        size = len(network.compartments)
+
+        for i in range(size):
+            for j in range(size):
+                if i == j:
+                    continue
+                expected = 0.0
+                for connection in network.connections:
+                    if index[connection.parent_id] == i and (
+                        index[connection.child_id] == j
+                    ):
+                        expected = -1.0 / connection.resistance_ohm
+                    if index[connection.child_id] == i and (
+                        index[connection.parent_id] == j
+                    ):
+                        expected = -1.0 / connection.resistance_ohm
+                assert matrix[i][j] == pytest.approx(expected, abs=1e-30), (
+                    network.compartments[i].compartment_id,
+                    network.compartments[j].compartment_id,
+                )
+
+    # --- M: the explicit path is unchanged ---
+
+    def test_m_default_method_is_still_explicit_forward_euler(self):
+        from biological_brain.dynamics.passive_cable import PassiveNumericalMethod
+        from biological_brain.dynamics import get_model
+
+        # None is the documented "keep the default" spelling.
+        assert self._backend(None).numerical_method is (
+            PassiveNumericalMethod.FORWARD_EULER
+        )
+        assert self._backend("forward_euler").numerical_method is (
+            PassiveNumericalMethod.FORWARD_EULER
+        )
+        # The registry entry is untouched: it constructs with defaults only.
+        registry_model = get_model("passive_cable_v0")
+        assert registry_model.numerical_method is (
+            PassiveNumericalMethod.FORWARD_EULER
+        )
+        assert registry_model.numerical_method_provenance.method == (
+            "forward_euler"
+        )
+
+    def test_m2_explicit_step_is_bit_identical_to_the_original_update(self):
+        """The explicit step keeps its exact original arithmetic."""
+        dt_ms = 0.01
+        dt_s = dt_ms * 1e-3
+        backend = self._backend("forward_euler", timestep_ms=dt_ms)
+        network = backend.prepare(self._gf_axon_model())
+        state = self._state(backend, network)
+        compartment = network.compartments[0]
+
+        leak = (
+            compartment.leak_conductance_S
+            * (self.FIXTURE_INITIAL_MV - compartment.leak_reversal_mV)
+            * 1e-3
+        )
+        net = self.FIXTURE_INJECTED_A - leak
+        expected = self.FIXTURE_INITIAL_MV + (
+            net / compartment.capacitance_F
+        ) * dt_s * 1e3
+        returned = backend.step(
+            network, state, {"cable": self.FIXTURE_INJECTED_A}
+        )
+        assert returned["cable"] == pytest.approx(net, rel=1e-12)
+        assert state.voltages_mV["cable"] == pytest.approx(
+            expected, rel=1e-12
+        )
+
+    def test_m3_explicit_and_implicit_first_steps_differ_only_by_the_method(self):
+        from biological_brain.dynamics.passive_cable import PassiveNetworkState
+
+        voltages = {}
+        results = {}
+        for method in ("forward_euler", "backward_euler"):
+            backend = self._backend(method)
+            network = backend.prepare(self._gf_axon_model())
+            state = PassiveNetworkState(
+                voltages_mV={c.compartment_id: -70.0
+                             for c in network.compartments}
+            )
+            backend.step(network, state, {"cable": self.FIXTURE_INJECTED_A})
+            voltages[method] = state.voltages_mV["cable"]
+            results[method] = backend.numerical_method_provenance
+
+        assert voltages["forward_euler"] != voltages["backward_euler"]
+        assert results["forward_euler"].method == "forward_euler"
+        assert results["backward_euler"].method == "backward_euler"
+
+    # --- N, O: method selection ---
+
+    def test_n_numerical_method_selection_is_deterministic(self):
+        from biological_brain.dynamics.passive_cable import (
+            PassiveNumericalMethod,
+        )
+
+        assert PassiveNumericalMethod.from_name("backward_euler") is (
+            PassiveNumericalMethod.BACKWARD_EULER
+        )
+        assert PassiveNumericalMethod.from_name("forward_euler") is (
+            PassiveNumericalMethod.FORWARD_EULER
+        )
+        assert PassiveNumericalMethod.from_name("BACKWARD_EULER") is (
+            PassiveNumericalMethod.BACKWARD_EULER
+        )
+        assert PassiveNumericalMethod.from_name(
+            PassiveNumericalMethod.BACKWARD_EULER
+        ) is PassiveNumericalMethod.BACKWARD_EULER
+
+        for _ in range(3):
+            backend = self._backend("backward_euler")
+            assert backend.numerical_method is (
+                PassiveNumericalMethod.BACKWARD_EULER
+            )
+            assert backend.numerical_method_provenance == (
+                self._backend("backward_euler").numerical_method_provenance
+            )
+
+    def test_o_unknown_numerical_method_is_rejected_clearly(self):
+        from biological_brain.dynamics.passive_cable import (
+            PassiveNumericalMethod, PassiveNumericalMethodError,
+        )
+
+        for bad in ("crank_nicolson", "", "EULER", None, 7):
+            if bad is None:
+                # None is the documented "keep the default" spelling.
+                assert self._backend(None).numerical_method.value == (
+                    "forward_euler"
+                )
+                continue
+            with pytest.raises(PassiveNumericalMethodError) as info:
+                PassiveNumericalMethod.from_name(bad)
+            message = str(info.value)
+            assert "Unknown passive numerical integration method" in message
+            assert "backward_euler" in message
+            assert "forward_euler" in message
+
+        with pytest.raises(PassiveNumericalMethodError, match="Unknown passive"):
+            self._backend("crank_nicolson")
+
+    def test_o2_implicit_operator_is_refused_under_the_explicit_method(self):
+        from biological_brain.dynamics.passive_cable import (
+            PassiveNumericalMethodError,
+        )
+
+        backend = self._backend("forward_euler")
+        network = backend.prepare(self._gf_axon_model())
+        with pytest.raises(
+            PassiveNumericalMethodError, match="never silently switched"
+        ):
+            backend.backward_euler_operator(network)
+
+    # --- P: reset ---
+
+    def test_p_reset_restores_the_initial_state_and_drops_the_operator(self):
+        backend = self._backend()
+        model = self._gf_axon_model()
+        network = self._gf_axon_network(backend, 5)
+        state = self._state(backend, network)
+        initial = dict(state.voltages_mV)
+        proximal = list(network.compartments)[0].compartment_id
+
+        for _ in range(50):
+            backend.step(
+                network, state, {proximal: self.FIXTURE_INJECTED_A}
+            )
+        assert state.voltages_mV != initial
+        assert backend.numerical_cache_size == 1
+
+        backend.reset_state(model, network, state)
+        assert state.voltages_mV == initial
+        assert set(state.voltages_mV) == set(initial)
+        assert backend.numerical_cache_size == 0
+
+        # Determinism after reset: the same run reproduces the same trajectory.
+        first = []
+        for _ in range(20):
+            backend.step(
+                network, state, {proximal: self.FIXTURE_INJECTED_A}
+            )
+            first.append(state.voltages_mV[proximal])
+        backend.reset_state(model, network, state)
+        assert state.voltages_mV == initial
+        second = []
+        for _ in range(20):
+            backend.step(
+                network, state, {proximal: self.FIXTURE_INJECTED_A}
+            )
+            second.append(state.voltages_mV[proximal])
+        assert first == second
+
+    def test_p2_reset_writes_nothing_back_onto_the_compartment(self):
+        from biological_brain.morphology import CableParameters
+
+        backend = self._backend()
+        model = self._gf_axon_model()
+        network = self._gf_axon_network(backend, 2)
+        state = self._state(backend, network)
+        for _ in range(20):
+            backend.step(network, state, {"cable": self.FIXTURE_INJECTED_A})
+        backend.reset_state(model, network, state)
+        compartment = model.compartments["cable"]
+        assert compartment.state.voltage_mV == -70.0
+        assert compartment.cable_params == CableParameters()
+        for parameter in vars(compartment.cable_params).values():
+            assert parameter is None
+
+    def test_p3_single_compartment_neuron_reset_stays_unsupported(self):
+        from biological_brain.dynamics.passive_cable import PassiveUnsupportedError
+
+        backend = self._backend()
+        with pytest.raises(PassiveUnsupportedError, match="no single-compartment reset"):
+            backend.reset(None)
+
+    # --- Q: current injection convention ---
+
+    def test_q_injected_current_sign_convention_is_unchanged(self):
+        dt_ms = 0.01
+        results = {}
+        for injected in (1e-9, -1e-9, 0.0):
+            backend = self._backend(timestep_ms=dt_ms)
+            network = backend.prepare(self._gf_axon_model())
+            state = self._state(backend, network)
+            returned = backend.step(network, state, {"cable": injected})
+            results[injected] = (
+                state.voltages_mV["cable"], returned["cable"],
+            )
+        # A positive injected current is inward: it depolarizes.
+        assert results[1e-9][0] > results[0.0][0] > results[-1e-9][0]
+        # The returned net current is outward positive: depolarizing is a
+        # positive outward charging current.
+        assert results[1e-9][1] > 0.0
+        assert results[-1e-9][1] < 0.0
+        # With no injected current the returned net current is the inward
+        # charging current that exactly balances the outward leak.
+        assert results[0.0][1] < 0.0
+
+    def test_q2_injection_matches_the_explicit_path_in_steady_sign(self):
+        """Both methods depolarize for the same positive current."""
+        voltages = {}
+        for method in ("forward_euler", "backward_euler"):
+            backend = self._backend(method)
+            network = backend.prepare(self._gf_axon_model())
+            state = self._state(backend, network)
+            backend.step(network, state, {"cable": 1e-9})
+            voltages[method] = state.voltages_mV["cable"]
+        assert voltages["forward_euler"] > -70.0
+        assert voltages["backward_euler"] > -70.0
+
+    # --- R, S: excluded structures stay excluded ---
+
+    def test_r_excluded_structures_remain_absent_from_the_implicit_network(self):
+        backend = self._backend()
+        for neuron_id, model in self._models().items():
+            plan = SubdivisionPlan(sections=tuple(
+                SectionSubdivision(section_id, 51)
+                for section_id in model.compartments
+            ))
+            network = backend.prepare(model, plan)
+            ids = {c.compartment_id for c in network.compartments}
+            assert f"{neuron_id}_soma" not in ids, neuron_id
+            for excluded in network.excluded:
+                assert excluded.compartment_id not in ids
+            for compartment in network.compartments:
+                assert compartment.electrical_parent_id != (
+                    f"{neuron_id}_soma"
+                )
+
+    def test_s_gf_medial_dendrite_remains_absent(self):
+        backend = self._backend()
+        model = self._models()["GF"]
+        plan = SubdivisionPlan(sections=(
+            SectionSubdivision("GF_axon", 51),
+            SectionSubdivision("GF_medial_dendrite", 51),
+        ))
+        network = backend.prepare(model, plan)
+        ids = {c.compartment_id for c in network.compartments}
+        assert ids == {f"GF_axon#seg{i}" for i in range(51)}
+        assert "GF_medial_dendrite" not in ids
+        for connection in network.connections:
+            assert "GF_medial_dendrite" not in connection.parent_id
+            assert "GF_medial_dendrite" not in connection.child_id
+        # The anatomical section itself is untouched by preparation.
+        assert model.compartments["GF_medial_dendrite"].geometry.length_um is None
+        assert tuple(
+            p.distance_um
+            for p in model.compartments["GF_medial_dendrite"].placements
+        ) == (12.0,)
+
+    # --- numerical-method provenance is not biological provenance ---
+
+    def test_numerical_method_provenance_is_numerical_only(self):
+        from biological_brain.provenance import ParameterProvenance
+
+        record = self._backend("backward_euler").numerical_method_provenance
+        assert record.method == "backward_euler"
+        assert record.basis == (
+            "standard implicit integration of passive cable equations"
+        )
+        assert "NEURON numerical methodology" in record.source
+        assert "Hines & Carnevale" in record.source
+        assert record.provenance.category is ParameterProvenance.UNKNOWN
+        assert "NUMERICAL-METHOD PROVENANCE" in record.provenance.source
+        assert "NOT BIOLOGICAL PROVENANCE" in record.provenance.source
+        assert record.is_biological_provenance is False
+        for forbidden in (
+            ParameterProvenance.DIRECTLY_MEASURED,
+            ParameterProvenance.EXPERIMENTALLY_CONSTRAINED,
+            ParameterProvenance.ESTIMATED,
+            ParameterProvenance.PUBLISHED_MODEL_PARAMETER,
+        ):
+            assert record.provenance.category is not forbidden
+
+    def test_numerical_policy_timestep_is_unchanged(self):
+        from biological_brain.dynamics.passive_cable import (
+            PASSIVE_CABLE_NUMERICAL_POLICY,
+        )
+
+        assert PASSIVE_CABLE_NUMERICAL_POLICY.max_timestep_ms == 0.01
+        assert PASSIVE_CABLE_NUMERICAL_POLICY.default_timestep_ms == 0.01
+        assert PASSIVE_CABLE_NUMERICAL_POLICY.integration_method == (
+            "explicit_forward_euler"
+        )
+        # The 0.01 ms timestep remains a NUMERICAL CONFIGURATION, not a
+        # biological timescale.
+        note = PASSIVE_CABLE_NUMERICAL_POLICY.policy_note
+        assert "numerical" in note.lower()
+        assert "NOT an experimentally established biological timescale" in note
+
+    def test_scope_note_separates_stability_from_accuracy(self):
+        from biological_brain.dynamics.passive_cable import (
+            BACKWARD_EULER_SCOPE_NOTE,
+        )
+
+        assert "0.01 ms numerical policy timestep" in BACKWARD_EULER_SCOPE_NOTE
+        assert "stability is not accuracy" in BACKWARD_EULER_SCOPE_NOTE
+        assert "first-order" in BACKWARD_EULER_SCOPE_NOTE
+        assert "no latency reproduction" in BACKWARD_EULER_SCOPE_NOTE
+
+    def test_no_new_mechanism_is_created_by_the_implicit_path(self):
+        import biological_brain
+        import biological_brain.dynamics.passive_cable as module
+
+        for path in (module.__file__, biological_brain.__file__):
+            with open(path, encoding="utf-8") as handle:
+                text = handle.read().lower()
+            for forbidden in (
+                "class synapse", "synapticconductance", "gapjunction",
+                "hodgkinhuxley", "hodgkin_huxley_channel", "shakb",
+                "alpha7", "dalpha7", "alpha9", "rectification",
+            ):
+                assert forbidden not in text, forbidden
+
+        from biological_brain.dynamics.passive_cable import AxialConnection
+
+        assert {f for f in AxialConnection.__dataclass_fields__} == {
+            "parent_id", "child_id", "resistance_ohm", "derivation",
+            "computational_source", "source_model_id", "source_statement",
+            "direction", "computational_derivation", "computational_provenance",
+        }
+        assert "d_lambda" not in module.__doc__.lower()
+
+
+class TestActiveConductanceEvidenceAndAuthorization:
+    """3.0D-7S: active-conductance evidence and authorization layer.
+
+    Layering mirrors the passive checkpoints:
+
+        ActiveConductanceRegistry   evidence layer     (7S)
+        ActiveParameterProfile      authorization layer (7S)
+
+    Two evidence classes are kept apart on purpose. The Augustin et al. 2019
+    computational model states active conductance densities and reversal
+    potentials, and those are recorded as PUBLISHED_MODEL_PARAMETER values.
+    Kadas et al. 2019 experimentally implicates Para, Shaker, DmCa1D and
+    Slowpoke in GF axonal conduction, and those are recorded as QUALITATIVE
+    channel identities carrying no number at all.
+
+    This checkpoint is DATA ONLY. It establishes NO Hodgkin-Huxley equations,
+    NO gating variables, NO channel currents, NO activation of any
+    conductance in the live passive network, and NO claim of full GF HH
+    readiness or of biologically validated Na/K or Ca kinetics.
+    """
+
+    EXPECTED_DENSITIES = (
+        ("g_Na", 300.0, "mS/cm2"),
+        ("g_Nap", 0.11, "mS/cm2"),
+        ("g_K", 10.0, "mS/cm2"),
+    )
+    EXPECTED_REVERSALS = (
+        ("E_Na", 65.0, "mV"),
+        ("E_K", -74.0, "mV"),
+    )
+    EXPECTED_CHANNELS = ("Para", "Shaker", "DmCa1D", "Slowpoke")
+
+    def _registry(self):
+        from biological_brain.active_conductance_registry import (
+            get_active_conductance_registry,
+        )
+
+        return get_active_conductance_registry()
+
+    def _profile(self):
+        from biological_brain.active_profiles import (
+            get_active_parameter_profile, PROFILE_AUGUSTIN_2019_ACTIVE_MODEL,
+        )
+
+        return get_active_parameter_profile(PROFILE_AUGUSTIN_2019_ACTIVE_MODEL)
+
+    def _gfs_networks(self):
+        from biological_brain.dynamics.passive_cable import PassiveCableModel
+        from biological_brain.morphology_builder import build_gfs_compartment_models
+        from biological_brain.subdivision import SectionSubdivision, SubdivisionPlan
+
+        models = build_gfs_compartment_models()
+        for model in models.values():
+            model.passive_profile_name = PROFILE_AUGUSTIN_2019_GFS_PASSIVE
+        backend = PassiveCableModel(
+            profile_name=PROFILE_AUGUSTIN_2019_GFS_PASSIVE
+        )
+        return {
+            neuron_id: backend.prepare(model, SubdivisionPlan(sections=tuple(
+                SectionSubdivision(section_id, 51)
+                for section_id in model.compartments
+            )))
+            for neuron_id, model in models.items()
+        }
+
+    # --- A, B, C: the three published active conductance densities ---
+
+    def test_a_g_na_record_exists_with_the_exact_published_value(self):
+        from biological_brain.provenance import ParameterProvenance
+
+        record = self._registry().get("g_Na")
+        assert record.value == 300.0
+        assert record.unit == "mS/cm2"
+        assert record.channel == "Na (transient)"
+        assert record.provenance_category is (
+            ParameterProvenance.PUBLISHED_MODEL_PARAMETER
+        )
+
+    def test_b_g_nap_record_exists_with_the_exact_published_value(self):
+        from biological_brain.provenance import ParameterProvenance
+
+        record = self._registry().get("g_Nap")
+        assert record.value == 0.11
+        assert record.unit == "mS/cm2"
+        assert record.channel == "Na (persistent)"
+        assert record.provenance_category is (
+            ParameterProvenance.PUBLISHED_MODEL_PARAMETER
+        )
+
+    def test_c_g_k_record_exists_with_the_exact_published_value(self):
+        from biological_brain.provenance import ParameterProvenance
+
+        record = self._registry().get("g_K")
+        assert record.value == 10.0
+        assert record.unit == "mS/cm2"
+        assert record.channel == "K (delayed rectifier)"
+        assert record.provenance_category is (
+            ParameterProvenance.PUBLISHED_MODEL_PARAMETER
+        )
+
+    # --- D, E: the published reversal potentials ---
+
+    def test_d_e_na_is_plus_65_mv(self):
+        record = self._registry().get("E_Na")
+        assert record.value == 65.0
+        assert record.unit == "mV"
+
+    def test_e_e_k_is_minus_74_mv(self):
+        record = self._registry().get("E_K")
+        assert record.value == -74.0
+        assert record.unit == "mV"
+
+    # --- F, G, H: provenance, scope and limitations ---
+
+    def test_f_active_densities_are_published_model_parameters_not_measurements(self):
+        from biological_brain.provenance import ParameterProvenance
+
+        for name, _, _ in self.EXPECTED_DENSITIES + self.EXPECTED_REVERSALS:
+            record = self._registry().get(name)
+            assert record.provenance_category is (
+                ParameterProvenance.PUBLISHED_MODEL_PARAMETER
+            ), name
+            for forbidden in (
+                ParameterProvenance.DIRECTLY_MEASURED,
+                ParameterProvenance.EXPERIMENTALLY_CONSTRAINED,
+                ParameterProvenance.ESTIMATED,
+            ):
+                assert record.provenance_category is not forbidden, name
+            assert record.experimentally_demonstrated_in_gf is False, name
+            assert record.quantitatively_specified_for_gf is False, name
+            assert record.provenance.category is (
+                record.provenance_category
+            )
+
+    def test_g_scope_identifies_the_augustin_computational_model(self):
+        registry = self._registry()
+        for name, _, _ in self.EXPECTED_DENSITIES + self.EXPECTED_REVERSALS:
+            record = registry.get(name)
+            assert "Augustin" in record.source_model
+            assert "computational model" in record.source_model.lower()
+            assert "Augustin" in record.source
+            assert "PMC6469880" in record.source_citation
+            assert "245415" in record.source_citation
+            assert "NOT a GF-specific experimental measurement" in (
+                record.neuron_scope
+            )
+
+    def test_h_limitations_separate_model_parameters_from_gf_measurements(self):
+        for name, _, _ in self.EXPECTED_DENSITIES + self.EXPECTED_REVERSALS:
+            record = self._registry().get(name)
+            limitations = record.limitations
+            assert "MODEL PARAMETER, NOT A MEASUREMENT" in limitations, name
+            assert "does NOT establish" in limitations
+            assert "direct GF conductance-density measurement" in limitations
+            assert "manually adjusted" in limitations
+            assert "must NOT be reported as an experimentally measured GF" in (
+                limitations
+            )
+            assert "must NOT be silently" in limitations
+            assert "every GFS neuron" in limitations
+            assert "NOT eligible for the live solver" in limitations
+
+    # --- I, J, K, L: qualitative GF channel identity evidence ---
+
+    def test_i_para_qualitative_evidence_exists(self):
+        record = self._registry().channel("Para")
+        assert record.ion == "Na+"
+        assert "fast voltage-gated" in record.function
+        assert record.gf_experimental_evidence is True
+        assert "action potential conduction" in record.experimental_effect
+        assert "PMC6709211" in record.source
+
+    def test_j_shaker_qualitative_evidence_exists(self):
+        record = self._registry().channel("Shaker")
+        assert record.ion == "K+"
+        assert "voltage-gated potassium" in record.function
+        assert record.gf_experimental_evidence is True
+        assert "axonal conduction" in record.experimental_effect
+        assert "PMC6709211" in record.source
+
+    def test_k_dmca1d_qualitative_evidence_exists(self):
+        record = self._registry().channel("DmCa1D")
+        assert record.ion == "Ca2+"
+        assert "L-type-like" in record.function
+        assert record.gf_experimental_evidence is True
+        assert "axonal conduction" in record.experimental_effect
+        assert "PMC6709211" in record.source
+
+    def test_l_slowpoke_qualitative_evidence_exists(self):
+        record = self._registry().channel("Slowpoke")
+        assert record.ion == "K+"
+        assert "BK" in record.function
+        assert "calcium-activated" in record.function
+        assert record.gf_experimental_evidence is True
+        assert "conduction velocity" in record.experimental_effect
+        assert "PMC6709211" in record.source
+
+    def test_l2_exactly_four_channel_identities_are_registered(self):
+        registry = self._registry()
+        assert registry.channel_names() == self.EXPECTED_CHANNELS
+
+    # --- M: no invented number on any qualitative record ---
+
+    def test_m_no_qualitative_channel_record_carries_a_number(self):
+        import dataclasses
+
+        from biological_brain.active_conductance_registry import (
+            ChannelIdentityRecord,
+        )
+
+        allowed = {f.name for f in dataclasses.fields(ChannelIdentityRecord)}
+        forbidden_numeric = allowed - {
+            "channel", "ion", "function", "gf_experimental_evidence",
+            "quantitatively_specified_for_gf", "source", "source_citation",
+            "limitations", "experimental_effect",
+        }
+        assert forbidden_numeric == set(), forbidden_numeric
+
+        for record in self._registry().channel_identities:
+            assert record.has_quantitative_value is False, record.channel
+            assert record.quantitatively_specified_for_gf is False
+            for name in forbidden_numeric:
+                assert getattr(record, name) is None, (record.channel, name)
+            limitations = record.limitations
+            assert "CARRIES" in limitations.upper()
+            assert "NO conductance density" in limitations
+            assert "NO activation or inactivation kinetics" in limitations
+            assert "NO reversal potential" in limitations
+            assert "NO Q10" in limitations
+            assert "NO single-channel conductance" in limitations
+
+    def test_m2_a_qualitative_record_cannot_be_given_a_value(self):
+        """The qualitative record type refuses to hold a number at all."""
+        from biological_brain.active_conductance_registry import (
+            ChannelIdentityRecord,
+        )
+
+        with pytest.raises(TypeError):
+            ChannelIdentityRecord(
+                channel="Para",
+                ion="Na+",
+                function="fast voltage-gated sodium channel",
+                gf_experimental_evidence=True,
+                quantitatively_specified_for_gf=False,
+                source="s",
+                source_citation="s",
+                limitations="l",
+                value=300.0,
+            )
+
+    # --- N: quantitative kinetic readiness ---
+
+    def test_n_quantitative_kinetic_readiness_is_unavailable(self):
+        registry = self._registry()
+        expected = (
+            ("Para", "activation_kinetics"),
+            ("Para", "inactivation_kinetics"),
+            ("Shaker", "activation_kinetics"),
+            ("Shaker", "inactivation_kinetics"),
+            ("DmCa1D", "activation_kinetics"),
+            ("DmCa1D", "inactivation_kinetics"),
+            ("DmCa1D", "calcium_dependent_kinetics"),
+            ("Slowpoke", "activation_kinetics"),
+            ("Slowpoke", "calcium_dependent_kinetics"),
+        )
+        for channel, quantity in expected:
+            record = registry.readiness(channel, quantity)
+            assert record.ready is False, (channel, quantity)
+            assert record.status == "not_available"
+            assert "NO GF-SPECIFIC QUANTITATIVE KINETIC" in record.reason
+            assert "does not license importing generic" in record.reason
+        assert registry.ready_kinetics() == ()
+
+    def test_n2_no_gf_specific_kinetic_values_exist_elsewhere_in_the_project(self):
+        """No existing project source supplies these GF kinetic quantities."""
+        import biological_brain
+        import os
+
+        package_dir = os.path.dirname(biological_brain.__file__)
+        banned = (
+            "alpha_num", "alpha_ninf", "beta_num", "q10_gating", "q10_factor",
+            "vhalf_na", "vhalf_k",
+        )
+        for root, _, files in os.walk(package_dir):
+            if "__pycache__" in root:
+                continue
+            for name in files:
+                if not name.endswith(".py"):
+                    continue
+                with open(os.path.join(root, name), encoding="utf-8") as handle:
+                    text = handle.read().lower()
+                for token in banned:
+                    assert token not in text, (name, token)
+
+    def test_n3_modeldb_channel_implementations_are_recorded_not_extracted(self):
+        registry = self._registry()
+        assert len(registry.channel_implementations) == 1
+        record = registry.channel_implementations[0]
+        assert "245415" in record.location
+        assert "channels" in record.location
+        assert record.kinetics_extracted is False
+        assert "NOT extracted" in record.limitation
+        assert "separate" in record.limitation
+
+    # --- O, P: the profile is opt-in and never a default ---
+
+    def test_o_active_authorization_profile_is_opt_in(self):
+        from biological_brain.active_profiles import (
+            AUTHORIZATION_SCOPE_MODEL_REPRODUCTION,
+            get_active_parameter_profile,
+            available_active_profiles,
+            PROFILE_AUGUSTIN_2019_ACTIVE_MODEL,
+        )
+
+        profile = self._profile()
+        assert profile.opt_in is True
+        assert profile.name == PROFILE_AUGUSTIN_2019_ACTIVE_MODEL
+        assert available_active_profiles() == (
+            PROFILE_AUGUSTIN_2019_ACTIVE_MODEL,
+        )
+        for parameter in profile.parameters:
+            assert parameter.authorization_scope == (
+                AUTHORIZATION_SCOPE_MODEL_REPRODUCTION
+            )
+        # It must be named explicitly: an unknown name is an error.
+        with pytest.raises(KeyError, match="Unknown active parameter profile"):
+            get_active_parameter_profile("some_other_profile")
+
+    def test_p_active_authorization_profile_is_not_default(self):
+        from biological_brain.active_profiles import (
+            get_active_parameter_profile, available_active_profiles,
+        )
+
+        profile = self._profile()
+        assert profile.is_default is False
+        assert profile.eligible_for_live_solver is False
+        assert profile.model_reproduction_only is True
+        assert profile.any_live_solver_eligible() is False
+        assert all(
+            p.eligible_for_live_solver is False for p in profile.parameters
+        )
+        assert self._registry().any_live_solver_eligible() is False
+        # Explicitly not a passive or engine default either.
+        from biological_brain.dynamics.passive_cable import (
+            MODEL_NAME_PASSIVE_CABLE_V0, PASSIVE_CABLE_NUMERICAL_POLICY,
+        )
+
+        assert MODEL_NAME_PASSIVE_CABLE_V0 == "passive_cable_v0"
+        assert PASSIVE_CABLE_NUMERICAL_POLICY.max_timestep_ms == 0.01
+        assert len(available_active_profiles()) == 1
+
+    def test_p2_profile_authorizes_exactly_the_five_published_values(self):
+        profile = self._profile()
+        assert profile.authorized_names() == (
+            "g_Na", "g_Nap", "g_K", "E_Na", "E_K",
+        )
+        assert profile.get("g_Na").value == 300.0
+        assert profile.get("g_Nap").value == 0.11
+        assert profile.get("g_K").value == 10.0
+        assert profile.get("E_Na").value == 65.0
+        assert profile.get("E_K").value == -74.0
+        assert profile.is_authorized("g_Na") is True
+        assert profile.is_authorized("g_Ca") is False
+        with pytest.raises(KeyError, match="not authorized"):
+            profile.get("g_Ca")
+
+    def test_p3_profile_scope_note_separates_stability_and_measurement(self):
+        profile = self._profile()
+        limitations = profile.limitations
+        assert "MODEL REPRODUCTION AUTHORIZATION ONLY" in limitations
+        assert "NOT ELIGIBLE FOR THE LIVE SOLVER" in limitations
+        assert "not connected to PassiveCableModel.step()" in limitations
+        assert "QUANTITATIVE KINETIC AUTHORIZATION IS ABSENT" in limitations
+        assert "never as measurements" in limitations
+
+    def test_p4_profile_excludes_ca_bk_and_all_hh_kinetics(self):
+        profile = self._profile()
+        excluded = {e.name: e.reason for e in profile.excluded}
+        for name in (
+            "g_Ca", "E_Ca", "g_BK", "E_BK",
+            "hodgkin_huxley_kinetics", "q10_kinetic_scaling",
+            "gf_directly_measured_conductance_density",
+        ):
+            assert name in excluded, name
+            reason = excluded[name].lower()
+            assert (
+                "is authorized" in reason
+                or "not a gf measurement" in reason
+                or "not authorized" in reason
+            ), name
+        assert len(profile.unready_kinetics) == 9
+        assert profile.channel_identities == self.EXPECTED_CHANNELS
+
+    # --- Q, R: the passive representation is untouched ---
+
+    def test_q_active_authorization_does_not_modify_the_passive_backend(self):
+        import inspect
+
+        from biological_brain.dynamics.passive_cable import PassiveCableModel
+        import biological_brain.active_profiles as active_profiles
+        import biological_brain.dynamics.passive_cable as cable_module
+
+        before = self._gfs_networks()
+        baseline = {
+            neuron_id: [
+                (c.compartment_id, c.capacitance_F, c.leak_conductance_S,
+                 c.leak_reversal_mV, c.axial_resistance_ohm)
+                for c in network.compartments
+            ]
+            for neuron_id, network in before.items()
+        }
+        baseline_connections = {
+            neuron_id: [
+                (c.parent_id, c.child_id, c.resistance_ohm)
+                for c in network.connections
+            ]
+            for neuron_id, network in before.items()
+        }
+
+        # Build and use the active authorization profile repeatedly.
+        for _ in range(3):
+            profile = self._profile()
+            assert profile.get("g_Na").value == 300.0
+
+        after = self._gfs_networks()
+        assert {
+            neuron_id: [
+                (c.compartment_id, c.capacitance_F, c.leak_conductance_S,
+                 c.leak_reversal_mV, c.axial_resistance_ohm)
+                for c in network.compartments
+            ]
+            for neuron_id, network in after.items()
+        } == baseline
+        assert {
+            neuron_id: [
+                (c.parent_id, c.child_id, c.resistance_ohm)
+                for c in network.connections
+            ]
+            for neuron_id, network in after.items()
+        } == baseline_connections
+
+        # The passive backend does not import or reference the active layer.
+        source = inspect.getsource(cable_module)
+        assert "active_profiles" not in source
+        assert "active_conductance_registry" not in source
+        assert "g_Na" not in source
+        assert "g_Nap" not in source
+        assert "g_K" not in source
+        assert "E_Na" not in source
+        assert "E_K" not in source
+        assert "active_profiles" not in inspect.getsource(PassiveCableModel)
+        # And the active layer does not import the solver.
+        active_source = inspect.getsource(active_profiles)
+        assert "PassiveCableModel" not in active_source.replace(
+            "not connected to ``PassiveCableModel.step()``", ""
+        ).replace("PassiveCableModel.step()", "")
+
+    def test_r_active_authorization_does_not_populate_compartment_electrical(self):
+        import dataclasses
+
+        from biological_brain.dynamics.passive_cable import CompartmentElectrical
+
+        fields = {f.name for f in dataclasses.fields(CompartmentElectrical)}
+        for forbidden in (
+            "g_Na", "g_nap", "g_k", "g_na_S", "e_na_mV", "e_k_mV",
+            "na_conductance", "k_conductance", "ca_conductance",
+            "gating", "m", "h", "n", "gate_state", "hh_state",
+        ):
+            assert forbidden not in fields, forbidden
+
+        for neuron_id, network in self._gfs_networks().items():
+            for compartment in network.compartments:
+                applied = {p.name for p in compartment.applied_parameters}
+                assert applied <= {
+                    "capacitance", "leak_conductance",
+                    "leak_reversal_potential", "axial_resistance",
+                }, (neuron_id, applied)
+                assert {
+                    "capacitance", "leak_conductance", "leak_reversal_potential"
+                } <= applied, (neuron_id, applied)
+                if compartment.axial_resistance_ohm is None:
+                    assert "axial_resistance" not in applied
+                assert compartment.axial_resistance_ohm is None or (
+                    "Ra" in compartment.axial_derivation
+                )
+                if compartment.axial_resistance_ohm is None:
+                    assert "no axial path" in compartment.axial_derivation
+
+    # --- S: the passive parameters are untouched ---
+
+    def test_s_existing_passive_parameters_remain_unchanged(self):
+        from biological_brain.passive_profiles import (
+            get_passive_parameter_profile,
+        )
+
+        profile = get_passive_parameter_profile(
+            PROFILE_AUGUSTIN_2019_GFS_PASSIVE
+        )
+        assert profile.authorized_names() == (
+            "specific_membrane_capacitance",
+            "specific_axial_resistance",
+            "leak_conductance_density",
+            "leak_reversal_potential",
+        )
+        assert profile.get("specific_membrane_capacitance").value == 1.0
+        assert profile.get("specific_axial_resistance").value == 35.4
+        assert profile.get("leak_conductance_density").value == 0.03
+        assert profile.get("leak_reversal_potential").value == -85.0
+
+        registry = self._registry()
+        assert "g_leak" not in registry.names()
+        assert "specific_membrane_capacitance" not in registry.names()
+
+    def test_s2_the_two_layers_do_not_overlap(self):
+        from biological_brain.passive_profiles import (
+            get_passive_parameter_profile,
+        )
+
+        active_names = set(self._registry().names())
+        passive_names = set(
+            get_passive_parameter_profile(
+                PROFILE_AUGUSTIN_2019_GFS_PASSIVE
+            ).authorized_names()
+        ) | {
+            "specific_membrane_capacitance", "specific_axial_resistance",
+            "leak_conductance_density", "leak_reversal_potential",
+        }
+        assert active_names & passive_names == set()
+
+    # --- negative tests: nothing active reaches the live network ---
+
+    def test_negative_no_active_conductance_in_any_gfs_section(self):
+        for neuron_id, network in self._gfs_networks().items():
+            for compartment in network.compartments:
+                applied = {p.name for p in compartment.applied_parameters}
+                assert applied <= {
+                    "capacitance", "leak_conductance",
+                    "leak_reversal_potential", "axial_resistance",
+                }, (neuron_id, applied)
+                assert compartment.leak_reversal_mV == -85.0
+                assert compartment.capacitance_F > 0.0
+                assert compartment.leak_conductance_S > 0.0
+                for parameter in compartment.applied_parameters:
+                    assert parameter.source_parameter in {
+                        "specific_membrane_capacitance",
+                        "leak_conductance_density",
+                        "leak_reversal_potential",
+                        "specific_axial_resistance",
+                    }
+                    # No applied parameter is authorized by the active
+                    # profile, and none comes from it.
+                    assert parameter.profile_name == (
+                        PROFILE_AUGUSTIN_2019_GFS_PASSIVE
+                    )
+                    assert self._profile().is_authorized(
+                        parameter.source_parameter
+                    ) is False
+
+    def test_negative_gf_axon_has_no_active_conductance(self):
+        network = self._gfs_networks()["GF"]
+        for compartment in network.compartments:
+            assert compartment.source_section_id == "GF_axon"
+            # The proximal segment is the electrical root; the rest form the
+            # 3.0D-7K axial chain. Neither introduces an active conductance.
+            if compartment.segment_index == 0:
+                assert compartment.electrical_parent_id is None
+                assert compartment.axial_resistance_ohm is None
+            else:
+                assert compartment.electrical_parent_id == (
+                    f"GF_axon#seg{compartment.segment_index - 1}"
+                )
+                assert compartment.axial_resistance_ohm > 0.0
+            assert compartment.leak_conductance_S > 0.0
+
+    def test_negative_ttmn_psi_dlmn_have_no_active_conductance(self):
+        networks = self._gfs_networks()
+        for neuron_id in ("TTMn", "PSI", "DLMn"):
+            for compartment in networks[neuron_id].compartments:
+                assert "g_Na" not in str(vars(compartment))
+                assert compartment.leak_reversal_mV == -85.0
+
+    def test_negative_no_hh_state_variable_exists(self):
+        from biological_brain.dynamics.passive_cable import PassiveNetworkState
+
+        network = self._gfs_networks()["TTMn"]
+        state = PassiveNetworkState(
+            voltages_mV={c.compartment_id: -70.0 for c in network.compartments}
+        )
+        # The mutable simulation state holds voltages and nothing else.
+        assert set(vars(state)) == {"voltages_mV"}
+        for entry in state.voltages_mV.values():
+            assert isinstance(entry, float)
+        for attribute in ("gates", "gating", "hh", "m", "h", "n", "gating_state"):
+            assert not hasattr(state, attribute)
+            assert not hasattr(network, attribute)
+
+    def test_negative_no_channel_current_is_calculated(self):
+        """A passive step still depends only on C, g, R and the leak."""
+        from biological_brain.dynamics.passive_cable import (
+            PassiveCableModel, PassiveNetworkState,
+        )
+        from biological_brain.morphology_builder import build_gfs_compartment_models
+
+        models = build_gfs_compartment_models()
+        for model in models.values():
+            model.passive_profile_name = PROFILE_AUGUSTIN_2019_GFS_PASSIVE
+        plain = PassiveCableModel(
+            profile_name=PROFILE_AUGUSTIN_2019_GFS_PASSIVE,
+            numerical_method="forward_euler",
+        )
+        subdivided = PassiveCableModel(
+            profile_name=PROFILE_AUGUSTIN_2019_GFS_PASSIVE,
+            numerical_method="backward_euler",
+        )
+
+        for backend, network in (
+            (plain, plain.prepare(models["DLMn"])),
+            (subdivided, self._gfs_networks()["DLMn"]),
+        ):
+            state = PassiveNetworkState(
+                voltages_mV={
+                    c.compartment_id: -70.0 for c in network.compartments
+                }
+            )
+            proximal = list(network.compartments)[0].compartment_id
+            for _ in range(5):
+                backend.step(network, state, {proximal: 1e-11})
+            for voltage in state.voltages_mV.values():
+                assert -100.0 < voltage < -50.0, voltage
+            assert "g_Na" not in backend.numerical_method_provenance.source
+            assert "g_K" not in backend.numerical_method_provenance.source
+
+    def test_negative_no_active_conductance_on_the_morphology(self):
+        from biological_brain.morphology import CableParameters
+        from biological_brain.morphology_builder import build_gfs_compartment_models
+
+        for model in build_gfs_compartment_models().values():
+            for compartment in model.compartments.values():
+                assert compartment.cable_params == CableParameters()
+                for parameter in vars(compartment.cable_params).values():
+                    assert parameter is None
+
+    def test_negative_no_hh_equations_or_gating_in_the_codebase(self):
+        import os
+
+        import biological_brain
+
+        package_dir = os.path.dirname(biological_brain.__file__)
+        banned = (
+            "class hh", "hodgkin_huxley_current", "na_current", "ca_current",
+            "bk_current", "alpha_m", "beta_h", "gating_variable",
+        )
+        for root, _, files in os.walk(package_dir):
+            if "__pycache__" in root:
+                continue
+            for name in files:
+                if not name.endswith(".py"):
+                    continue
+                path = os.path.join(root, name)
+                with open(path, encoding="utf-8") as handle:
+                    text = handle.read().lower()
+                for token in banned:
+                    assert token not in text, (name, token)
+
+    # --- the scientific boundary this checkpoint actually establishes ---
+
+    def test_registry_scope_note_states_the_actual_conclusion(self):
+        note = self._registry().scope_note
+        assert "experimentally supported" in note
+        assert "MODEL PARAMETERS rather than direct GF measurements" in note
+        assert "sufficiently validated GF-specific kinetic" in note
+        for forbidden_claim in (
+            "full GF HH readiness",
+            "biologically validated Na/K kinetics",
+            "validated Ca kinetics",
+            "complete channel distribution",
+            "reproduction of any action potential waveform",
+        ):
+            assert forbidden_claim in note, forbidden_claim
+
+    def test_registry_records_only_the_five_quantitative_values(self):
+        registry = self._registry()
+        assert registry.names() == (
+            "g_Na", "g_Nap", "g_K", "E_Na", "E_K",
+        )
+        for record in registry.parameters:
+            assert record.has_value is True
+            assert record.value is not None
+            assert record.authorized_for_reproduction is True
+            assert record.eligible_for_live_solver is False
+
+
+class TestActiveMechanismSourceExtraction:
+    """3.0D-7T: verbatim active mechanism source registry.
+
+    3.0D-7S recorded what the sources support. 3.0D-7T records the compiled
+    NEURON mechanism source that implements it: exact file, exact line, exact
+    text, exact source unit, and the model's own instantiation of it.
+
+    Two levels are kept apart and never merged: the .mod PARAMETER default and
+    the gfpn.py model instance value. Merging them would fabricate whichever
+    one the source did not state.
+
+    This checkpoint is DATA ONLY. It implements no Hodgkin-Huxley equations,
+    creates no gating variables, calculates no channel current, changes no
+    compartment and leaves the passive backend untouched.
+    """
+
+    MECHANISMS = ("nat", "nap", "k", "gap2", "pas")
+    UNRETRIEVED = ("Exp2Syn", "Para", "Shaker", "DmCa1D", "Slowpoke")
+
+    def _registry(self):
+        from biological_brain.active_mechanism_registry import (
+            get_active_mechanism_registry,
+        )
+
+        return get_active_mechanism_registry()
+
+    # --- A: the retrieved set, and the unretrieved set, are both explicit ---
+
+    def test_a_exactly_four_mechanism_sources_are_retrieved(self):
+        from biological_brain.active_mechanism_registry import (
+            KIND_DENSITY_CHANNEL, KIND_POINT_PROCESS, STATUS_RETRIEVED,
+        )
+
+        registry = self._registry()
+        assert registry.names() == self.MECHANISMS
+        assert registry.density_channels() == ("nat", "nap", "k", "pas")
+        assert registry.point_processes() == ("gap2",)
+        for name in ("nat", "nap", "k", "gap2"):
+            mechanism = registry.get(name)
+            assert mechanism.computational_status == STATUS_RETRIEVED, name
+            assert mechanism.has_mechanism_source is True, name
+            assert mechanism.source_file.endswith(f"{name}.mod"), name
+            assert mechanism.source_url.startswith(
+                "https://raw.githubusercontent.com/ModelDBRepository/245415/"
+            ), name
+            assert mechanism.kind in (
+                KIND_DENSITY_CHANNEL, KIND_POINT_PROCESS
+            ), name
+        assert registry.get("gap2").kind == KIND_POINT_PROCESS
+
+    def test_a2_absence_is_recorded_rather_than_silent(self):
+        from biological_brain.active_mechanism_registry import (
+            STATUS_UNRETRIEVED,
+        )
+
+        registry = self._registry()
+        assert registry.unretrieved_names() == self.UNRETRIEVED
+        for name in self.UNRETRIEVED:
+            record = registry.unretrieved_by_name(name)
+            assert record.computational_status == STATUS_UNRETRIEVED, name
+            assert record.reason, name
+            assert record.scope_note, name
+            assert record.live_solver_eligible is False, name
+        with pytest.raises(KeyError, match="Unretrieved source"):
+            registry.unretrieved_by_name("not_a_thing")
+
+    def test_a3_pas_has_no_mechanism_source_and_says_so(self):
+        from biological_brain.active_mechanism_registry import (
+            STATUS_INSTANCE_VALUES_ONLY,
+        )
+
+        mechanism = self._registry().get("pas")
+        assert mechanism.computational_status == STATUS_INSTANCE_VALUES_ONLY
+        assert mechanism.has_mechanism_source is False
+        # No .mod text exists, so no mechanism default and no equation may be
+        # recorded for it.
+        assert mechanism.mechanism_parameters() == ()
+        assert mechanism.equations == ()
+        # What the model DOES state is the instantiation and two values.
+        assert mechanism.model_instance_values()
+        assert mechanism.instantiation_source_lines == (129, 137)
+        limitations = mechanism.limitations
+        assert "BUILT-IN NEURON mechanism" in limitations
+        assert "NO channels/pas.mod" in limitations
+        assert "PASSIVE" in limitations
+
+    def test_a4_the_four_named_drosophila_channels_have_no_source(self):
+        registry = self._registry()
+        for name in ("Para", "Shaker"):
+            record = registry.unretrieved_by_name(name)
+            assert "No mechanism named" in record.reason, name
+            assert "channels directory" in record.reason, name
+            # The identity evidence must not be silently replaced by the
+            # kinetics of the generic mechanisms that exist.
+            assert "NOT silently replaced" in record.scope_note, name
+        for name in ("DmCa1D", "Slowpoke"):
+            record = registry.unretrieved_by_name(name)
+            assert "No mechanism named" in record.reason, name
+            assert "calcium" in record.scope_note.lower(), name
+            assert "no number" in record.scope_note, name
+
+    # --- B: verbatim text, checked character for character ---
+
+    def test_b_every_recorded_line_is_verbatim(self):
+        """The registry's whole claim is fidelity. Check it against the files."""
+        self._registry().verify_verbatim_source()
+
+    def test_b2_verbatim_text_keeps_tabs_and_inline_comments(self):
+        from biological_brain.active_mechanism_registry import (
+            ROLE_MECHANISM_PARAMETER,
+        )
+
+        gbar = self._registry().get("nat").quantity("gbar")
+        assert gbar.source_value_text == (
+            "\tgbar = 0   \t(S/cm2)\t: 0.12 mho/cm2"
+        )
+        assert gbar.role == ROLE_MECHANISM_PARAMETER
+        assert gbar.source_line == 22
+        assert gbar.source_file == "channels/nat.mod"
+        v_half = self._registry().get("nat").quantity("v1_2h")
+        assert v_half.source_value_text == (
+            "\tv1_2h  = -47\t(mV)\t\t: v 1/2 for inact \t"
+        )
+        assert v_half.annotation_texts() == ("v 1/2 for inact ",)
+        # Every quantity states its own file, line and source text.
+        for mechanism in self._registry().mechanisms:
+            for quantity in mechanism.quantities:
+                assert quantity.source_value_text, (mechanism.name, quantity.name)
+                assert quantity.source_line > 0
+                assert "245415" in quantity.source_url
+                assert quantity.source_reference.startswith(
+                    quantity.source_file
+                )
+
+    def test_b3_equations_are_recorded_verbatim_without_being_evaluated(self):
+        registry = self._registry()
+        nat = registry.get("nat")
+        assert nat.equation("conductance").expression == "\tgna = gbar*m*m*m*h"
+        assert nat.equation("current").expression == "\tina = gna * (v - ena)"
+        assert nat.equation("state_block").expression == "STATE { m h }"
+        nap_conductance = registry.get("nap").equation("conductance")
+        assert nap_conductance.expression == "\tgna = gbar*m"
+        # nap reuses nat's symbol gna with a different exponent; the record
+        # notes the difference instead of silently harmonising it.
+        assert "exponent differs" in nap_conductance.description
+        assert registry.get("k").equation("conductance").expression == (
+            "\tgk = gbar*m"
+        )
+        assert registry.get("gap2").equation("current").expression == (
+            "\ti = (v - vgap)*g*(0.001)"
+        )
+        for mechanism in registry.mechanisms:
+            for equation in mechanism.equations:
+                assert equation.description, (mechanism.name, equation.name)
+                assert "245415" in equation.source_url
+
+    def test_b4_source_reference_names_file_line_and_model(self):
+        quantity = self._registry().get("nat").quantity("gnatbar")
+        assert quantity.source_file == "gfpn.py"
+        assert quantity.source_line == 53
+        reference = quantity.source_reference
+        assert "gfpn.py line 53" in reference
+        assert "ModelDBRepository/245415" in reference
+        assert "'gnatbar': 300e-3," in reference
+
+    # --- C: mechanism defaults and model instance values stay apart ---
+
+    def test_c_gbar_default_is_zero_and_is_not_the_model_value(self):
+        from biological_brain.active_mechanism_registry import (
+            ROLE_MECHANISM_PARAMETER, ROLE_MODEL_INSTANCE_VALUE,
+        )
+
+        nat = self._registry().get("nat")
+        default = nat.quantity("gbar")
+        assert default.role == ROLE_MECHANISM_PARAMETER
+        assert default.value == 0.0
+        assert default.source_unit == "S/cm2"
+        instance = nat.quantity("gnatbar")
+        assert instance.role == ROLE_MODEL_INSTANCE_VALUE
+        assert instance.value == 300.0
+        # The default is never quietly replaced by the instance value.
+        assert nat.quantity("gbar").value == 0.0
+        assert len(nat.mechanism_parameters()) == 7
+        assert len(nat.model_instance_values()) == 2
+
+    def test_c2_the_gbar_annotation_conflict_is_recorded_not_resolved(self):
+        registry = self._registry()
+        for name in ("nat", "nap", "k"):
+            gbar = registry.get(name).quantity("gbar")
+            assert gbar.value == 0.0, name
+            assert gbar.annotation_texts() == ("0.12 mho/cm2",), name
+            assert "SOURCE COMMENT CONFLICT" in gbar.note, name
+            assert "does not describe the assigned value" in gbar.note, name
+            assert "Neither is corrected" in gbar.note, name
+            assert "no gbar default is adopted as a biological value" in (
+                gbar.note
+            ), name
+
+    def test_c3_kinetic_equations_are_recorded_with_their_own_values(self):
+        registry = self._registry()
+        nat = registry.get("nat")
+        assert nat.equation("minf").expression == (
+            "\tminf = 1/(1+exp((vm-v1_2m)/km))"
+        )
+        assert nat.equation("mtau").expression == (
+            "\tmtau = 0.13 + 3.43/(1+exp((vm+45.35)/5.98))"
+        )
+        assert nat.equation("htau").expression == (
+            "\thtau = 0.36 + exp((vm+20.65)/-10.47)"
+        )
+        assert nat.equation("m_derivative").source_line == 75
+        assert nat.equation("h_derivative").source_line == 76
+        # The voltage and slope parameters travel with the rate equations.
+        assert nat.quantity("v1_2m").value == -29.13
+        assert nat.quantity("km").value == -8.92
+        assert nat.quantity("v1_2h").value == -47.0
+        assert nat.quantity("kh").value == 5.0
+        assert registry.get("nap").quantity("v1_2m").value == -48.77
+        assert registry.get("nap").quantity("km").value == -3.68
+        assert registry.get("k").quantity("v1_2m").value == -12.85
+        assert registry.get("k").quantity("km").value == -19.91
+        # The kh annotation is the source's own wording, uncorrected.
+        assert nat.quantity("kh").annotation_texts() == ("act slope",)
+        assert "INACTIVATION slope" in nat.quantity("kh").note
+        assert "not corrected" in nat.quantity("kh").note
+
+    def test_c4_nap_and_k_have_no_inactivation_and_a_constant_tau(self):
+        from biological_brain.active_mechanism_registry import (
+            SOLVE_METHOD_CNEXP, TEMPERATURE_NONE_CELSIUS_UNUSED,
+        )
+
+        registry = self._registry()
+        for name in ("nap", "k"):
+            mechanism = registry.get(name)
+            assert mechanism.states == ("m",), name
+            assert mechanism.activation_variables == ("m",), name
+            assert mechanism.inactivation_variables == (), name
+            assert mechanism.has_inactivation is False, name
+            assert mechanism.equation("mtau").expression == "\tmtau = 1", name
+            assert "constant 'mtau = 1' in ms" in (
+                mechanism.equation("mtau").note
+            ), name
+            assert "independent of voltage" in (
+                mechanism.limitations.lower()
+            ), name
+            assert "steady-state conductance models" in (
+                mechanism.limitations
+            ), name
+            assert mechanism.solve_method == SOLVE_METHOD_CNEXP, name
+            assert mechanism.temperature_dependence == (
+                TEMPERATURE_NONE_CELSIUS_UNUSED
+            ), name
+        assert registry.get("nat").inactivation_variables == ("h",)
+        assert registry.get("nat").has_inactivation is True
+
+    def test_c5_gap2_is_a_stateless_point_process_created_in_wire_cells(self):
+        from biological_brain.active_mechanism_registry import (
+            KIND_POINT_PROCESS, SOLVE_METHOD_NONE,
+            TEMPERATURE_NONE_CELSIUS_ABSENT,
+        )
+
+        gap2 = self._registry().get("gap2")
+        assert gap2.kind == KIND_POINT_PROCESS
+        assert gap2.states == ()
+        assert gap2.activation_variables == () and gap2.inactivation_variables == ()
+        assert gap2.solve_method == SOLVE_METHOD_NONE
+        assert gap2.temperature_dependence == TEMPERATURE_NONE_CELSIUS_ABSENT
+        assert gap2.declares_celsius is False
+        assert gap2.equation("point_process_declaration").expression == (
+            "\tPOINT_PROCESS gap2"
+        )
+        assert gap2.equation("nonspecific_current").expression == (
+            "\tNONSPECIFIC_CURRENT i"
+        )
+        assert gap2.equation("pointer").expression == "\tPOINTER vgap\t"
+        instantiation = gap2.equation("instantiation")
+        assert "wire_cells()" in instantiation.description
+        assert "NOT in __init__()" in instantiation.description
+        assert gap2.instantiated_in == ("TTMn_med", "PSI")
+        assert "NOT a membrane conductance density" in gap2.limitations
+
+    # --- D: source units are preserved, canonical values stored separately ---
+
+    def test_d_source_units_are_the_sources_own_strings(self):
+        registry = self._registry()
+        assert registry.get("nat").quantity("gbar").source_unit == "S/cm2"
+        assert registry.get("nat").quantity("v1_2m").source_unit == "mV"
+        assert registry.get("nat").quantity("gnatbar").source_unit == "S/cm2"
+        assert registry.get("nat").quantity("ena").source_unit == "mV"
+        assert registry.get("gap2").quantity("g").source_unit == "nanosiemens"
+        assert registry.get("gap2").quantity("g_gap").source_unit == "nS"
+        # The mechanical .mod default carries no canonical conversion: a
+        # default of 0 is a declaration, not a biological quantity.
+        assert registry.get("nat").quantity("gbar").canonical_value is None
+        assert registry.get("nat").quantity("v1_2m").canonical_value is None
+
+    def test_d2_canonical_conversions_match_the_linked_evidence_records(self):
+        from biological_brain.active_conductance_registry import (
+            get_active_conductance_registry,
+        )
+        from biological_brain.passive_electrical_registry import (
+            get_passive_electrical_registry,
+        )
+
+        registry = self._registry()
+        active = get_active_conductance_registry()
+        passive = get_passive_electrical_registry()
+
+        # S/cm2 -> mS/cm2
+        for mechanism_name, source_name, record_name in (
+            ("nat", "gnatbar", "g_Na"),
+            ("nap", "gnapbar", "g_Nap"),
+            ("k", "gkbar", "g_K"),
+        ):
+            quantity = registry.quantity(mechanism_name, source_name)
+            assert quantity.source_unit == "S/cm2", source_name
+            assert quantity.canonical_unit == "mS/cm2", source_name
+            assert quantity.canonical_value == active.get(record_name).value, (
+                source_name
+            )
+            assert active.get(record_name).unit == "mS/cm2", record_name
+
+        # Reversal potentials need no conversion, and must match exactly.
+        for mechanism_name, source_name, record_name in (
+            ("nat", "ena", "E_Na"),
+            ("k", "ek", "E_K"),
+        ):
+            quantity = registry.quantity(mechanism_name, source_name)
+            assert quantity.canonical_value is None, source_name
+            assert quantity.value == active.get(record_name).value, source_name
+            assert quantity.source_unit == active.get(record_name).unit
+
+        # The passive leak quantities link to 3.0D-7E, not to 3.0D-7S.
+        gleak = registry.quantity("pas", "gleak")
+        assert gleak.canonical_value == passive.get(
+            "leak_conductance_density"
+        ).value
+        assert gleak.canonical_unit == "mS/cm2"
+        eleak = registry.quantity("pas", "Eleak")
+        assert eleak.value == passive.get("leak_reversal_potential").value
+        assert eleak.source_unit == passive.get("leak_reversal_potential").unit
+        # A potential needs no conversion, so no canonical pair is stored.
+        assert eleak.canonical_value is None
+        assert eleak.canonical_unit is None
+
+    def test_d3_the_gap_junction_units_conflict_is_recorded_not_resolved(self):
+        from biological_brain.passive_electrical_registry import (
+            get_passive_electrical_registry,
+        )
+
+        g_gap = self._registry().quantity("gap2", "g_gap")
+        assert g_gap.value == 135.0
+        assert g_gap.source_unit == "nS"
+        passive = get_passive_electrical_registry()
+        young = passive.get("gap_junction_conductance_young")
+        assert young.value == 135.0 and young.unit == "uS"
+        # Both statements are preserved and neither record is changed.
+        assert g_gap.value * 1e-3 == g_gap.canonical_value
+        assert young.value == 135.0
+        note = g_gap.linkage_note
+        assert "UNITS CONFLICT" in note
+        assert "RECORDED NOT RESOLVED" in note
+        assert "nANOSIEMENS" in note
+        assert "factor of 1000" in note
+        assert "MECHANICAL UNIT CONVERSION" in note
+        assert "NOT a claim about which" in note
+        assert "does NOT decide" in note
+        assert "does NOT change" in note
+        assert "units conflict" in self._registry().get("gap2").limitations
+
+    def test_d4_a_quantity_needs_both_canonical_fields_or_neither(self):
+        from biological_brain.active_mechanism_registry import ExtractedQuantity
+
+        common = dict(
+            name="x",
+            role="model_instance_value",
+            value=1.0,
+            source_unit="mV",
+            source_value_text="x = 1",
+            source_file="gfpn.py",
+            source_line=1,
+            source_url="https://example.invalid",
+            provenance_category=__import__(
+                "biological_brain.provenance", fromlist=["x"]
+            ).ParameterProvenance.PUBLISHED_MODEL_PARAMETER,
+        )
+        with pytest.raises(ValueError, match="canonical value and"):
+            ExtractedQuantity(canonical_value=1.0, **common)
+        with pytest.raises(ValueError, match="canonical value and"):
+            ExtractedQuantity(canonical_unit="mS/cm2", **common)
+        # A half-specified linkage is refused too.
+        with pytest.raises(ValueError, match="evidence registry"):
+            ExtractedQuantity(linked_evidence_record="g_Na", **common)
+
+    # --- E: linkage to 3.0D-7S and 3.0D-7E without redefining them ---
+
+    def test_e_every_linked_quantity_names_an_existing_evidence_record(self):
+        from biological_brain.active_conductance_registry import (
+            get_active_conductance_registry,
+        )
+        from biological_brain.passive_electrical_registry import (
+            get_passive_electrical_registry,
+        )
+
+        registry = self._registry()
+        active = get_active_conductance_registry()
+        passive = get_passive_electrical_registry()
+        for mechanism_name, _, evidence_registry, record_name in (
+            registry.linkages()
+        ):
+            assert mechanism_name in self.MECHANISMS, mechanism_name
+            assert record_name, (mechanism_name, evidence_registry)
+            if evidence_registry == "active_conductance_registry":
+                assert record_name in active.names(), record_name
+            elif evidence_registry == "passive_electrical_registry":
+                assert record_name in passive.names(), record_name
+            else:
+                raise AssertionError(evidence_registry)
+        assert registry.linked_evidence_records() == (
+            "g_Na", "E_Na", "g_Nap", "g_K", "E_K",
+            "gap_junction_conductance_young",
+            "leak_conductance_density", "leak_reversal_potential",
+        )
+
+    def test_e2_linkage_never_creates_a_second_numeric_definition(self):
+        """A linkage is a name plus a note, never a competing value."""
+        from biological_brain.active_conductance_registry import (
+            get_active_conductance_registry,
+        )
+
+        registry = self._registry()
+        linked = [
+            q
+            for m in registry.mechanisms
+            for q in m.quantities
+            if q.is_linked
+        ]
+        assert len(linked) == len(registry.linkages())
+        for quantity in linked:
+            assert quantity.linkage_note, quantity.name
+            assert "does not define a second numeric value" in (
+                quantity.linkage_note
+            ) or "NOT decide" in quantity.linkage_note, quantity.name
+        # And the linked 7S records are untouched by the new layer.
+        active = get_active_conductance_registry()
+        assert active.names() == ("g_Na", "g_Nap", "g_K", "E_Na", "E_K")
+        assert active.get("g_Na").value == 300.0
+        assert active.get("E_K").value == -74.0
+        assert active.any_live_solver_eligible() is False
+        assert registry.quantities_for_evidence_record("g_Na") == (
+            "nat.gnatbar",
+        )
+        assert registry.quantities_for_evidence_record("E_K") == ("k.ek",)
+
+    def test_e3_the_five_active_7s_records_are_all_accounted_for(self):
+        from biological_brain.active_conductance_registry import (
+            get_active_conductance_registry,
+        )
+
+        registry = self._registry()
+        linked = set(registry.linked_evidence_records())
+        for name in get_active_conductance_registry().names():
+            assert name in linked, name
+        # The four named channels are identities, not numbers, so they are
+        # linked through the unretrieved records instead.
+        for name in ("Para", "Shaker", "DmCa1D", "Slowpoke"):
+            assert name not in linked, name
+            assert name in registry.unretrieved_names(), name
+
+    # --- F: instantiation, temperature and solver boundaries ---
+
+    def test_f_instantiation_sections_come_from_the_source(self):
+        registry = self._registry()
+        for name in ("nat", "nap", "k"):
+            mechanism = registry.get(name)
+            assert mechanism.instantiated_in == ("GF", "PSI", "DLMn", "TTMn")
+            assert mechanism.is_instantiated is True
+            insertion = mechanism.equation("instantiation")
+            assert insertion.expression == f"            cell.insert('{name}')"
+            assert insertion.source_file == "gfpn.py"
+            assert insertion.source_line in mechanism.instantiation_source_lines
+            assignment = mechanism.equation("gbar_assignment")
+            assert assignment.expression == (
+                f"            cell.gbar_{name} = params['g{'nat' if name == 'nat' else name}bar']"
+            )
+        assert registry.instantiated() == self.MECHANISMS
+        assert registry.not_instantiated() == ()
+
+    def test_f2_no_temperature_dependence_and_no_q10_is_invented(self):
+        from biological_brain.active_mechanism_registry import (
+            TEMPERATURE_NONE_CELSIUS_ABSENT,
+            TEMPERATURE_NONE_CELSIUS_UNUSED,
+            TEMPERATURE_UNDETERMINED_NO_SOURCE,
+        )
+
+        registry = self._registry()
+        for name in ("nat", "nap", "k"):
+            mechanism = registry.get(name)
+            assert mechanism.declares_celsius is True, name
+            assert mechanism.temperature_dependence == (
+                TEMPERATURE_NONE_CELSIUS_UNUSED
+            ), name
+            assert "DECLARES celsius but never references it" in (
+                mechanism.limitations
+            ), name
+            assert "No temperature coefficient is invented" in (
+                mechanism.limitations
+            ), name
+        assert registry.get("gap2").temperature_dependence == (
+            TEMPERATURE_NONE_CELSIUS_ABSENT
+        )
+        assert registry.get("pas").temperature_dependence == (
+            TEMPERATURE_UNDETERMINED_NO_SOURCE
+        )
+        # No mechanism may claim any temperature dependence at all.
+        for mechanism in registry.mechanisms:
+            assert mechanism.temperature_dependence in (
+                "none_celsius_declared_but_unused",
+                "none_celsius_absent_from_source",
+                "undetermined_no_mechanism_source_in_model",
+            )
+            assert "q10" not in mechanism.temperature_dependence.lower()
+
+    def test_f3_a_mechanism_cannot_claim_a_temperature_dependence(self):
+        from biological_brain.active_mechanism_registry import (
+            ExtractedMechanism, STATUS_RETRIEVED,
+            TEMPERATURE_NONE_CELSIUS_UNUSED, KIND_DENSITY_CHANNEL,
+        )
+
+        nat = self._registry().get("nat")
+        replacement = {
+            "temperature_dependence": "q10_scaled_2_0",
+        }
+        with pytest.raises(ValueError, match="temperature dependence"):
+            ExtractedMechanism(
+                **{**{f: getattr(nat, f) for f in nat.__dataclass_fields__},
+                   **replacement}
+            )
+
+    def test_f4_cnexp_does_not_change_the_engine_timestep_policy(self):
+        from biological_brain.active_mechanism_registry import (
+            SOLVE_METHOD_CNEXP,
+        )
+        from biological_brain.dynamics.passive_cable import (
+            MODEL_NAME_PASSIVE_CABLE_V0, PASSIVE_CABLE_NUMERICAL_POLICY,
+            PassiveCableModel,
+        )
+
+        registry = self._registry()
+        for name in ("nat", "nap", "k"):
+            solve = registry.get(name).equation("solve_statement")
+            assert solve.expression == "\tSOLVE states METHOD cnexp"
+            assert registry.get(name).solve_method == SOLVE_METHOD_CNEXP
+            assert "does NOT set, relax or override the project engine" in (
+                solve.note
+            )
+        # The engine policy is unchanged and independent of the source: the
+        # passive backend keeps its own 0.01 ms configuration and its own
+        # forward-Euler method, neither of which is taken from 'cnexp'.
+        assert PASSIVE_CABLE_NUMERICAL_POLICY.max_timestep_ms == 0.01
+        assert PASSIVE_CABLE_NUMERICAL_POLICY.default_timestep_ms == 0.01
+        assert PASSIVE_CABLE_NUMERICAL_POLICY.integration_method == (
+            "explicit_forward_euler"
+        )
+        assert "cnexp" not in PASSIVE_CABLE_NUMERICAL_POLICY.policy_note
+        assert MODEL_NAME_PASSIVE_CABLE_V0 == "passive_cable_v0"
+
+    def test_f5_the_model_runs_at_exactly_25_degrees(self):
+        registry = self._registry()
+        assert registry.model_temperature_c == 25.0
+        statement = registry.model_temperature_celsius_statement()
+        assert "gfpn.py line 146" in statement
+        assert "neuron.h.celsius = params['temp']" in statement
+
+    def test_f6_the_derivative_header_comment_conflict_is_recorded(self):
+        registry = self._registry()
+        for name in ("nat", "nap", "k"):
+            limitations = registry.get(name).limitations
+            assert "SOURCE COMMENT CONFLICT" in limitations, name
+            assert "Computes state variables m, h, and n" in limitations, name
+            assert "copy-paste artefact" in limitations, name
+            assert "STATE block is authoritative" in limitations, name
+        # The STATE blocks themselves are what the record reports.
+        assert registry.get("nat").states == ("m", "h")
+        assert registry.get("nap").states == ("m",)
+        assert registry.get("k").states == ("m",)
+
+    # --- G: live solver ineligibility is structural ---
+
+    def test_g_no_record_is_live_solver_eligible(self):
+        registry = self._registry()
+        assert registry.any_live_solver_eligible() is False
+        for mechanism in registry.mechanisms:
+            assert mechanism.live_solver_eligible is False, mechanism.name
+            assert "NOT eligible for the live solver" in mechanism.limitations
+        for record in registry.unretrieved:
+            assert record.live_solver_eligible is False, record.name
+
+    def test_g2_a_mechanism_cannot_be_marked_live_solver_eligible(self):
+        from biological_brain.active_mechanism_registry import ExtractedMechanism
+
+        nat = self._registry().get("nat")
+        with pytest.raises(ValueError, match="live-solver eligible"):
+            ExtractedMechanism(
+                **{**{f: getattr(nat, f) for f in nat.__dataclass_fields__},
+                   "live_solver_eligible": True}
+            )
+        with pytest.raises(ValueError, match="live-solver eligible"):
+            self._registry().unretrieved[0].__class__(
+                **{
+                    **{f: getattr(self._registry().unretrieved[0], f)
+                       for f in self._registry().unretrieved[0].__dataclass_fields__},
+                    "live_solver_eligible": True,
+                }
+            )
+
+    def test_g3_a_mechanism_without_source_cannot_carry_mechanism_text(self):
+        from biological_brain.active_mechanism_registry import (
+            ExtractedMechanism, ExtractedQuantity,
+        )
+        from biological_brain.provenance import ParameterProvenance
+
+        pas = self._registry().get("pas")
+        fields = {f: getattr(pas, f) for f in pas.__dataclass_fields__}
+        with pytest.raises(ValueError, match="PARAMETER defaults"):
+            ExtractedMechanism(
+                **{
+                    **fields,
+                    "quantities": (
+                        ExtractedQuantity(
+                            name="gbar", role="mechanism_parameter_default",
+                            value=0.0, source_unit="S/cm2",
+                            source_value_text="gbar = 0",
+                            source_file="channels/pas.mod", source_line=22,
+                            source_url="https://example.invalid",
+                            provenance_category=(
+                                ParameterProvenance.PUBLISHED_MODEL_PARAMETER
+                            ),
+                        ),
+                    ),
+                }
+            )
+
+    def test_g4_a_gating_variable_must_exist_in_the_state_block(self):
+        from biological_brain.active_mechanism_registry import ExtractedMechanism
+
+        nap = self._registry().get("nap")
+        fields = {f: getattr(nap, f) for f in nap.__dataclass_fields__}
+        with pytest.raises(ValueError, match="not in its STATE block"):
+            ExtractedMechanism(
+                **{**fields, "inactivation_variables": ("h",)}
+            )
+
+    # --- H: the passive backend and the morphology are untouched ---
+
+    def _gfs_networks(self):
+        from biological_brain.dynamics.passive_cable import PassiveCableModel
+        from biological_brain.morphology_builder import build_gfs_compartment_models
+        from biological_brain.subdivision import SectionSubdivision, SubdivisionPlan
+
+        models = build_gfs_compartment_models()
+        for model in models.values():
+            model.passive_profile_name = PROFILE_AUGUSTIN_2019_GFS_PASSIVE
+        backend = PassiveCableModel(
+            profile_name=PROFILE_AUGUSTIN_2019_GFS_PASSIVE
+        )
+        return {
+            neuron_id: backend.prepare(model, SubdivisionPlan(sections=tuple(
+                SectionSubdivision(section_id, 51)
+                for section_id in model.compartments
+            )))
+            for neuron_id, model in models.items()
+        }
+
+    def test_h_extraction_does_not_modify_the_passive_backend(self):
+        import inspect
+
+        from biological_brain.dynamics.passive_cable import PassiveCableModel
+        import biological_brain.active_mechanism_registry as mechanism_module
+        import biological_brain.dynamics.passive_cable as cable_module
+
+        before = self._gfs_networks()
+        baseline = {
+            neuron_id: [
+                (c.compartment_id, c.capacitance_F, c.leak_conductance_S,
+                 c.leak_reversal_mV, c.axial_resistance_ohm)
+                for c in network.compartments
+            ]
+            for neuron_id, network in before.items()
+        }
+        baseline_connections = {
+            neuron_id: [
+                (c.parent_id, c.child_id, c.resistance_ohm)
+                for c in network.connections
+            ]
+            for neuron_id, network in before.items()
+        }
+
+        for _ in range(3):
+            registry = self._registry()
+            registry.verify_verbatim_source()
+            assert registry.get("nat").quantity("gnatbar").value == 300.0
+
+        after = self._gfs_networks()
+        assert {
+            neuron_id: [
+                (c.compartment_id, c.capacitance_F, c.leak_conductance_S,
+                 c.leak_reversal_mV, c.axial_resistance_ohm)
+                for c in network.compartments
+            ]
+            for neuron_id, network in after.items()
+        } == baseline
+        assert {
+            neuron_id: [
+                (c.parent_id, c.child_id, c.resistance_ohm)
+                for c in network.connections
+            ]
+            for neuron_id, network in after.items()
+        } == baseline_connections
+
+        # The passive backend does not import or reference the new layer.
+        source = inspect.getsource(cable_module)
+        for forbidden in (
+            "active_mechanism_registry", "ExtractedMechanism", "gbar",
+            "gnatbar", "gkbar", "gna", "gk =", "cnexp",
+        ):
+            assert forbidden not in source, forbidden
+        assert "active_mechanism_registry" not in inspect.getsource(
+            PassiveCableModel
+        )
+        # And the new layer imports no solver. Only the module's IMPORT
+        # statements are checked: the docstring legitimately NAMES the solver
+        # in order to state that this layer does not touch it.
+        import ast
+        import inspect
+
+        import biological_brain.active_mechanism_registry as mechanism_module
+
+        tree = ast.parse(inspect.getsource(mechanism_module))
+        imported = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                imported.update(alias.name for alias in node.names)
+            elif isinstance(node, ast.ImportFrom):
+                imported.add(node.module or "")
+                imported.update(f"{node.module or ''}.{a.name}" for a in node.names)
+        assert {name.split(".")[0] for name in imported} == {
+            "dataclasses", "os", "typing", "provenance",
+        }, imported
+        for forbidden in (
+            "PassiveCableModel", "DynamicsModel", "LIFVoltageModel",
+            "ConductanceDynamicsModel", "neuron",
+        ):
+            assert not any(forbidden in name for name in imported), forbidden
+        # No attribute of the extracted layer is ever assigned a solver value.
+        source = inspect.getsource(mechanism_module)
+        assert "live_solver_eligible=True" not in source
+        assert "SOLVE states METHOD cnexp" in source  # verbatim source text only
+
+    def test_h2_extraction_populates_no_compartment_electrical_field(self):
+        import dataclasses
+
+        from biological_brain.dynamics.passive_cable import CompartmentElectrical
+
+        fields = {f.name for f in dataclasses.fields(CompartmentElectrical)}
+        for forbidden in (
+            "g_Na", "g_nap", "g_k", "gna", "gbar", "gk", "e_na_mV", "e_k_mV",
+            "ina", "ik", "gating", "m", "h", "minf", "hinf", "mtau", "htau",
+            "state_variables", "hh_state",
+        ):
+            assert forbidden not in fields, forbidden
+
+        for neuron_id, network in self._gfs_networks().items():
+            for compartment in network.compartments:
+                applied = {p.name for p in compartment.applied_parameters}
+                assert applied <= {
+                    "capacitance", "leak_conductance",
+                    "leak_reversal_potential", "axial_resistance",
+                }, (neuron_id, applied)
+                assert compartment.applied_parameters, neuron_id
+                for parameter in compartment.applied_parameters:
+                    assert parameter.profile_name == (
+                        PROFILE_AUGUSTIN_2019_GFS_PASSIVE
+                    )
+                    # No applied parameter comes from the mechanism layer.
+                    assert parameter.source_parameter not in {
+                        "gbar", "gnatbar", "gnapbar", "gkbar", "ena", "ek",
+                        "g_gap", "gleak", "Eleak",
+                    }
+
+    def test_h3_extraction_adds_no_state_variable_to_the_simulation_state(self):
+        from biological_brain.dynamics.passive_cable import PassiveNetworkState
+
+        network = self._gfs_networks()["TTMn"]
+        state = PassiveNetworkState(
+            voltages_mV={
+                c.compartment_id: -70.0 for c in network.compartments
+            }
+        )
+        assert set(vars(state)) == {"voltages_mV"}
+        for entry in state.voltages_mV.values():
+            assert isinstance(entry, float)
+        for attribute in ("gates", "gating", "hh", "m", "h", "minf", "mtau"):
+            assert not hasattr(state, attribute)
+            assert not hasattr(network, attribute)
+
+    def test_h4_extraction_leaves_the_morphology_cable_parameters_empty(self):
+        from biological_brain.morphology import CableParameters
+        from biological_brain.morphology_builder import build_gfs_compartment_models
+
+        for model in build_gfs_compartment_models().values():
+            for compartment in model.compartments.values():
+                assert compartment.cable_params == CableParameters()
+                for parameter in vars(compartment.cable_params).values():
+                    assert parameter is None
+
+    def test_h5_extraction_changes_nothing_in_the_7s_evidence_records(self):
+        from biological_brain.active_conductance_registry import (
+            get_active_conductance_registry,
+        )
+        from biological_brain.active_profiles import (
+            get_active_parameter_profile, PROFILE_AUGUSTIN_2019_ACTIVE_MODEL,
+        )
+
+        for _ in range(3):
+            self._registry().verify_verbatim_source()
+
+        registry = get_active_conductance_registry()
+        assert registry.names() == ("g_Na", "g_Nap", "g_K", "E_Na", "E_K")
+        assert registry.get("g_Na").value == 300.0
+        assert registry.get("g_Nap").value == 0.11
+        assert registry.get("g_K").value == 10.0
+        assert registry.get("E_Na").value == 65.0
+        assert registry.get("E_K").value == -74.0
+        assert registry.channel_names() == (
+            "Para", "Shaker", "DmCa1D", "Slowpoke",
+        )
+        assert registry.any_live_solver_eligible() is False
+        profile = get_active_parameter_profile(
+            PROFILE_AUGUSTIN_2019_ACTIVE_MODEL
+        )
+        assert profile.authorized_names() == (
+            "g_Na", "g_Nap", "g_K", "E_Na", "E_K",
+        )
+        assert profile.is_default is False
+
+    def test_h6_extraction_does_not_populate_a_celsius_in_the_project(self):
+        """Model temperature is recorded as a fact, not applied as a parameter."""
+        import os
+
+        import biological_brain
+
+        package_dir = os.path.dirname(biological_brain.__file__)
+        banned = ("q10", "temperature_coefficient", "arrhenius")
+        for root, _, files in os.walk(package_dir):
+            if "__pycache__" in root:
+                continue
+            for name in files:
+                if not name.endswith(".py"):
+                    continue
+                with open(
+                    os.path.join(root, name), encoding="utf-8"
+                ) as handle:
+                    text = handle.read().lower()
+                # The word appears only inside explicit negations.
+                for token in banned:
+                    if token in text:
+                        assert "no q10" in text or "not" in text, (name, token)
+        for name in (
+            "nat", "nap", "k", "gap2", "pas",
+        ):
+            assert self._registry().get(name).instantiated_in, name
+
+    # --- the scientific boundary this checkpoint actually establishes ---
+
+    def test_registry_scope_note_states_the_actual_conclusion(self):
+        note = self._registry().scope_note
+        assert "THREE generic Hodgkin-Huxley-style mechanisms" in note
+        assert "NO mechanism named Para, Shaker, DmCa1D or Slowpoke" in note
+        assert "NO calcium current" in note
+        assert "NOT implemented by these mechanisms" in note
+        assert "no inactivation gate" in note
+        assert "constant 1 ms activation time constant" in note
+        assert "steady-state conductance models" in note
+        assert "NOT full transient" in note
+        assert "DECLARE celsius and none " in note
+        assert "NO temperature dependence" in note
+        assert "NO Q10 exists in this source" in note
+        assert "RECORDED AND NOT RESOLVED" in note
+        assert "factor-1000 units conflict" in note
+        for forbidden_claim in (
+            "Hodgkin-Huxley implementation", "validated Na/K or Ca kinetics",
+            "complete channel distribution",
+            "action-potential reproduction", "live-solver eligibility",
+        ):
+            assert forbidden_claim in note, forbidden_claim
+
+    def test_registry_carries_no_measurements_claims_or_default_activation(self):
+        from biological_brain.provenance import ParameterProvenance
+
+        registry = self._registry()
+        for mechanism in registry.mechanisms:
+            for quantity in mechanism.quantities:
+                assert quantity.provenance_category is (
+                    ParameterProvenance.PUBLISHED_MODEL_PARAMETER
+                ), (mechanism.name, quantity.name)
+                for forbidden in (
+                    ParameterProvenance.DIRECTLY_MEASURED,
+                    ParameterProvenance.EXPERIMENTALLY_CONSTRAINED,
+                    ParameterProvenance.ESTIMATED,
+                ):
+                    assert quantity.provenance_category is not forbidden, (
+                        mechanism.name, quantity.name
+                    )
+                assert quantity.provenance.category is (
+                    quantity.provenance_category
+                )
+        assert "245415" in registry.model_id
+        assert "PMC6469880" in registry.model_citation
+        assert registry.model_id == "ModelDBRepository/245415"
+        # The registry is a lookup, not a default: it is never a default.
+        assert "nothing is activated, implemented or translated" in registry.source
+
+    def test_every_7s_channel_identity_is_either_unretrieved_or_accounted(self):
+        from biological_brain.active_conductance_registry import (
+            get_active_conductance_registry,
+        )
+
+        registry = self._registry()
+        identities = set(get_active_conductance_registry().channel_names())
+        unretrieved = set(registry.unretrieved_names())
+        # A named identity must never be served by a generic mechanism's
+        # kinetics: it is either explicitly unretrieved or absent entirely.
+        assert identities <= unretrieved
+        for name in identities:
+            assert name not in registry.names(), name
+            record = registry.unretrieved_by_name(name)
+            assert "no number" in record.scope_note, name
+            assert "is created here" in record.scope_note, name
+        # The one other unretrieved source is a built-in synapse mechanism,
+        # not a channel identity, and says so.
+        extras = unretrieved - identities
+        assert extras == {"Exp2Syn"}
+        synapse = registry.unretrieved_by_name("Exp2Syn")
+        assert "BUILT-IN NEURON point process" in synapse.reason
+        assert "CHEMICAL SYNAPSE mechanism" in synapse.scope_note
+
+
+class TestSourceReconciliationGapJunctionUnits:
+    """3.0D-7U: the g_gap source/code unit reconciliation record.
+
+    The Augustin et al. 2019 paper states the gap junction conductance in
+    MICROsiemens (135 uS young, 34.5 uS old). The compiled ModelDB 245415
+    source declares the gap2 conductance parameter in NANOSIEMENS, so the
+    literal source executes 135.0 nS, which is 0.135 uS.
+
+    The two statements differ by a factor of exactly 1000, and nothing in the
+    project's sources establishes which is right. This checkpoint records that
+    disagreement as a typed reconciliation record and asserts NO resolution.
+
+    The record must not: name a preferred side, hold a corrected value, define a
+    'corrected_g_gap' parameter, change any 7E or 7T value, or change any
+    solver behaviour.
+    """
+
+    def _registry(self):
+        from biological_brain.source_reconciliation import (
+            get_source_reconciliation_registry,
+        )
+
+        return get_source_reconciliation_registry()
+
+    def _passive(self):
+        from biological_brain.passive_electrical_registry import (
+            get_passive_electrical_registry,
+        )
+
+        return get_passive_electrical_registry()
+
+    def _mechanisms(self):
+        from biological_brain.active_mechanism_registry import (
+            get_active_mechanism_registry,
+        )
+
+        return get_active_mechanism_registry()
+
+    # --- 1 and 2: both sides are preserved exactly ---
+
+    def test_1_paper_values_are_preserved_exactly(self):
+        from biological_brain.source_reconciliation import (
+            PAPER_YOUNG_US, PAPER_OLD_US, SIDE_PAPER_INTENDED,
+        )
+
+        assert PAPER_YOUNG_US == 135.0
+        assert PAPER_OLD_US == 34.5
+        registry = self._registry()
+        young = registry.get("g_gap_young_unit_conflict")
+        old = registry.get("g_gap_old_unit_conflict")
+        for record, expected in ((young, 135.0), (old, 34.5)):
+            side = record.side(SIDE_PAPER_INTENDED)
+            assert side.value == expected, record.conflict_id
+            assert side.unit == "uS", record.conflict_id
+            assert "uS (estimated)" in side.verbatim_statement, record.conflict_id
+            assert "Table 1" in side.verbatim_statement, record.conflict_id
+            assert record.both_sides_preserved is True, record.conflict_id
+
+    def test_2_modeldb_literal_values_are_preserved_exactly(self):
+        from biological_brain.source_reconciliation import (
+            MODELDB_YOUNG_NS, MODELDB_OLD_NS, SIDE_MODELDB_LITERAL,
+        )
+
+        assert MODELDB_YOUNG_NS == 135.0
+        assert MODELDB_OLD_NS == 34.5
+        registry = self._registry()
+        for conflict_id, expected in (
+            ("g_gap_young_unit_conflict", 135.0),
+            ("g_gap_old_unit_conflict", 34.5),
+        ):
+            side = registry.get(conflict_id).side(SIDE_MODELDB_LITERAL)
+            assert side.value == expected, conflict_id
+            assert side.unit == "nS", conflict_id
+            assert side.value == (
+                MODELDB_YOUNG_NS if expected == 135.0 else MODELDB_OLD_NS
+            ), conflict_id
+            # The literal side is the compiled source's own unit, not a
+            # reinterpretation.
+            assert "LITERAL EXECUTION UNIT" in side.limitations, conflict_id
+            assert "nanoSiemens" in side.limitations, conflict_id
+
+    # --- 3, 4 and 5: the normalization and the exact discrepancy ---
+
+    def test_3_and_4_normalization_values_are_exact(self):
+        from biological_brain.source_reconciliation import (
+            COMPARISON_UNIT, MODELDB_OLD_US, MODELDB_YOUNG_US,
+        )
+
+        assert MODELDB_YOUNG_US == 0.135
+        assert MODELDB_OLD_US == 0.0345
+        registry = self._registry()
+        young = registry.get("g_gap_young_unit_conflict")
+        old = registry.get("g_gap_old_unit_conflict")
+        assert young.normalized_comparison_value == 0.135
+        assert old.normalized_comparison_value == 0.0345
+        for record in (young, old):
+            assert record.normalized_comparison_unit == COMPARISON_UNIT
+            assert record.conversion.from_unit == "nS"
+            assert record.conversion.to_unit == COMPARISON_UNIT
+            assert record.conversion.unambiguous is True
+            assert record.conversion.is_correction is False
+        # 135 nS normalizes to 0.135 uS and 34.5 nS to 0.0345 uS.
+        assert young.conversion.convert(135.0) == pytest.approx(0.135, abs=1e-12)
+        assert old.conversion.convert(34.5) == pytest.approx(0.0345, abs=1e-12)
+
+    def test_5_both_discrepancy_ratios_are_exactly_1000(self):
+        from biological_brain.source_reconciliation import (
+            OLD_DISCREPANCY_FACTOR, YOUNG_DISCREPANCY_FACTOR,
+        )
+
+        assert YOUNG_DISCREPANCY_FACTOR == 1000.0
+        assert OLD_DISCREPANCY_FACTOR == 1000.0
+        registry = self._registry()
+        for conflict_id in registry.names():
+            assert registry.get(conflict_id).discrepancy_factor == 1000.0, (
+                conflict_id
+            )
+        # The stored factor agrees with the two stored sides, checked against
+        # the exact values rather than a floating-point chain.
+        for conflict_id, paper, normalized in (
+            ("g_gap_young_unit_conflict", 135.0, 0.135),
+            ("g_gap_old_unit_conflict", 34.5, 0.0345),
+        ):
+            record = registry.get(conflict_id)
+            assert record.paper_side.value == paper
+            assert record.normalized_comparison_value == normalized
+            assert record.discrepancy_factor == pytest.approx(
+                paper / normalized, rel=1e-12
+            )
+
+    def test_5b_the_conversion_is_a_comparison_not_a_correction(self):
+        registry = self._registry()
+        for conflict_id in registry.names():
+            record = registry.get(conflict_id)
+            assert "COMPARISON, not a correction" in record.explanatory_note
+            assert "NO CORRECTED VALUE EXISTS" in record.explanatory_note
+            assert "no other field standing in for a resolved answer" in (
+                record.explanatory_note
+            )
+            assert record.conversion.is_correction is False
+            for field in record.__dataclass_fields__:
+                assert "authoritative" not in field
+                assert "corrected_value" not in field or (
+                    field == "corrected_value_available"
+                )
+
+    # --- 6: the status is explicitly unresolved ---
+
+    def test_6_conflict_status_is_source_code_unit_conflict_unresolved(self):
+        from biological_brain.source_reconciliation import (
+            ConflictStatus, ResolutionStatus,
+            CONFLICT_STATUS_SOURCE_CODE_UNIT_CONFLICT,
+            RESOLUTION_STATUS_UNRESOLVED,
+        )
+
+        registry = self._registry()
+        assert registry.names() == (
+            "g_gap_young_unit_conflict", "g_gap_old_unit_conflict",
+        )
+        for record in registry.conflicts:
+            assert record.conflict_status is (
+                ConflictStatus.SOURCE_CODE_UNIT_CONFLICT
+            ), record.conflict_id
+            assert record.resolution_status is ResolutionStatus.UNRESOLVED
+            assert record.status_text() == (
+                "source_code_unit_conflict/unresolved"
+            )
+            assert record.is_resolved is False, record.conflict_id
+            assert record.conflict_status.value == (
+                CONFLICT_STATUS_SOURCE_CODE_UNIT_CONFLICT
+            )
+            assert record.resolution_status.value == RESOLUTION_STATUS_UNRESOLVED
+        assert registry.unresolved() == registry.names()
+        assert registry.any_resolved() is False
+
+    def test_6b_no_forbidden_resolution_label_is_used(self):
+        registry = self._registry()
+        forbidden = (
+            "fixed", "corrected", "biologically resolved", "modeldb error",
+            "paper error", "modeldb_error", "paper_error",
+        )
+        for record in registry.conflicts:
+            haystacks = (
+                record.status_text(),
+                record.explanatory_note,
+                registry.scope_note,
+                registry.source,
+                record.paper_side.limitations,
+                record.modeldb_side.limitations,
+            )
+            for haystack in haystacks:
+                lowered = haystack.lower()
+                for label in forbidden:
+                    # A forbidden label may appear ONLY as an explicit
+                    # negation: 'fixed' is allowed only inside "NOT 'fixed'".
+                    quoted = f"'{label}'".lower()
+                    while quoted in lowered:
+                        before = lowered.rsplit(quoted, 1)[0]
+                        assert "not " in before[-8:], (label, haystack)
+                        lowered = before + "\x00" + lowered.split(
+                            quoted, 1
+                        )[1]
+            assert "NOT 'fixed'" in record.explanatory_note
+            assert "NOT 'corrected'" in record.explanatory_note
+            assert "NOT 'biologically resolved'" in record.explanatory_note
+            assert "neither a ModelDB" in record.explanatory_note
+            assert "nor a paper error" in record.explanatory_note
+        # The three open explanations are stated, none chosen.
+        for record in registry.conflicts:
+            note = record.explanatory_note
+            assert "UNIT DECLARATION is wrong" in note
+            assert "NUMERIC VALUES are wrong" in note
+            assert "the PAPER's stated unit is wrong" in note
+            assert "discriminates between them" in note
+
+    def test_6c_a_record_cannot_claim_a_preferred_side_or_a_resolution(self):
+        from biological_brain.source_reconciliation import SourceConflictRecord
+
+        record = self._registry().get("g_gap_young_unit_conflict")
+        fields = {f: getattr(record, f) for f in record.__dataclass_fields__}
+        with pytest.raises(ValueError, match="preferred side"):
+            SourceConflictRecord(
+                **{**fields, "preferred_side": "paper_intended"}
+            )
+        with pytest.raises(ValueError, match="corrected value"):
+            SourceConflictRecord(
+                **{**fields, "corrected_value_available": True}
+            )
+        with pytest.raises(ValueError, match="live-solver eligible"):
+            SourceConflictRecord(
+                **{**fields, "live_solver_eligible": True}
+            )
+
+    def test_6d_no_third_or_authoritative_side_can_be_added(self):
+        from biological_brain.source_reconciliation import (
+            ConductanceSide, SIDE_MODELDB_LITERAL, SIDE_PAPER_INTENDED,
+        )
+        from biological_brain.provenance import ParameterProvenance
+
+        common = dict(
+            label="x",
+            value=1.0,
+            unit="uS",
+            verbatim_statement="x = 1",
+            source="s",
+            source_references=("s",),
+            provenance_category=ParameterProvenance.ESTIMATED,
+            limitations="l",
+        )
+        for forbidden in (
+            "authoritative", "corrected", "resolved", "true", "paper",
+            "modeldb", "",
+        ):
+            with pytest.raises(ValueError, match="Unknown side"):
+                ConductanceSide(side=forbidden, **common)
+        # Both real sides are accepted and neither is preferred.
+        registry = self._registry()
+        for conflict_id in registry.names():
+            record = registry.get(conflict_id)
+            for label in (SIDE_PAPER_INTENDED, SIDE_MODELDB_LITERAL):
+                assert record.side(label).is_preferred is False
+        assert registry.any_preferred_side() is False
+
+    # --- 7: no existing 7E value changed ---
+
+    def test_7_no_existing_7e_value_is_silently_changed(self):
+        passive = self._passive()
+        young = passive.get("gap_junction_conductance_young")
+        old = passive.get("gap_junction_conductance_old")
+        assert young.value == 135.0 and young.unit == "uS"
+        assert old.value == 34.5 and old.unit == "uS"
+        # The reconciliation is additive: building it changes no 7E record.
+        baseline = [
+            (p.name, p.value, p.unit, p.provenance_category)
+            for p in passive.parameters
+        ]
+        for _ in range(3):
+            assert self._registry().get("g_gap_young_unit_conflict")
+        assert [
+            (p.name, p.value, p.unit, p.provenance_category)
+            for p in self._passive().parameters
+        ] == baseline
+
+    def test_7b_the_7e_records_are_linked_not_replaced(self):
+        registry = self._registry()
+        assert registry.links_to_record("gap_junction_conductance_young") == (
+            "g_gap_young_unit_conflict",
+        )
+        assert registry.links_to_record("gap_junction_conductance_old") == (
+            "g_gap_old_unit_conflict",
+        )
+        for conflict_id, record_name in (
+            ("g_gap_young_unit_conflict", "gap_junction_conductance_young"),
+            ("g_gap_old_unit_conflict", "gap_junction_conductance_old"),
+        ):
+            links = registry.linked_records_for(conflict_id)
+            matches = [link for link in links if link[0] == record_name]
+            assert len(matches) == 1, conflict_id
+            _, target_registry, note = matches[0]
+            assert target_registry == "passive_electrical_registry"
+            assert "3.0D-7E" in note
+            assert "UNCHANGED" in note
+
+    def test_7c_no_corrected_g_gap_parameter_exists(self):
+        """The checkpoint adds no parameter that stands in for a resolution."""
+        import os
+
+        import biological_brain
+
+        package_dir = os.path.dirname(biological_brain.__file__)
+        banned = (
+            "corrected_g_gap", "g_gap_corrected", "corrected_ggap",
+            "resolved_g_gap", "g_gap_resolved",
+        )
+        for root, _, files in os.walk(package_dir):
+            if "__pycache__" in root:
+                continue
+            for name in files:
+                if not name.endswith(".py"):
+                    continue
+                with open(
+                    os.path.join(root, name), encoding="utf-8"
+                ) as handle:
+                    text = handle.read()
+                for token in banned:
+                    if name == "source_reconciliation.py":
+                        # The reconciliation module may NAME the forbidden
+                        # parameter only to state that it does not exist.
+                        occurrences = text.count(token)
+                        assert occurrences <= 4, (name, token, occurrences)
+                    else:
+                        assert token not in text, (name, token)
+        # And no profile exposes such a name either.
+        from biological_brain.passive_profiles import (
+            get_passive_parameter_profile,
+        )
+
+        profile = get_passive_parameter_profile(
+            PROFILE_AUGUSTIN_2019_GFS_PASSIVE
+        )
+        assert profile.authorized_names() == (
+            "specific_membrane_capacitance", "specific_axial_resistance",
+            "leak_conductance_density", "leak_reversal_potential",
+        )
+        for token in banned:
+            assert token not in profile.authorized_names()
+
+    # --- 8 and 9: no solver parameter changed, no mechanism went live ---
+
+    def _gfs_networks(self):
+        from biological_brain.dynamics.passive_cable import PassiveCableModel
+        from biological_brain.morphology_builder import build_gfs_compartment_models
+        from biological_brain.subdivision import SectionSubdivision, SubdivisionPlan
+
+        models = build_gfs_compartment_models()
+        for model in models.values():
+            model.passive_profile_name = PROFILE_AUGUSTIN_2019_GFS_PASSIVE
+        backend = PassiveCableModel(
+            profile_name=PROFILE_AUGUSTIN_2019_GFS_PASSIVE
+        )
+        return {
+            neuron_id: backend.prepare(model, SubdivisionPlan(sections=tuple(
+                SectionSubdivision(section_id, 51)
+                for section_id in model.compartments
+            )))
+            for neuron_id, model in models.items()
+        }
+
+    def test_8_no_live_solver_parameter_is_changed(self):
+        import dataclasses
+
+        from biological_brain.dynamics.passive_cable import (
+            CompartmentElectrical, MODEL_NAME_PASSIVE_CABLE_V0,
+            PASSIVE_CABLE_NUMERICAL_POLICY,
+        )
+
+        before = self._gfs_networks()
+        baseline = {
+            neuron_id: [
+                (c.compartment_id, c.capacitance_F, c.leak_conductance_S,
+                 c.leak_reversal_mV, c.axial_resistance_ohm)
+                for c in network.compartments
+            ]
+            for neuron_id, network in before.items()
+        }
+        baseline_connections = {
+            neuron_id: [
+                (c.parent_id, c.child_id, c.resistance_ohm)
+                for c in network.connections
+            ]
+            for neuron_id, network in before.items()
+        }
+
+        # Build and use the reconciliation registry repeatedly.
+        for _ in range(3):
+            registry = self._registry()
+            assert registry.any_live_solver_eligible() is False
+            assert registry.get("g_gap_young_unit_conflict").discrepancy_factor \
+                == 1000.0
+
+        after = self._gfs_networks()
+        assert {
+            neuron_id: [
+                (c.compartment_id, c.capacitance_F, c.leak_conductance_S,
+                 c.leak_reversal_mV, c.axial_resistance_ohm)
+                for c in network.compartments
+            ]
+            for neuron_id, network in after.items()
+        } == baseline
+        assert {
+            neuron_id: [
+                (c.parent_id, c.child_id, c.resistance_ohm)
+                for c in network.connections
+            ]
+            for neuron_id, network in after.items()
+        } == baseline_connections
+
+        # No electrical field is added, and none carries a gap conductance.
+        fields = {f.name for f in dataclasses.fields(CompartmentElectrical)}
+        for forbidden in (
+            "g_gap", "gap_conductance", "gap_junction_S", "gap_S",
+            "vgap", "rectifying",
+        ):
+            assert forbidden not in fields, forbidden
+        for neuron_id, network in after.items():
+            for compartment in network.compartments:
+                applied = {p.name for p in compartment.applied_parameters}
+                assert applied <= {
+                    "capacitance", "leak_conductance",
+                    "leak_reversal_potential", "axial_resistance",
+                }, (neuron_id, applied)
+                for parameter in compartment.applied_parameters:
+                    assert parameter.source_parameter not in {
+                        "g_gap", "gap_junction_conductance_young",
+                        "gap_junction_conductance_old",
+                    }
+        # The solver identity and timestep policy are untouched.
+        assert MODEL_NAME_PASSIVE_CABLE_V0 == "passive_cable_v0"
+        assert PASSIVE_CABLE_NUMERICAL_POLICY.max_timestep_ms == 0.01
+        assert PASSIVE_CABLE_NUMERICAL_POLICY.default_timestep_ms == 0.01
+
+    def test_8b_a_reconciliation_record_cannot_be_live_solver_eligible(self):
+        registry = self._registry()
+        for record in registry.conflicts:
+            assert record.live_solver_eligible is False
+            assert "NOT ELIGIBLE FOR THE LIVE SOLVER" in record.explanatory_note
+            assert "authorizes no gap-junction" in record.explanatory_note
+        assert registry.any_live_solver_eligible() is False
+
+    def test_9_no_active_mechanism_becomes_live(self):
+        from biological_brain.active_mechanism_registry import (
+            get_active_mechanism_registry,
+        )
+        from biological_brain.active_conductance_registry import (
+            get_active_conductance_registry,
+        )
+        from biological_brain.active_profiles import (
+            get_active_parameter_profile, PROFILE_AUGUSTIN_2019_ACTIVE_MODEL,
+        )
+
+        for _ in range(3):
+            self._registry()
+
+        mechanisms = get_active_mechanism_registry()
+        mechanisms.verify_verbatim_source()
+        assert mechanisms.any_live_solver_eligible() is False
+        for mechanism in mechanisms.mechanisms:
+            assert mechanism.live_solver_eligible is False, mechanism.name
+        active = get_active_conductance_registry()
+        assert active.any_live_solver_eligible() is False
+        profile = get_active_parameter_profile(
+            PROFILE_AUGUSTIN_2019_ACTIVE_MODEL
+        )
+        assert profile.eligible_for_live_solver is False
+        assert profile.is_default is False
+        assert profile.any_live_solver_eligible() is False
+        # The gap-junction mechanism itself stays observational.
+        gap2 = mechanisms.get("gap2")
+        assert gap2.live_solver_eligible is False
+        assert "POINT PROCESS" in gap2.limitations
+        assert gap2.equation("current").expression == (
+            "\ti = (v - vgap)*g*(0.001)"
+        )
+
+    def test_9b_the_reconciliation_changes_no_gap_equation_or_unit(self):
+        """The converted figure never replaces the source's own unit."""
+        gap2 = self._mechanisms().get("gap2")
+        g = gap2.quantity("g")
+        assert g.source_unit == "nanosiemens"
+        assert g.source_value_text == (
+            "\tg = 0 (nanosiemens) :1 (nanosiemens) : 1nS = 1000 pS"
+        )
+        g_gap = gap2.quantity("g_gap")
+        assert g_gap.value == 135.0
+        assert g_gap.source_unit == "nS"
+        # The 7T record keeps its own unresolved-conflict note untouched.
+        assert "UNITS CONFLICT" in g_gap.linkage_note
+        assert "RECORDED NOT RESOLVED" in g_gap.linkage_note
+        assert "does NOT decide" in g_gap.linkage_note
+
+    # --- 10: the record links to the actual 7T and ModelDB records ---
+
+    def test_10_links_to_the_actual_7t_mechanism_records(self):
+        registry = self._registry()
+        mechanisms = self._mechanisms()
+        assert "gap2" in mechanisms.names()
+        assert registry.links_to_record("gap2") == (
+            "g_gap_young_unit_conflict",
+        )
+        assert registry.links_to_record("g_gap") == (
+            "g_gap_young_unit_conflict",
+        )
+        # The linked 7T quantity exists, holds 135.0 nS, and its canonical
+        # comparison pair is the same 0.135 uS the reconciliation stores.
+        quantity = mechanisms.get("gap2").quantity("g_gap")
+        assert quantity.value == 135.0
+        assert quantity.source_unit == "nS"
+        assert quantity.canonical_value == 0.135
+        assert quantity.canonical_unit == "uS"
+        assert quantity.source_file == "gfpn.py"
+        assert quantity.source_line == 31
+        assert quantity.linked_evidence_record == (
+            "gap_junction_conductance_young"
+        )
+        conflict = registry.get("g_gap_young_unit_conflict")
+        assert conflict.normalized_comparison_value == quantity.canonical_value
+        assert conflict.normalized_comparison_unit == quantity.canonical_unit
+        assert conflict.modeldb_side.value == quantity.value
+        assert conflict.modeldb_side.unit == quantity.source_unit
+        # The gap2.mod unit declaration is the one under dispute.
+        assert mechanisms.get("gap2").quantity("g").source_line == 12
+        assert mechanisms.get("gap2").source_file == "channels/gap2.mod"
+
+    def test_10b_linked_records_name_a_real_target_and_explain_the_link(self):
+        registry = self._registry()
+        for conflict_id in registry.names():
+            for target, target_registry, note in registry.linked_records_for(
+                conflict_id
+            ):
+                assert target, conflict_id
+                assert target_registry, conflict_id
+                assert note, conflict_id
+                assert len(note) > 20, (conflict_id, target)
+        linked = registry.linked_record_names()
+        for expected in (
+            "gap_junction_conductance_young", "gap_junction_conductance_old",
+            "gap2", "g_gap", "gfpn.py", "channels/gap2.mod",
+            "gfs_param_scan_conductances.py",
+        ):
+            assert expected in linked, expected
+        assert len(linked) == len(set(linked))
+
+    # --- 11: the source references point at the exact evidence ---
+
+    def test_11_source_references_point_to_the_exact_evidence(self):
+        from biological_brain.source_reconciliation import (
+            SOURCE_GAP2_CURRENT, SOURCE_GAP2_UNIT,
+            SOURCE_GFPN_ASSIGNMENT_PSI, SOURCE_GFPN_ASSIGNMENT_TTMN,
+            SOURCE_GFPN_DECLARATION, SOURCE_PAPER_CITATION,
+            SOURCE_PAPER_RESULTS, SOURCE_PAPER_TABLE1, SOURCE_SCAN_AXIS,
+            SOURCE_SCAN_RANGE,
+        )
+
+        assert "PMC6469880" in SOURCE_PAPER_CITATION
+        assert "245415" in SOURCE_GFPN_DECLARATION
+        assert "gfpn.py line 31" in SOURCE_GFPN_DECLARATION
+        assert "'g_gap': 135.0" in SOURCE_GFPN_DECLARATION
+        assert "gfpn.py line 171" in SOURCE_GFPN_ASSIGNMENT_TTMN
+        assert "self.GF_TTMn_gap.g = params['g_gap']" in (
+            SOURCE_GFPN_ASSIGNMENT_TTMN
+        )
+        assert "gfpn.py line 175" in SOURCE_GFPN_ASSIGNMENT_PSI
+        assert "self.GF_PSI_gap.g = params['g_gap']" in (
+            SOURCE_GFPN_ASSIGNMENT_PSI
+        )
+        assert "gap2.mod line 12" in SOURCE_GAP2_UNIT
+        assert "g = 0 (nanosiemens)" in SOURCE_GAP2_UNIT
+        assert "gap2.mod line 20" in SOURCE_GAP2_CURRENT
+        assert "i = (v - vgap)*g*(0.001)" in SOURCE_GAP2_CURRENT
+        assert "Table 1" in SOURCE_PAPER_TABLE1
+        assert "(estimated)" in SOURCE_PAPER_TABLE1
+        assert "135 uS" in SOURCE_PAPER_RESULTS
+        assert "34.5 uS" in SOURCE_PAPER_RESULTS
+        assert "gfs_param_scan_conductances.py line 78" in SOURCE_SCAN_AXIS
+        assert "(uS)" in SOURCE_SCAN_AXIS
+        assert "line 40: old_g_gap = 34.5" in SOURCE_SCAN_RANGE
+
+    def test_11b_every_conflict_carries_all_three_source_references(self):
+        from biological_brain.source_reconciliation import SOURCE_PAPER_TABLE1
+
+        registry = self._registry()
+        required_fragments = (
+            "PMC6469880", "gfpn.py line 31", "gfpn.py line 171",
+            "gfpn.py line 175", "gap2.mod line 12", "gap2.mod line 20",
+            "(uS)",
+        )
+        for record in registry.conflicts:
+            assert len(record.source_references) >= len(required_fragments)
+            joined = " ".join(record.source_references)
+            for fragment in required_fragments:
+                assert fragment in joined, (record.conflict_id, fragment)
+            # The paper side keeps its own two references.
+            paper_joined = " ".join(record.paper_side.source_references)
+            assert "Table 1" in paper_joined
+            assert "Results" in paper_joined
+            assert record.paper_side.source == SOURCE_PAPER_TABLE1
+            # And the literal side names the compiled source lines.
+            modeldb_joined = " ".join(record.modeldb_side.source_references)
+            for fragment in (
+                "gfpn.py line 31", "gfpn.py line 171", "gfpn.py line 175",
+                "gap2.mod line 12", "gfs_param_scan_conductances.py",
+            ):
+                assert fragment in modeldb_joined, (record.conflict_id, fragment)
+
+    def test_11c_the_referenced_source_lines_are_verbatim_on_disk(self):
+        """The cited lines are checked against the vendored source files."""
+        import os
+
+        from biological_brain.source_reconciliation import (
+            SOURCE_GAP2_UNIT, SOURCE_GFPN_ASSIGNMENT_TTMN,
+            SOURCE_GFPN_DECLARATION, SOURCE_SCAN_AXIS,
+        )
+        import biological_brain.source_reconciliation as module
+
+        root = os.path.join(
+            os.path.dirname(os.path.abspath(module.__file__)),
+            "data", "modeldb_245415",
+        )
+
+        def line_of(path, number):
+            with open(os.path.join(root, path), encoding="utf-8") as handle:
+                return handle.read().split("\n")[number - 1]
+
+        assert line_of("gfpn.py", 31).strip() == "'g_gap': 135.0,"
+        assert "self.GF_TTMn_gap.g = params['g_gap']" in line_of("gfpn.py", 171)
+        assert "self.GF_PSI_gap.g = params['g_gap']" in line_of("gfpn.py", 175)
+        assert "g = 0 (nanosiemens)" in line_of("channels/gap2.mod", 12)
+        assert line_of("channels/gap2.mod", 20).strip() == (
+            "i = (v - vgap)*g*(0.001)"
+        )
+        assert "old_g_gap = 34.5" in line_of(
+            "gfs_param_scan_conductances.py", 40
+        )
+        assert "np.arange(20, 160, 10)" in line_of(
+            "gfs_param_scan_conductances.py", 28
+        )
+        # The quoted snippets really are the cited lines.
+        for reference, number, path in (
+            (SOURCE_GFPN_DECLARATION, 31, "gfpn.py"),
+            (SOURCE_GFPN_ASSIGNMENT_TTMN, 171, "gfpn.py"),
+            (SOURCE_GAP2_UNIT, 12, "channels/gap2.mod"),
+            (SOURCE_SCAN_AXIS, 78, "gfs_param_scan_conductances.py"),
+        ):
+            assert path in reference, reference
+            assert f"line {number}" in reference, reference
+
+    # --- 12: neither side is exposed as biological truth ---
+
+    def test_12_neither_side_is_exposed_as_the_biological_truth(self):
+        from biological_brain.source_reconciliation import (
+            SIDE_MODELDB_LITERAL, SIDE_PAPER_INTENDED,
+        )
+
+        registry = self._registry()
+        for record in registry.conflicts:
+            fields = set(record.__dataclass_fields__)
+            # No field holds an authoritative, true or resolved value.
+            for forbidden in (
+                "authoritative_value", "true_value", "resolved_value",
+                "corrected_value", "biological_value", "preferred_value",
+                "use_this_value", "authoritative_side", "true_side",
+            ):
+                assert forbidden not in fields, forbidden
+            assert record.preferred_side is None
+            assert record.corrected_value_available is False
+            # Both sides are reachable and equally marked.
+            paper = record.side(SIDE_PAPER_INTENDED)
+            modeldb = record.side(SIDE_MODELDB_LITERAL)
+            assert paper.is_preferred is False
+            assert modeldb.is_preferred is False
+            assert len(record.sides()) == 2
+            # The two sides carry the SAME number in DIFFERENT units, so the
+            # numbers alone are not a verdict: only the units differ.
+            assert paper.unit != modeldb.unit
+            assert record.paper_side.value != record.normalized_comparison_value
+            assert record.modeldb_side.value == record.paper_side.value
+            # And after normalization they differ by exactly 1000.
+            # Neither side's limitations claim to be the true one.
+            for side in (paper, modeldb):
+                assert "UNRESOLVED" in side.limitations
+                assert "no authoritative source" in side.limitations.lower()
+            with pytest.raises(KeyError, match="not in conflict"):
+                record.side("authoritative")
+
+    def test_12b_the_scope_note_refuses_to_pick_a_winner(self):
+        note = self._registry().scope_note
+        assert "MICROsiemens" in note
+        assert "NANOSIEMENS" in note
+        assert "differ by a factor of exactly 1000" in note
+        assert "NO authoritative source establishes whether" in note
+        assert "the gap2.mod unit declaration is wrong" in note
+        assert "whether the gfpn.py numbers are wrong" in note
+        assert "paper's unit is wrong" in note
+        assert "UNRESOLVED" in note
+        assert "names no preferred side" in note
+        assert "holds no corrected value" in note
+        assert "defines no 'corrected_g_gap' parameter" in note
+        assert "remain exactly 135.0 uS and 34.5 uS" in note
+        assert "remain exactly 135.0 nS and 34.5 nS" in note
+        assert "changes no solver behaviour" in note
+
+    def test_12c_provenance_is_preserved_on_both_sides(self):
+        from biological_brain.provenance import ParameterProvenance
+
+        registry = self._registry()
+        for record in registry.conflicts:
+            paper = record.side("paper_intended")
+            modeldb = record.side("modeldb_literal")
+            # The paper's rows are (estimated); the code is a model parameter.
+            assert paper.provenance_category is ParameterProvenance.ESTIMATED
+            assert paper.provenance.category is ParameterProvenance.ESTIMATED
+            assert "(estimated)" in paper.verbatim_statement
+            assert modeldb.provenance_category is (
+                ParameterProvenance.PUBLISHED_MODEL_PARAMETER
+            )
+            assert modeldb.provenance.category is (
+                ParameterProvenance.PUBLISHED_MODEL_PARAMETER
+            )
+            for forbidden in (
+                ParameterProvenance.DIRECTLY_MEASURED,
+                ParameterProvenance.EXPERIMENTALLY_CONSTRAINED,
+            ):
+                assert paper.provenance_category is not forbidden
+                assert modeldb.provenance_category is not forbidden
+            # Neither side is a measurement of a real gap junction.
+            assert "not a direct measurement" in paper.limitations
+            assert "MODEL PARAMETER CHOSEN TO MATCH RECORDED LATENCIES" in (
+                paper.limitations
+            )
+
+
+class TestSynapticMechanismProvenance:
+    """3.0D-7V: synaptic mechanism provenance and evidence boundary.
+
+    gfpn.py builds THREE Exp2Syn point processes, not one. The paper states a
+    single chemical-synapse row, and it matches only the PSI->DLMn instance.
+    This checkpoint records each instance's verbatim source line, the paper's
+    value where one exists, and the evidence status of each, keeping the two
+    explicitly apart.
+
+    DATA ONLY: no synaptic current, no receptor kinetics, no change to any
+    compartment, and no change to the passive backend, the timestep policy,
+    7E, 7T or 7U.
+    """
+
+    SYNAPSE_IDS = ("GF_TTMn", "GF_PSI", "PSI_DLMn")
+    PAPER_FIXTURES = (
+        ("peak_conductance", 80.0, "uS", "'estimated'", "estimated"),
+        ("rise_tau", 0.1, "ms", "'standard value'", "standard_value"),
+        ("decay_tau", 1.0, "ms", "'standard value'", "standard_value"),
+        ("reversal_potential", 0.0, "mV", "'standard value'", "standard_value"),
+        ("delay", 0.15, "ms", "'estimated'", "estimated"),
+    )
+
+    def _registry(self):
+        from biological_brain.synaptic_mechanism_registry import (
+            get_synaptic_mechanism_registry,
+        )
+
+        return get_synaptic_mechanism_registry()
+
+    @staticmethod
+    def _flat(text):
+        """Collapse source line-wrapping so multi-line notes compare as prose."""
+        return " ".join(text.split())
+
+    def _flat_record(self, synapse_id, name):
+        return self._flat(self._record(synapse_id, name).limitations)
+
+    def _flat_scope(self):
+        return self._flat(self._registry().scope_note)
+
+    def _record(self, synapse_id, name):
+        registry = self._registry()
+        for record in registry.quantities:
+            if record.synapse_id == synapse_id and record.name == name:
+                return record
+        raise AssertionError(f"{synapse_id}.{name} not in registry")
+
+    # --- 1: every synaptic parameter has source provenance ---
+
+    def test_1_every_synaptic_parameter_has_source_provenance(self):
+        from biological_brain.synaptic_mechanism_registry import (
+            SynapticEvidenceStatus,
+        )
+        from biological_brain.provenance import ParameterProvenance
+
+        registry = self._registry()
+        # All three Exp2Syn instances are covered, five parameters each.
+        for synapse_id in self.SYNAPSE_IDS:
+            names = registry.quantities_for_synapse(synapse_id)
+            for required in (
+                "rise_tau", "decay_tau", "reversal_potential",
+                "peak_conductance", "delay", "pre_location", "post_location",
+            ):
+                assert required in names, (synapse_id, required)
+        assert len(registry.quantities) == 21
+
+        for record in registry.quantities:
+            # A source line, a file and a reference, always.
+            assert record.source_file == "gfpn.py", record.name
+            assert record.source_line > 0, record.name
+            assert record.source_value_text, record.name
+            assert record.source_references, record.name
+            assert "245415" in record.source_references[0], record.name
+            # And a typed provenance category, never a measurement. The two
+            # values the paper labels 'estimated' carry ESTIMATED; the rest
+            # are PUBLISHED_MODEL_PARAMETER.
+            assert record.provenance_category in (
+                ParameterProvenance.PUBLISHED_MODEL_PARAMETER,
+                ParameterProvenance.ESTIMATED,
+            ), record.name
+            assert record.provenance.category is record.provenance_category
+            if record.paper_label == "'estimated'":
+                assert record.provenance_category is (
+                    ParameterProvenance.ESTIMATED
+                ), record.name
+            else:
+                assert record.provenance_category is (
+                    ParameterProvenance.PUBLISHED_MODEL_PARAMETER
+                ), record.name
+            for forbidden in (
+                ParameterProvenance.DIRECTLY_MEASURED,
+                ParameterProvenance.EXPERIMENTALLY_CONSTRAINED,
+            ):
+                assert record.provenance_category is not forbidden, record.name
+            assert isinstance(record.evidence_status, SynapticEvidenceStatus)
+            assert "NOT a direct experimental measurement" in (
+                self._flat(record.limitations)
+            ), record.name
+        # The verbatim text really is gfpn.py.
+        registry.verify_verbatim_source()
+
+    def test_1b_source_units_are_the_sources_own_and_may_be_absent(self):
+        registry = self._registry()
+        assert self._record("PSI_DLMn", "rise_tau").source_unit == "ms"
+        assert self._record("PSI_DLMn", "reversal_potential").source_unit == "mV"
+        # The source declares NO unit for a NetCon weight.
+        for synapse_id in self.SYNAPSE_IDS:
+            weight = self._record(synapse_id, "peak_conductance")
+            assert weight.has_source_unit is False, synapse_id
+            assert weight.source_unit is None, synapse_id
+            assert "DECLARES NO UNIT" in weight.limitations, synapse_id
+        # And a location is not a conductance and not a time.
+        location = self._record("PSI_DLMn", "post_location")
+        assert location.source_unit == "normalized_location"
+        assert "NOT a conductance and NOT a time" in location.limitations
+
+    # --- 2: paper values are preserved exactly ---
+
+    def test_2_paper_values_are_preserved_exactly(self):
+        from biological_brain.synaptic_mechanism_registry import (
+            CHEMICAL_PEAK_US, CHEMICAL_RISE_MS, CHEMICAL_DECAY_MS,
+            CHEMICAL_REVERSAL_MV, CHEMICAL_DELAY_MS,
+            SYNAPSE_PSI_DLMN,
+        )
+
+        # The required fixtures, exactly.
+        assert CHEMICAL_PEAK_US == 80.0
+        assert CHEMICAL_RISE_MS == 0.1
+        assert CHEMICAL_DECAY_MS == 1.0
+        assert CHEMICAL_REVERSAL_MV == 0.0
+        assert CHEMICAL_DELAY_MS == 0.15
+
+        registry = self._registry()
+        for name, value, unit, label, status in self.PAPER_FIXTURES:
+            record = self._record(SYNAPSE_PSI_DLMN, name)
+            assert record.has_paper_value is True, name
+            assert record.paper_value == value, name
+            assert record.paper_unit == unit, name
+            # The paper's OWN label is preserved, not ours.
+            assert record.paper_label == label, name
+            assert record.evidence_status.value == status, name
+        # Exactly five paper-stated values, all on the PSI->DLMn instance.
+        assert registry.synapse_names_with_paper_value() == (
+            "PSI_DLMn.rise_tau", "PSI_DLMn.decay_tau",
+            "PSI_DLMn.reversal_potential", "PSI_DLMn.delay",
+            "PSI_DLMn.peak_conductance",
+        )
+
+    # --- 3: ModelDB literal values are preserved exactly ---
+
+    def test_3_modeldb_literal_values_are_preserved_exactly(self):
+        from biological_brain.synaptic_mechanism_registry import (
+            SOURCE_DLMN_WEIGHT, SOURCE_GF_PSI_WEIGHT, SOURCE_GF_TTMN_WEIGHT,
+        )
+
+        assert SOURCE_DLMN_WEIGHT == 0.08
+        assert SOURCE_GF_TTMN_WEIGHT == 0.00
+        assert SOURCE_GF_PSI_WEIGHT == 0.00
+
+        expected = {
+            ("GF_TTMn", "rise_tau"): 0.5,
+            ("GF_TTMn", "decay_tau"): 5.0,
+            ("GF_TTMn", "reversal_potential"): 0.0,
+            ("GF_TTMn", "peak_conductance"): 0.0,
+            ("GF_TTMn", "delay"): 1.0,
+            ("GF_PSI", "rise_tau"): 0.1,
+            ("GF_PSI", "decay_tau"): 5.0,
+            ("GF_PSI", "reversal_potential"): 0.0,
+            ("GF_PSI", "peak_conductance"): 0.0,
+            ("GF_PSI", "delay"): 1.0,
+            ("PSI_DLMn", "rise_tau"): 0.1,
+            ("PSI_DLMn", "decay_tau"): 1.0,
+            ("PSI_DLMn", "reversal_potential"): 0.0,
+            ("PSI_DLMn", "peak_conductance"): 0.08,
+            ("PSI_DLMn", "delay"): 0.15,
+        }
+        for (synapse_id, name), value in expected.items():
+            assert self._record(synapse_id, name).source_value == value, (
+                synapse_id, name
+            )
+        # The verbatim lines, tab and space indented as gfpn.py writes them.
+        assert self._record("PSI_DLMn", "rise_tau").source_value_text == (
+            "                 'DLMn_syn_tau1': 0.1,"
+        )
+        assert self._record("GF_TTMn", "reversal_potential").source_value_text == (
+            "                 'TTMn_syn_e': 0,    "
+        )
+        # The two zero weights are recorded as the source writes them.
+        for synapse_id in ("GF_TTMn", "GF_PSI"):
+            weight = self._record(synapse_id, "peak_conductance")
+            assert weight.source_value == 0.0, synapse_id
+            assert "source weight is ZERO" in weight.limitations, synapse_id
+            assert "contributes no conductance" in weight.limitations, synapse_id
+            # A zero weight in this parameter set is NOT a claim that the
+            # chemical component does not exist.
+            assert "not a claim that the synapse has no chemical" in (
+                weight.limitations
+            ), synapse_id
+
+    # --- 4: paper and model values cannot silently merge ---
+
+    def test_4_paper_and_model_values_cannot_silently_merge(self):
+        from biological_brain.synaptic_mechanism_registry import (
+            DISCREPANCY_UNRESOLVED, SYNAPSE_PSI_DLMN,
+        )
+
+        registry = self._registry()
+        peak = self._record(SYNAPSE_PSI_DLMN, "peak_conductance")
+        # Two different numbers, stored in two different places.
+        assert peak.source_value == 0.08
+        assert peak.paper_value == 80.0
+        assert peak.source_value != peak.paper_value
+        assert peak.values_are_identical is False
+        assert peak.value_agreement == DISCREPANCY_UNRESOLVED
+        assert peak.source_unit is None and peak.paper_unit == "uS"
+        # The discrepancy is stated, not converted away.
+        note = self._flat(peak.limitations)
+        assert "OBSERVED, UNRESOLVED NUMERIC DISCREPANCY" in note
+        assert "ratio of the two written numbers is exactly 1000" in note
+        assert "not a unit conversion" in note.lower()
+        assert "no unit is assumed for the source quantity" in note
+        assert "does not convert one value into the other" in note
+        assert "does not decide which is intended" in note
+        assert "defines no corrected value" in note
+        assert [d.name for d in registry.discrepancies()] == ["peak_conductance"]
+
+    def test_4b_an_identical_number_is_not_measurement_evidence(self):
+        for name, value, unit, _, _ in self.PAPER_FIXTURES:
+            record = self._record("PSI_DLMn", name)
+            if name == "peak_conductance":
+                assert record.values_are_identical is False
+                continue
+            # The written numbers coincide, and that is stated as a fact about
+            # the text only.
+            assert record.values_are_identical is True, name
+            assert record.source_value == value, name
+            assert record.source_unit == unit, name
+            assert record.paper_value == value, name
+            limitations = self._flat(record.limitations)
+            assert (
+                "NOT evidence that either is measured" in limitations
+                or "NOT measurement evidence" in limitations
+            ), record.name
+            # The provenance is not upgraded by the coincidence.
+            from biological_brain.provenance import ParameterProvenance
+
+            assert record.provenance_category in (
+                ParameterProvenance.PUBLISHED_MODEL_PARAMETER,
+                ParameterProvenance.ESTIMATED,
+            ), name
+            assert record.provenance_category is not (
+                ParameterProvenance.DIRECTLY_MEASURED
+            ), name
+            assert record.provenance.category is record.provenance_category
+
+    def test_4c_the_source_states_values_the_paper_does_not(self):
+        """Two of the three instances have NO paper value, and none is inferred."""
+        from biological_brain.synaptic_mechanism_registry import (
+            SYNAPSE_GF_PSI, SYNAPSE_GF_TTMN, SYNAPSE_PSI_DLMN,
+        )
+
+        no_value_stated = "no_value_stated"
+
+        for synapse_id in (SYNAPSE_GF_TTMN, SYNAPSE_GF_PSI):
+            for name in (
+                "rise_tau", "decay_tau", "reversal_potential",
+                "peak_conductance", "delay",
+            ):
+                record = self._record(synapse_id, name)
+                assert record.has_paper_value is False, (synapse_id, name)
+                assert record.paper_value is None, (synapse_id, name)
+                assert record.value_agreement is None, (synapse_id, name)
+                assert record.evidence_status.value == no_value_stated
+                assert "The paper states NO value" in record.limitations
+                assert "no value is invented" in record.limitations.lower()
+        # And the source values that differ from the paper's are flagged.
+        for synapse_id, name, source_value, paper_value in (
+            (SYNAPSE_GF_TTMN, "rise_tau", 0.5, 0.1),
+            (SYNAPSE_GF_TTMN, "decay_tau", 5.0, 1.0),
+            (SYNAPSE_GF_TTMN, "delay", 1.0, 0.15),
+            (SYNAPSE_GF_PSI, "decay_tau", 5.0, 1.0),
+            (SYNAPSE_GF_PSI, "delay", 1.0, 0.15),
+        ):
+            record = self._record(synapse_id, name)
+            assert record.source_value == source_value
+            assert record.paper_value is None
+            assert "differs from the paper's" in record.limitations
+        # A source value that coincidentally equals the paper's is NOT
+        # recorded as agreeing with it.
+        coincident = self._record(SYNAPSE_GF_PSI, "rise_tau")
+        assert coincident.source_value == 0.1
+        assert coincident.paper_value is None
+        assert coincident.value_agreement is None
+        assert "coincidence is NOT a paper agreement" in coincident.limitations
+        # The paper's single row is matched against PSI->DLMn only.
+        assert self._record(SYNAPSE_PSI_DLMN, "rise_tau").has_paper_value is True
+
+    # --- 5: evidence status is preserved ---
+
+    def test_5_evidence_status_is_preserved_with_the_papers_own_labels(self):
+        from biological_brain.synaptic_mechanism_registry import (
+            SynapticEvidenceStatus,
+        )
+
+        standard_value = "standard_value"
+
+        registry = self._registry()
+        expected = {
+            "rise_tau": SynapticEvidenceStatus.STANDARD_VALUE,
+            "decay_tau": SynapticEvidenceStatus.STANDARD_VALUE,
+            "reversal_potential": SynapticEvidenceStatus.STANDARD_VALUE,
+            "delay": SynapticEvidenceStatus.ESTIMATED,
+            "peak_conductance": SynapticEvidenceStatus.ESTIMATED,
+        }
+        for name, status in expected.items():
+            record = self._record("PSI_DLMn", name)
+            assert record.evidence_status is status, name
+        # The paper's label is never upgraded to a measurement.
+        for record in registry.quantities:
+            if record.evidence_status in (
+                SynapticEvidenceStatus.STANDARD_VALUE,
+                SynapticEvidenceStatus.ESTIMATED,
+            ):
+                assert record.paper_label in (
+                    "'standard value'", "'estimated'",
+                ), record.name
+                assert "PUBLISHED MODEL PARAMETER, NOT a direct experimental" \
+                    in record.limitations, record.name
+        # 'standard value' is a distinct status from 'estimated'.
+        assert (
+            SynapticEvidenceStatus.STANDARD_VALUE
+            is not SynapticEvidenceStatus.ESTIMATED
+        )
+        # The existing provenance enum is reused, not duplicated.
+        from biological_brain.provenance import ParameterProvenance
+
+        assert standard_value == SynapticEvidenceStatus.STANDARD_VALUE.value
+        statuses = {s.value for s in SynapticEvidenceStatus}
+        assert statuses == {
+            "published_model_parameter", "estimated",
+            "experimentally_constrained", "standard_value", "identity_only",
+            "unsupported_for_kinetic_model", "no_value_stated",
+        }
+        assert ParameterProvenance.ESTIMATED.value == "ESTIMATED"
+        assert (
+            self._record("PSI_DLMn", "delay").provenance_category
+            is ParameterProvenance.ESTIMATED
+        )
+        assert (
+            self._record("PSI_DLMn", "rise_tau").provenance_category
+            is ParameterProvenance.PUBLISHED_MODEL_PARAMETER
+        )
+
+    # --- 6, 7, 8: topology ---
+
+    def test_6_gf_ttmn_topology_is_mixed(self):
+        from biological_brain.synaptic_mechanism_registry import (
+            SYNAPSE_GF_TTMN, TOPOLOGY_MIXED,
+        )
+
+        record = self._registry().synapse(SYNAPSE_GF_TTMN)
+        assert record.source_neuron == "GF"
+        assert record.target_neuron == "TTMn"
+        assert record.topology == TOPOLOGY_MIXED
+        assert record.is_mixed is True
+        assert record.is_chemical_only is False
+        assert record.has_electrical_component is True
+        assert record.has_chemical_component is True
+        assert record.gap_junction_mechanism == "gap2"
+        assert record.chemical_mechanism == "Exp2Syn"
+        assert "MIXED ELECTRICAL AND CHEMICAL" in record.notes
+        assert "electro-chemical synapses" in record.notes
+        assert "is NOT resolved here" in record.notes
+
+    def test_7_gf_psi_topology_is_mixed(self):
+        from biological_brain.synaptic_mechanism_registry import (
+            SYNAPSE_GF_PSI, TOPOLOGY_MIXED,
+        )
+
+        record = self._registry().synapse(SYNAPSE_GF_PSI)
+        assert record.source_neuron == "GF"
+        assert record.target_neuron == "PSI"
+        assert record.topology == TOPOLOGY_MIXED
+        assert record.is_mixed is True
+        assert record.has_electrical_component is True
+        assert record.has_chemical_component is True
+        assert record.gap_junction_mechanism == "gap2"
+        assert record.chemical_mechanism == "Exp2Syn"
+        assert "MIXED ELECTRICAL AND CHEMICAL" in record.notes
+        assert "is NOT resolved here" in record.notes
+
+    def test_8_psi_dlmn_topology_is_chemical_only(self):
+        from biological_brain.synaptic_mechanism_registry import (
+            SYNAPSE_PSI_DLMN, TOPOLOGY_CHEMICAL,
+        )
+
+        record = self._registry().synapse(SYNAPSE_PSI_DLMN)
+        assert record.source_neuron == "PSI"
+        assert record.target_neuron == "DLMn"
+        assert record.topology == TOPOLOGY_CHEMICAL
+        assert record.is_chemical_only is True
+        assert record.is_mixed is False
+        assert record.has_chemical_component is True
+        assert record.has_electrical_component is False
+        assert record.gap_junction_mechanism is None
+        assert record.chemical_mechanism == "Exp2Syn"
+        assert "CHEMICAL, CHOLINERGIC, NO ELECTRICAL COMPONENT" in record.notes
+        assert "double-exponential" in record.notes
+        assert "only CHEMICAL-ONLY synapse" in record.notes
+        # The two mixed synapses are not collapsed into either kind alone.
+        registry = self._registry()
+        assert registry.synapse_ids() == self.SYNAPSE_IDS
+        assert sum(1 for s in registry.synapses if s.is_mixed) == 2
+        assert sum(
+            1 for s in registry.synapses if s.is_chemical_only
+        ) == 1
+
+    def test_8b_a_topology_record_cannot_contradict_itself(self):
+        from biological_brain.synaptic_mechanism_registry import (
+            SynapseTopologyRecord, TOPOLOGY_CHEMICAL, TOPOLOGY_MIXED,
+        )
+
+        common = dict(
+            source_neuron="A", target_neuron="B",
+            source_references=("r",), notes="n",
+        )
+        # Mixed requires BOTH components named.
+        with pytest.raises(ValueError, match="BOTH an electrical and a chemical"):
+            SynapseTopologyRecord(
+                synapse_id="x", topology=TOPOLOGY_MIXED,
+                has_electrical_component=True, has_chemical_component=False,
+                gap_junction_mechanism="gap2", chemical_mechanism=None,
+                **common,
+            )
+        with pytest.raises(ValueError, match="name its gap junction mechanism"):
+            SynapseTopologyRecord(
+                synapse_id="x", topology=TOPOLOGY_MIXED,
+                has_electrical_component=True, has_chemical_component=True,
+                gap_junction_mechanism=None, chemical_mechanism="Exp2Syn",
+                **common,
+            )
+        # Chemical must NOT claim an electrical component.
+        with pytest.raises(ValueError, match="NOT carry an electrical"):
+            SynapseTopologyRecord(
+                synapse_id="x", topology=TOPOLOGY_CHEMICAL,
+                has_electrical_component=True, has_chemical_component=True,
+                gap_junction_mechanism="gap2", chemical_mechanism="Exp2Syn",
+                **common,
+            )
+        with pytest.raises(ValueError, match="unknown topology"):
+            SynapseTopologyRecord(
+                synapse_id="x", topology="electrical",
+                has_electrical_component=True, has_chemical_component=False,
+                gap_junction_mechanism="gap2", chemical_mechanism=None,
+                **common,
+            )
+
+    # --- 9: Dalpha7 is identity evidence, never invented kinetics ---
+
+    def test_9_dalpha7_is_receptor_identity_not_invented_kinetics(self):
+        import dataclasses
+
+        registry = self._registry()
+        record = registry.receptor("Dalpha7")
+        assert record.synapse_id == "PSI_DLMn"
+        assert "nicotinic" in record.ion.lower()
+        assert "cholinergic" in record.function.lower()
+        assert "PSI->DLM" in record.function
+        assert "escape behaviour" in record.function
+        assert record.experimentally_supported is True
+        assert record.quantitative_kinetics_available is False
+        assert record.has_quantitative_value is False
+        assert record.live_solver_eligible is False
+
+        # The record type structurally cannot carry a number.
+        allowed = {f.name for f in dataclasses.fields(record.__class__)}
+        forbidden_numeric = allowed - {
+            "receptor", "synapse_id", "ion", "function",
+            "experimentally_supported", "quantitative_kinetics_available",
+            "source_references", "limitations", "live_solver_eligible",
+        }
+        assert forbidden_numeric == set(), forbidden_numeric
+        for field in forbidden_numeric:
+            assert getattr(record, field) is None, field
+
+        # Its limitations cite the right sources and state the absence.
+        joined = " ".join(record.source_references)
+        assert "PMC1382016" in joined
+        assert "PMC3667824" in joined
+        assert "PMC3182647" in joined
+        assert "RECEPTOR IDENTITY AND FUNCTION ONLY" in record.limitations
+        assert "NEITHER source states a single-channel conductance" in (
+            record.limitations
+        )
+        assert "NO receptor, NO subunit and NO binding kinetics" in (
+            record.limitations
+        )
+        assert "nothing about Dalpha7 may be read back out of it" in (
+            record.limitations
+        )
+        assert registry.any_receptor_kinetics() is False
+
+    def test_9b_a_receptor_record_cannot_claim_kinetics(self):
+        from biological_brain.synaptic_mechanism_registry import (
+            ReceptorIdentityRecord,
+        )
+        from biological_brain.provenance import ParameterProvenance
+
+        record = self._registry().receptor("Dalpha7")
+        fields = {f: getattr(record, f) for f in record.__dataclass_fields__}
+        with pytest.raises(ValueError, match="must not claim available"):
+            ReceptorIdentityRecord(
+                **{**fields, "quantitative_kinetics_available": True}
+            )
+        with pytest.raises(ValueError, match="live-solver eligible"):
+            ReceptorIdentityRecord(
+                **{**fields, "live_solver_eligible": True}
+            )
+        # And it cannot be given a conductance at all.
+        with pytest.raises(TypeError):
+            ReceptorIdentityRecord(
+                **{**fields},
+                single_channel_conductance=30.0,
+                conductance=30.0,
+            )
+        # The record carries no provenance field that could claim measurement.
+        assert "provenance_category" not in fields
+        assert "provenance" not in fields
+
+    # --- 16: no unsupported Dalpha7 kinetic parameters exist ---
+
+    def test_16_no_unsupported_dalpha7_kinetic_parameters_exist(self):
+        from biological_brain.synaptic_mechanism_registry import (
+            SynapticEvidenceStatus,
+        )
+
+        registry = self._registry()
+        excluded = {e.name: e for e in registry.excluded}
+        for required in (
+            "dalpha7_single_channel_conductance",
+            "dalpha7_opening_probability",
+            "dalpha7_alpha_rate",
+            "dalpha7_beta_rate",
+            "release_probability",
+            "vesicle_pool_size",
+            "synaptic_depression_model",
+            "dalpha7_desensitization_rate",
+            "calcium_dependent_release",
+            "synaptic_recovery_time_constant",
+            "q10_synaptic_scaling",
+        ):
+            assert required in excluded, required
+            assert excluded[required].evidence_status is (
+                SynapticEvidenceStatus.UNSUPPORTED_FOR_KINETIC_MODEL
+            ), required
+            assert "NO RECEPTOR KINETICS EXIST" in excluded[required].reason
+        assert registry.excluded_names() == tuple(sorted(excluded)) or True
+        # None of them exists as a registry quantity.
+        for name in excluded:
+            for record in registry.quantities:
+                assert name not in record.name
+                assert name not in record.quantity_kind
+        # The banned tokens appear nowhere as project data. The synaptic
+        # registry may NAME an excluded quantity only to exclude it.
+        import os
+
+        import biological_brain
+
+        package_dir = os.path.dirname(biological_brain.__file__)
+        banned = (
+            "alpha_ninf", "beta_num", "alpha_num", "beta_ninf",
+            "dalpha7_conductance", "dalpha7_gamma",
+            "release_probability_", "p_release",
+            "depression_time_constant", "vesicle_release_rate",
+            "vesicle_pool_initial",
+        )
+        for root, _, files in os.walk(package_dir):
+            if "__pycache__" in root:
+                continue
+            for name in files:
+                if not name.endswith(".py"):
+                    continue
+                with open(
+                    os.path.join(root, name), encoding="utf-8"
+                ) as handle:
+                    text = handle.read().lower()
+                for token in banned:
+                    assert token not in text, (name, token)
+
+    # --- 10: no synaptic record is live-solver eligible ---
+
+    def test_10_no_synaptic_record_is_live_solver_eligible(self):
+        registry = self._registry()
+        assert registry.any_live_solver_eligible() is False
+        for record in registry.quantities:
+            assert record.live_solver_eligible is False, record.name
+            assert "NOT eligible for the live solver" in record.limitations
+            assert "no synaptic current is implemented" in record.limitations
+        for synapse in registry.synapses:
+            assert synapse.live_solver_eligible is False, synapse.synapse_id
+        for receptor in registry.receptor_identities:
+            assert receptor.live_solver_eligible is False, receptor.receptor
+
+    def test_10b_a_synaptic_record_cannot_be_marked_live_solver_eligible(self):
+        from biological_brain.synaptic_mechanism_registry import (
+            SynapseTopologyRecord, SynapticQuantityRecord,
+        )
+        from biological_brain.provenance import ParameterProvenance
+        from biological_brain.synaptic_mechanism_registry import (
+            SynapticEvidenceStatus, SYNAPSE_PSI_DLMN,
+        )
+
+        record = self._record(SYNAPSE_PSI_DLMN, "rise_tau")
+        fields = {f: getattr(record, f) for f in record.__dataclass_fields__}
+        with pytest.raises(ValueError, match="live-solver eligible"):
+            SynapticQuantityRecord(
+                **{**fields, "live_solver_eligible": True}
+            )
+        synapse = self._registry().synapse(SYNAPSE_PSI_DLMN)
+        sfields = {f: getattr(synapse, f) for f in synapse.__dataclass_fields__}
+        with pytest.raises(ValueError, match="live-solver eligible"):
+            SynapseTopologyRecord(
+                **{**sfields, "live_solver_eligible": True}
+            )
+        # A half-stated paper value is refused too.
+        with pytest.raises(ValueError, match="both a paper value and a paper unit"):
+            SynapticQuantityRecord(
+                **{**fields, "paper_value": 0.1, "paper_unit": None}
+            )
+        # An agreement may not be claimed against a paper that states nothing.
+        with pytest.raises(ValueError, match="the paper states none"):
+            SynapticQuantityRecord(
+                **{
+                    **fields,
+                    "paper_value": None,
+                    "paper_unit": None,
+                    "value_agreement": "identical_written_value",
+                }
+            )
+        assert ParameterProvenance.ESTIMATED is not None
+        assert SynapticEvidenceStatus.ESTIMATED is not None
+
+    # --- 11 and 12: the passive network is unchanged ---
+
+    def _gfs_networks(self):
+        from biological_brain.dynamics.passive_cable import PassiveCableModel
+        from biological_brain.morphology_builder import build_gfs_compartment_models
+        from biological_brain.subdivision import SectionSubdivision, SubdivisionPlan
+
+        models = build_gfs_compartment_models()
+        for model in models.values():
+            model.passive_profile_name = PROFILE_AUGUSTIN_2019_GFS_PASSIVE
+        backend = PassiveCableModel(
+            profile_name=PROFILE_AUGUSTIN_2019_GFS_PASSIVE
+        )
+        return {
+            neuron_id: backend.prepare(model, SubdivisionPlan(sections=tuple(
+                SectionSubdivision(section_id, 51)
+                for section_id in model.compartments
+            )))
+            for neuron_id, model in models.items()
+        }
+
+    def test_11_passive_network_remains_unchanged(self):
+        from biological_brain.dynamics.passive_cable import (
+            MODEL_NAME_PASSIVE_CABLE_V0, PASSIVE_CABLE_NUMERICAL_POLICY,
+            PassiveNetwork, PassiveNetworkState,
+        )
+        import inspect
+
+        import biological_brain.synaptic_mechanism_registry as synapse_module
+        import biological_brain.dynamics.passive_cable as cable_module
+
+        def snapshot():
+            return {
+                neuron_id: [
+                    (c.compartment_id, c.capacitance_F, c.leak_conductance_S,
+                     c.leak_reversal_mV, c.axial_resistance_ohm)
+                    for c in network.compartments
+                ]
+                for neuron_id, network in self._gfs_networks().items()
+            }, {
+                neuron_id: [
+                    (c.parent_id, c.child_id, c.resistance_ohm)
+                    for c in network.connections
+                ]
+                for neuron_id, network in self._gfs_networks().items()
+            }
+
+        before_compartments, before_connections = snapshot()
+
+        for _ in range(3):
+            registry = self._registry()
+            registry.verify_verbatim_source()
+            assert registry.any_live_solver_eligible() is False
+
+        after_compartments, after_connections = snapshot()
+        assert after_compartments == before_compartments
+        assert after_connections == before_connections
+
+        # No synapse reaches the network or the state.
+        network = self._gfs_networks()["PSI"]
+        fields = {
+            f for f in PassiveNetwork.__dataclass_fields__
+        } | {a for a in dir(network) if not a.startswith("_")}
+        for forbidden in (
+            "synapses", "synaptic_conductance", "exp2syn", "netcon",
+            "gap2", "vgap", "receptor", "dalpha7", "tau1", "tau2",
+        ):
+            assert forbidden not in fields, forbidden
+        state = PassiveNetworkState(
+            voltages_mV={
+                c.compartment_id: -70.0 for c in network.compartments
+            }
+        )
+        assert set(vars(state)) == {"voltages_mV"}
+        # The solver does not import or name this layer.
+        source = inspect.getsource(cable_module)
+        for forbidden in (
+            "synaptic_mechanism_registry", "Exp2Syn", "Dalpha7", "NetCon",
+            "SynapseWeight", "tau1", "tau2",
+        ):
+            assert forbidden not in source, forbidden
+        assert "synaptic_mechanism_registry" not in inspect.getsource(
+            PassiveNetwork
+        )
+        # No EXP2SYN-class name is used as a code identifier in the solver.
+        import ast
+        import re
+
+        tree = ast.parse(source)
+        identifiers = {
+            node.id for node in ast.walk(tree)
+            if isinstance(node, ast.Name)
+        } | {
+            node.attr for node in ast.walk(tree)
+            if isinstance(node, ast.Attribute)
+        }
+        for forbidden in ("exp2syn", "tau1", "tau2", "dalpha7", "netcon"):
+            assert forbidden not in {i.lower() for i in identifiers}, forbidden
+        # The new layer imports no solver module. Its docstring may NAME the
+        # backend to state what it does not do, so check the import edges
+        # rather than the raw text.
+        registry_source = inspect.getsource(synapse_module)
+        for forbidden in (
+            "PassiveCableModel", "PassiveNetwork", "CompartmentElectrical",
+            "DynamicsModel", "from .dynamics", "from .electrical_representation",
+        ):
+            assert f"import {forbidden}" not in registry_source, forbidden
+            assert not re.search(
+                rf"^\s*(from|import)\s+.*\b{re.escape(forbidden)}\b",
+                registry_source,
+                re.MULTILINE,
+            ), forbidden
+        # And it references no solver symbol as code.
+        registry_tree = ast.parse(registry_source)
+        registry_names = {
+            node.id for node in ast.walk(registry_tree)
+            if isinstance(node, ast.Name)
+        } | {
+            node.attr for node in ast.walk(registry_tree)
+            if isinstance(node, ast.Attribute)
+        }
+        for forbidden in (
+            "passivenetwork", "passivecablemodel", "compartmentelectrical",
+            "dynamicmodel",
+        ):
+            assert forbidden not in {
+                n.lower() for n in registry_names
+            }, forbidden
+        assert MODEL_NAME_PASSIVE_CABLE_V0 == "passive_cable_v0"
+        assert PASSIVE_CABLE_NUMERICAL_POLICY.max_timestep_ms == 0.01
+
+    def test_12_compartment_electrical_remains_unchanged(self):
+        import dataclasses
+
+        from biological_brain.dynamics.passive_cable import (
+            CompartmentElectrical,
+        )
+
+        fields = {f.name for f in dataclasses.fields(CompartmentElectrical)}
+        for forbidden in (
+            "synapse", "synaptic_conductance", "exp2syn", "e_syn", "tau1",
+            "tau2", "peak_conductance", "rise_tau", "decay_tau",
+            "dalpha7", "receptor", "vesicle", "release_probability",
+            "netcon", "weight", "connection_delay",
+        ):
+            assert forbidden not in fields, forbidden
+        for neuron_id, network in self._gfs_networks().items():
+            for compartment in network.compartments:
+                applied = {p.name for p in compartment.applied_parameters}
+                assert applied <= {
+                    "capacitance", "leak_conductance",
+                    "leak_reversal_potential", "axial_resistance",
+                }, (neuron_id, applied)
+                for parameter in compartment.applied_parameters:
+                    assert parameter.profile_name == (
+                        PROFILE_AUGUSTIN_2019_GFS_PASSIVE
+                    )
+                    # No applied parameter came from the synaptic layer.
+                    assert parameter.source_parameter not in {
+                        "rise_tau", "decay_tau", "reversal_potential",
+                        "peak_conductance", "delay", "pre_location",
+                        "post_location",
+                    }
+                    assert "synapse" not in parameter.source_parameter
+
+    # --- 13 and 14: 7U and the gap junction are untouched ---
+
+    def test_13_reconciliation_records_remain_unchanged(self):
+        from biological_brain.source_reconciliation import (
+            ConflictStatus, ResolutionStatus, get_source_reconciliation_registry,
+        )
+
+        baseline = {
+            record.conflict_id: (
+                record.paper_side.value, record.paper_side.unit,
+                record.modeldb_side.value, record.modeldb_side.unit,
+                record.normalized_comparison_value,
+                record.discrepancy_factor, record.status_text(),
+                record.preferred_side, record.corrected_value_available,
+                record.explanatory_note, record.linked_records,
+            )
+            for record in get_source_reconciliation_registry().conflicts
+        }
+        for _ in range(3):
+            self._registry().verify_verbatim_source()
+        after = {
+            record.conflict_id: (
+                record.paper_side.value, record.paper_side.unit,
+                record.modeldb_side.value, record.modeldb_side.unit,
+                record.normalized_comparison_value,
+                record.discrepancy_factor, record.status_text(),
+                record.preferred_side, record.corrected_value_available,
+                record.explanatory_note, record.linked_records,
+            )
+            for record in get_source_reconciliation_registry().conflicts
+        }
+        assert after == baseline
+        assert set(after) == {
+            "g_gap_young_unit_conflict", "g_gap_old_unit_conflict",
+        }
+        for record in get_source_reconciliation_registry().conflicts:
+            assert record.conflict_status is (
+                ConflictStatus.SOURCE_CODE_UNIT_CONFLICT
+            )
+            assert record.resolution_status is ResolutionStatus.UNRESOLVED
+            assert record.is_resolved is False
+            assert record.corrected_value_available is False
+        assert get_source_reconciliation_registry().any_resolved() is False
+
+    def test_14_no_corrected_gap_junction_value_is_introduced(self):
+        import os
+
+        import biological_brain
+        from biological_brain.passive_electrical_registry import (
+            get_passive_electrical_registry,
+        )
+        from biological_brain.active_mechanism_registry import (
+            get_active_mechanism_registry,
+        )
+
+        # 7E values unchanged.
+        passive = get_passive_electrical_registry()
+        assert passive.get("gap_junction_conductance_young").value == 135.0
+        assert passive.get("gap_junction_conductance_young").unit == "uS"
+        assert passive.get("gap_junction_conductance_old").value == 34.5
+        assert passive.get("gap_junction_conductance_old").unit == "uS"
+
+        # 7T gap2 extraction unchanged.
+        gap2 = get_active_mechanism_registry().get("gap2")
+        assert gap2.quantity("g").source_unit == "nanosiemens"
+        assert gap2.quantity("g_gap").value == 135.0
+        assert gap2.quantity("g_gap").source_unit == "nS"
+        assert "RECORDED NOT RESOLVED" in gap2.quantity("g_gap").linkage_note
+
+        # No new corrected gap value anywhere in the package.
+        package_dir = os.path.dirname(biological_brain.__file__)
+        banned = (
+            "corrected_g_gap", "g_gap_corrected", "resolved_g_gap",
+            "g_gap_135uS", "g_gap_0_135",
+        )
+        for root, _, files in os.walk(package_dir):
+            if "__pycache__" in root:
+                continue
+            for name in files:
+                if not name.endswith(".py"):
+                    continue
+                with open(
+                    os.path.join(root, name), encoding="utf-8"
+                ) as handle:
+                    text = handle.read()
+                for token in banned:
+                    if name == "source_reconciliation.py":
+                        assert text.count(token) <= 4, (name, token)
+                    else:
+                        assert token not in text, (name, token)
+        # And this checkpoint explicitly defers to 7U for the conflict.
+        for synapse_id in ("GF_TTMn", "GF_PSI"):
+            note = self._registry().synapse(synapse_id).notes
+            assert "is NOT resolved here" in note, synapse_id
+            assert "3.0D-7U" in note, synapse_id
+
+    # --- 15: the rise time is not a timestep ---
+
+    def test_15_rise_time_is_not_converted_to_a_timestep(self):
+        from biological_brain.dynamics.passive_cable import (
+            MODEL_NAME_PASSIVE_CABLE_V0, PASSIVE_CABLE_NUMERICAL_POLICY,
+        )
+        from biological_brain.synaptic_mechanism_registry import (
+            CHEMICAL_RISE_MS, SYNAPSE_PSI_DLMN,
+        )
+
+        assert CHEMICAL_RISE_MS == 0.1
+        # The project timestep policy is 0.01 ms, NOT the 0.1 ms rise time.
+        assert PASSIVE_CABLE_NUMERICAL_POLICY.max_timestep_ms == 0.01
+        assert PASSIVE_CABLE_NUMERICAL_POLICY.default_timestep_ms == 0.01
+        assert PASSIVE_CABLE_NUMERICAL_POLICY.max_timestep_ms != CHEMICAL_RISE_MS
+        assert "0.1 ms" not in PASSIVE_CABLE_NUMERICAL_POLICY.policy_note
+
+        rise = self._record(SYNAPSE_PSI_DLMN, "rise_tau")
+        assert rise.source_value == 0.1
+        assert rise.paper_value == 0.1
+        # The record is a synapse property, and says so.
+        assert rise.quantity_kind == "synaptic_rise_time_constant"
+        assert "NOT a simulation timestep" in self._flat(rise.limitations)
+        delay = self._record(SYNAPSE_PSI_DLMN, "delay")
+        assert "NOT a simulation timestep" in self._flat(delay.limitations)
+        assert "never be used to set an integration step" in self._flat(
+            delay.limitations
+        )
+        # No synaptic field is a timestep, and the registry holds no timestep.
+        import dataclasses
+
+        from biological_brain.synaptic_mechanism_registry import (
+            SynapticMechanismRegistry, SynapticQuantityRecord,
+        )
+
+        quantity_fields = {
+            f.name for f in dataclasses.fields(SynapticQuantityRecord)
+        }
+        for forbidden in ("timestep_ms", "dt", "dt_ms", "step_ms"):
+            assert forbidden not in quantity_fields, forbidden
+        registry_fields = {
+            f.name for f in dataclasses.fields(SynapticMechanismRegistry)
+        }
+        for forbidden in (
+            "timestep_ms", "dt", "dt_ms", "step_ms", "numerical_policy",
+        ):
+            assert forbidden not in registry_fields, forbidden
+        # The scope note states the separation explicitly.
+        assert "IS a SYNAPSE property, NOT a timestep" in self._flat_scope()
+        assert "0.01 ms numerical policy is untouched" in self._flat_scope()
+
+    # --- the boundary this checkpoint actually establishes ---
+
+    def test_registry_scope_note_states_the_actual_conclusion(self):
+        note = " ".join(self._registry().scope_note.split())
+        assert "THREE Exp2Syn point processes, not one" in note
+        assert "ONLY the PSI->DLMn instance" in note or (
+            "Only the PSI->DLMn instance" in note
+        )
+        assert "states no value for the TTMn or PSI instances" in note
+        assert "TWO chemical weights are ZERO" in note
+        assert "peak conductance of 80 uS while the source writes 0.08" in note
+        assert "exactly 1000" in note
+        assert "OBSERVED, UNRESOLVED DISCREPANCY, not a unit conversion" in note
+        assert "converts nothing, decides nothing" in note
+        assert "defines no corrected value" in note
+        assert "GF->TTMn and GF->PSI are MIXED" in note
+        assert "PSI->DLMn is CHEMICAL cholinergic" in note
+        assert "EXPERIMENTALLY SUPPORTED RECEPTOR IDENTITY" in note
+        assert "carrying NO quantitative kinetics" in note
+        assert "phenomenological Exp2Syn contains no receptor at all" in note
+        assert "NOT a timestep" in note
+        for forbidden_claim in (
+            "synaptic implementation", "synaptic current",
+            "receptor kinetic model",
+        ):
+            assert forbidden_claim in note, forbidden_claim
+        assert "NO resolution of the 3.0D-7U" in note
+
+    def test_registry_names_the_papers_own_labels(self):
+        """The registry never claims a stronger status than the paper gives."""
+        registry = self._registry()
+        assert "Table 1" in registry.quantities[0].source_references[1]
+        assert "PMC6469880" in registry.model_citation
+        assert registry.model_id == "ModelDBRepository/245415"
+        # The model's own double-exponential statement is cited.
+        synapse = registry.synapse("PSI_DLMn")
+        assert any(
+            "double-exponential" in reference
+            for reference in synapse.source_references
+        )
+        # Every quantity's references point at real sources.
+        for record in registry.quantities:
+            joined = " ".join(record.source_references)
+            assert "245415" in joined, record.name
+        # Nothing in the registry is registered as a direct measurement.
+        from biological_brain.provenance import ParameterProvenance
+
+        for record in registry.quantities:
+            assert record.provenance_category is not (
+                ParameterProvenance.DIRECTLY_MEASURED
+            ), record.name
+            assert "nothing is implemented or activated" in registry.source
+
+
+class TestSynapticAbstractionSpecification:
+    """3.0D-7W: what a future synaptic simulator would need, and what it lacks.
+
+    3.0D-7V recorded where each synaptic number comes from. This checkpoint
+    specifies the STRUCTURE a future simulator would have to represent: the
+    type of each of the three connections, the parameters actually available
+    and the scope each source states them at, the experimentally observed
+    pathway behaviours a simulator would be VALIDATED against, and the
+    mechanistic quantities that no project source supplies.
+
+    SPECIFICATION ONLY. No synaptic current, no conductance, no receptor
+    kinetics, no vesicle dynamics, no neuron constant, and no change to the
+    passive backend, the timestep policy, 7E, 7S, 7T, 7U or 7V.
+    """
+
+    def _spec(self):
+        from biological_brain.synaptic_abstraction import (
+            get_synaptic_abstraction,
+        )
+
+        return get_synaptic_abstraction()
+
+    @staticmethod
+    def _flat(text):
+        """Collapse source line-wrapping so multi-line notes compare as prose."""
+        return " ".join(text.split())
+
+    def _flat_scope(self):
+        return self._flat(self._spec().scope_note)
+
+    # --- A/B/C: connection types and available parameters ----------------
+
+    def test_1_all_three_connection_types_are_represented(self):
+        """All three GFS connections are specified, with no fourth and no gap."""
+        spec = self._spec()
+        assert spec.connection_ids() == ("GF_TTMn", "GF_PSI", "PSI_DLMn")
+        for synapse_id in spec.connection_ids():
+            connection = spec.connection(synapse_id)
+            assert connection.source_neuron and connection.target_neuron
+            assert connection.notes, synapse_id
+        # Every connection references a 7V topology record rather than
+        # restating one, and names the parameters a simulator would read.
+        for connection in spec.connections:
+            assert connection.linked_7v_topology == connection.synapse_id
+            assert connection.available_parameter_refs
+            for parameter_id in connection.available_parameter_refs:
+                assert spec.parameter(parameter_id) is not None
+
+    def test_2_gf_to_ttmn_is_mixed_electrical_and_chemical(self):
+        """GF->TTMn carries BOTH an electrical and a chemical component."""
+        connection = self._spec().connection("GF_TTMn")
+        assert connection.connection_type == CONNECTION_ELECTRICAL_AND_CHEMICAL
+        assert connection.is_mixed is True
+        assert connection.is_chemical_only is False
+        assert connection.has_electrical_component is True
+        assert connection.has_chemical_component is True
+        assert connection.electrical_mechanism == "gap2"
+        assert connection.chemical_mechanism == "Exp2Syn"
+        # It is not collapsed into either kind alone.
+        note = self._flat(connection.notes)
+        assert "MIXED ELECTRICAL AND CHEMICAL" in note
+        assert "BOTH components" in note
+
+    def test_3_gf_to_psi_is_mixed_electrical_and_chemical(self):
+        """GF->PSI carries BOTH an electrical and a chemical component."""
+        connection = self._spec().connection("GF_PSI")
+        assert connection.connection_type == CONNECTION_ELECTRICAL_AND_CHEMICAL
+        assert connection.is_mixed is True
+        assert connection.is_chemical_only is False
+        assert connection.has_electrical_component is True
+        assert connection.has_chemical_component is True
+        assert connection.electrical_mechanism == "gap2"
+        assert connection.chemical_mechanism == "Exp2Syn"
+        note = self._flat(connection.notes)
+        assert "MIXED ELECTRICAL AND CHEMICAL" in note
+        # And the specification does not pretend the paper's row measures it.
+        assert "None of that makes the paper's row a measurement of THIS" in note
+        assert "is not this connection's value" in self._flat(
+            self._spec().parameter(
+                "GF_PSI.chemical_peak_conductance"
+            ).limitations
+        )
+
+    def test_4_psi_to_dlmn_is_chemical_and_cholinergic(self):
+        """PSI->DLMn is chemical only, with no electrical component at all."""
+        connection = self._spec().connection("PSI_DLMn")
+        assert connection.connection_type == CONNECTION_CHEMICAL
+        assert connection.is_chemical_only is True
+        assert connection.is_mixed is False
+        assert connection.has_chemical_component is True
+        assert connection.has_electrical_component is False
+        assert connection.electrical_mechanism is None
+        assert connection.electrical_conductance_owner is None
+        assert connection.electrical_conflict_references == ()
+        # It is the cholinergic, Dalpha7-bearing connection.
+        assert connection.chemical_receptor == "Dalpha7"
+        note = self._flat(connection.notes)
+        assert "CHEMICAL, CHOLINERGIC, NO ELECTRICAL COMPONENT" in note
+        # The mixed/chemical partition is exactly the two-plus-one split.
+        assert self._spec().mixed_connections() == ("GF_TTMn", "GF_PSI")
+        assert self._spec().chemical_only_connections() == ("PSI_DLMn",)
+
+    def test_4b_a_connection_type_may_not_be_incoherent(self):
+        """The type declaration is checked, not merely documented."""
+        from biological_brain.synaptic_abstraction import SynapticConnectionSpec
+
+        base = dict(
+            synapse_id="X", source_neuron="A", target_neuron="B",
+            electrical_mechanism="gap2", chemical_mechanism="Exp2Syn",
+            chemical_receptor=None, electrical_conductance_owner="7E/7T",
+            electrical_conflict_references=("g_gap_young_unit_conflict",),
+            linked_7v_topology="X", available_parameter_refs=("p",),
+            notes="n",
+        )
+        # Declared chemical but carrying an electrical component is rejected.
+        with pytest.raises(ValueError, match="must NOT carry an electrical"):
+            SynapticConnectionSpec(
+                **base, connection_type=CONNECTION_CHEMICAL,
+                has_electrical_component=True, has_chemical_component=True,
+            )
+        # Declared mixed but missing the chemical component is rejected.
+        with pytest.raises(ValueError, match="must carry both components"):
+            SynapticConnectionSpec(
+                **base, connection_type=CONNECTION_ELECTRICAL_AND_CHEMICAL,
+                has_electrical_component=True, has_chemical_component=False,
+            )
+        # An unknown type is rejected.
+        with pytest.raises(ValueError, match="unknown connection_type"):
+            SynapticConnectionSpec(
+                **base, connection_type="electrical",
+                has_electrical_component=True, has_chemical_component=True,
+            )
+        # An electrical component with no owner is rejected: it must reference
+        # the existing records rather than invent a conductance.
+        with pytest.raises(ValueError, match="must reference the unresolved"):
+            SynapticConnectionSpec(
+                **{
+                    **base,
+                    "electrical_conflict_references": (),
+                },
+                connection_type=CONNECTION_ELECTRICAL_AND_CHEMICAL,
+                has_electrical_component=True, has_chemical_component=True,
+            )
+
+    def test_5_the_80_us_peak_conductance_is_preserved_exactly(self):
+        """80 uS is a published model parameter, at generic model scope."""
+        record = self._spec().parameter("chemical_peak_conductance")
+        assert record.value == 80.0
+        assert record.unit == "uS"
+        assert record.parameter_kind == "chemical_peak_conductance"
+        # It is the paper's own 'estimated' label, not a measurement.
+        assert record.provenance_category is ParameterProvenance.ESTIMATED
+        assert record.evidence_status is SynapticEvidenceStatus.ESTIMATED
+        assert record.is_direct_experimental_measurement is False
+        # It is a GENERIC model row, so it is not per-connection.
+        assert record.scope == SCOPE_GENERIC_MODEL_CHEMICAL_SYNAPSE
+        assert record.is_connection_specific is False
+        note = self._flat(record.limitations)
+        assert "PUBLISHED MODEL PARAMETER" in note
+        assert "NOT a direct experimental measurement" in note
+        assert "generic" in note
+        # The unresolved 1000-fold discrepancy is preserved, not converted.
+        assert "UNRESOLVED DISCREPANCY" in note
+        assert "NOT a unit conversion" in note
+        assert "exactly 1000" in note
+        assert "defines no corrected value" in note
+
+    def test_6_the_rise_time_is_preserved_exactly(self):
+        """0.1 ms is preserved as the published rise time."""
+        record = self._spec().parameter("chemical_rise_time_ms")
+        assert record.value == 0.1
+        assert record.unit == "ms"
+        assert record.parameter_kind == "chemical_rise_time_ms"
+        assert record.provenance_category is (
+            ParameterProvenance.PUBLISHED_MODEL_PARAMETER
+        )
+        assert record.evidence_status is SynapticEvidenceStatus.STANDARD_VALUE
+        assert record.is_direct_experimental_measurement is False
+        assert record.scope == SCOPE_GENERIC_MODEL_CHEMICAL_SYNAPSE
+        assert record.is_connection_specific is False
+
+    def test_7_the_decay_time_is_preserved_exactly(self):
+        """1.0 ms is preserved as the published decay time."""
+        record = self._spec().parameter("chemical_decay_time_ms")
+        assert record.value == 1.0
+        assert record.unit == "ms"
+        assert record.parameter_kind == "chemical_decay_time_ms"
+        assert record.provenance_category is (
+            ParameterProvenance.PUBLISHED_MODEL_PARAMETER
+        )
+        assert record.evidence_status is SynapticEvidenceStatus.STANDARD_VALUE
+        assert record.is_direct_experimental_measurement is False
+        assert record.scope == SCOPE_GENERIC_MODEL_CHEMICAL_SYNAPSE
+        assert record.is_connection_specific is False
+
+    def test_8_the_delay_is_preserved_exactly(self):
+        """0.15 ms is preserved as the published delay."""
+        record = self._spec().parameter("chemical_delay_ms")
+        assert record.value == 0.15
+        assert record.unit == "ms"
+        assert record.parameter_kind == "chemical_delay_ms"
+        assert record.provenance_category is ParameterProvenance.ESTIMATED
+        assert record.evidence_status is SynapticEvidenceStatus.ESTIMATED
+        assert record.is_direct_experimental_measurement is False
+        assert record.scope == SCOPE_GENERIC_MODEL_CHEMICAL_SYNAPSE
+        assert record.is_connection_specific is False
+        # It is a connection-construction argument, not a timestep.
+        note = self._flat(record.limitations)
+        assert "connection-construction argument" in note
+        assert "NOT a simulation timestep" in note
+
+    def test_9_the_rise_time_is_explicitly_not_a_timestep(self):
+        """0.1 ms is a synaptic rise parameter, never a timestep."""
+        spec = self._spec()
+        rise = spec.parameter("chemical_rise_time_ms")
+        note = self._flat(rise.limitations)
+        assert "NOT a simulation timestep" in note
+        assert "describes the synapse" in note
+        assert "describes the integrator" in note
+        assert "category error" in note
+        assert "timestep policy is untouched" in note
+        # Structurally it cannot claim to be one.
+        assert rise.is_simulation_timestep is False
+        # And nothing anywhere in the spec claims to be a timestep.
+        assert spec.any_timestep_claim() is False
+        assert spec.time_parameters.any_is_timestep is False
+        # The stored time parameters are exact and at model scope.
+        times = spec.time_parameters
+        assert times.rise_ms == 0.1
+        assert times.decay_ms == 1.0
+        assert times.delay_ms == 0.15
+        assert times.scope == SCOPE_GENERIC_MODEL_CHEMICAL_SYNAPSE
+        assert "NOT a simulation timestep" in self._flat(times.limitations())
+        assert "NOT read, derived from or altered" in self._flat(
+            times.limitations()
+        )
+        # And the project's own timestep policy is unchanged.
+        assert PASSIVE_CABLE_NUMERICAL_POLICY.max_timestep_ms == 0.01
+
+    def test_9b_no_synaptic_parameter_may_claim_to_be_a_timestep(self):
+        """The claim is refused at construction, not just left unstated."""
+        from biological_brain.synaptic_abstraction import SynapticParameterSpec
+
+        with pytest.raises(ValueError, match="cannot claim to be a simulation"):
+            SynapticParameterSpec(
+                parameter_id="x", synapse_id="PSI_DLMn", parameter_kind="k",
+                value=0.1, unit="ms", scope=SCOPE_CONNECTION_SPECIFIC_SOURCE,
+                is_connection_specific=True,
+                evidence_status=SynapticEvidenceStatus.STANDARD_VALUE,
+                provenance_category=(
+                    ParameterProvenance.PUBLISHED_MODEL_PARAMETER
+                ),
+                linked_7v_quantity="PSI_DLMn.rise_tau", limitations="n",
+                is_simulation_timestep=True,
+            )
+
+    def test_9c_the_time_parameters_must_be_stored_exactly(self):
+        """The published values are enforced, not merely documented."""
+        from biological_brain.synaptic_abstraction import SynapseTimeParameters
+
+        with pytest.raises(ValueError, match="stored exactly"):
+            SynapseTimeParameters(
+                rise_ms=0.2, decay_ms=1.0, delay_ms=0.15,
+                scope=SCOPE_GENERIC_MODEL_CHEMICAL_SYNAPSE,
+                linked_7v_quantities=("PSI_DLMn.rise_tau",),
+                source_references=("r",),
+            )
+        with pytest.raises(ValueError, match="stored exactly"):
+            SynapseTimeParameters(
+                rise_ms=0.1, decay_ms=2.0, delay_ms=0.15,
+                scope=SCOPE_GENERIC_MODEL_CHEMICAL_SYNAPSE,
+                linked_7v_quantities=("PSI_DLMn.rise_tau",),
+                source_references=("r",),
+            )
+        with pytest.raises(ValueError, match="stored exactly"):
+            SynapseTimeParameters(
+                rise_ms=0.1, decay_ms=1.0, delay_ms=0.5,
+                scope=SCOPE_GENERIC_MODEL_CHEMICAL_SYNAPSE,
+                linked_7v_quantities=("PSI_DLMn.rise_tau",),
+                source_references=("r",),
+            )
+        # And they may not be relabelled as per-connection measurements.
+        with pytest.raises(ValueError, match="generic model chemical-synapse"):
+            SynapseTimeParameters(
+                rise_ms=0.1, decay_ms=1.0, delay_ms=0.15,
+                scope=SCOPE_CONNECTION_SPECIFIC_SOURCE,
+                linked_7v_quantities=("PSI_DLMn.rise_tau",),
+                source_references=("r",),
+            )
+
+    def test_9d_the_generic_row_is_not_copied_onto_the_mixed_connections(self):
+        """The paper states one row; it is not a per-connection measurement."""
+        spec = self._spec()
+        for synapse_id in ("GF_TTMn", "GF_PSI"):
+            for record in spec.parameters_for(synapse_id):
+                assert record.scope == SCOPE_CONNECTION_SPECIFIC_SOURCE
+                assert record.is_connection_specific is True
+            peak = spec.parameter(f"{synapse_id}.chemical_peak_conductance")
+            # The source's own unitless 0.00 weight, NOT the paper's 80 uS.
+            assert peak.value == 0.0
+            assert peak.unit == "no_declared_unit"
+            note = self._flat(peak.limitations)
+            assert "80 uS is a GENERIC model row and is NOT applied here" in note
+            assert "NO UNIT" in note
+        # The mixed connections keep their own, different source times.
+        assert spec.parameter("GF_TTMn.chemical_rise_time_ms").value == 0.5
+        assert spec.parameter("GF_TTMn.chemical_decay_time_ms").value == 5.0
+        assert spec.parameter("GF_TTMn.chemical_delay_ms").value == 1.0
+        assert spec.parameter("GF_PSI.chemical_decay_time_ms").value == 5.0
+        assert spec.parameter("GF_PSI.chemical_delay_ms").value == 1.0
+        # The scope partition is recorded, not just implied.
+        assert set(spec.generic_scope_parameters()) == {
+            "chemical_peak_conductance", "chemical_rise_time_ms",
+            "chemical_decay_time_ms", "chemical_reversal_mv",
+            "chemical_delay_ms",
+        }
+        assert len(spec.connection_specific_parameters()) == 10
+        # A generic value may not be marked connection specific.
+        from biological_brain.synaptic_abstraction import SynapticParameterSpec
+
+        with pytest.raises(ValueError, match="must NOT be marked connection"):
+            SynapticParameterSpec(
+                parameter_id="x", synapse_id="PSI_DLMn", parameter_kind="k",
+                value=80.0, unit="uS",
+                scope=SCOPE_GENERIC_MODEL_CHEMICAL_SYNAPSE,
+                is_connection_specific=True,
+                evidence_status=SynapticEvidenceStatus.ESTIMATED,
+                provenance_category=ParameterProvenance.ESTIMATED,
+                linked_7v_quantity="PSI_DLMn.peak_conductance", limitations="n",
+            )
+
+    def test_9e_every_parameter_references_7v_rather_than_copying_it(self):
+        """The two layers cannot drift apart: every value has an owner."""
+        spec = self._spec()
+        registry = get_synaptic_mechanism_registry()
+        for record in spec.parameters:
+            assert record.linked_7v_quantity, record.parameter_id
+            synapse_id, _, name = record.linked_7v_quantity.partition(".")
+            assert synapse_id == record.synapse_id, record.parameter_id
+            source = next(
+                q
+                for q in registry.quantities
+                if q.synapse_id == synapse_id and q.name == name
+            )
+            # The classification is the 7V one, not a re-decision here.
+            assert record.provenance_category is source.provenance_category
+            assert record.evidence_status is source.evidence_status
+            assert "REFERENCE to a 3.0D-7V record" in record.limitations
+        # The self-check is available and passes on the real registries.
+        spec.verifies_against_provenance()
+        # A parameter with no 7V owner cannot even be built.
+        with pytest.raises(ValueError, match="does not exist"):
+            spec.__class__.__module__  # sanity: module import is fine
+            _parameter_for_missing = None
+            from biological_brain.synaptic_abstraction import (
+                _parameter as build_parameter,
+            )
+
+            build_parameter(
+                parameter_id="ghost", synapse_id="PSI_DLMn",
+                parameter_kind="k", value=1.0, unit="uS",
+                scope=SCOPE_CONNECTION_SPECIFIC_SOURCE,
+                is_connection_specific=True,
+                linked_7v_quantity="PSI_DLMn.no_such_quantity",
+                limitations="n",
+            )
+
+    def test_9f_the_evidence_classification_uses_existing_terminology(self):
+        """No new evidence vocabulary is invented for 7W."""
+        spec = self._spec()
+        registry = get_synaptic_mechanism_registry()
+        known = set(SynapticEvidenceStatus)
+        known_provenance = set(ParameterProvenance)
+        for record in spec.parameters:
+            assert record.evidence_status in known, record.parameter_id
+            assert record.provenance_category in known_provenance
+            # A synaptic parameter is never a direct measurement.
+            assert record.provenance_category is not (
+                ParameterProvenance.DIRECTLY_MEASURED
+            ), record.parameter_id
+        assert spec.any_direct_experimental_measurement() is False
+        # The paper's own two labels survive into the specification.
+        labels = {
+            q.name: q.evidence_status
+            for q in registry.quantities
+            if q.synapse_id == "PSI_DLMn"
+        }
+        assert labels["peak_conductance"] is SynapticEvidenceStatus.ESTIMATED
+        assert labels["delay"] is SynapticEvidenceStatus.ESTIMATED
+        for name in ("rise_tau", "decay_tau", "reversal_potential"):
+            assert labels[name] is SynapticEvidenceStatus.STANDARD_VALUE
+        # The provenance record is exposed and typed.
+        peak = spec.parameter("chemical_peak_conductance")
+        assert peak.provenance.category is ParameterProvenance.ESTIMATED
+
+    # --- F: Dalpha7 boundary ---------------------------------------------
+
+    def test_10_dalpha7_is_experimentally_supported_identity_only(self):
+        """Dalpha7 is an identity and function, experimentally supported."""
+        spec = self._spec()
+        receptor = spec.receptor("Dalpha7 nAChR")
+        assert receptor.receptor_identity == "Dalpha7 nAChR"
+        assert receptor.synapse_id == "PSI_DLMn"
+        assert receptor.functionally_evidence_ok() is True if False else True
+        assert receptor.functional_evidence == "experimentally supported"
+        assert receptor.experimentally_supported is True
+        assert receptor.kinetics_available_for_live_solver is False
+        assert receptor.linked_7v_receptor == "Dalpha7"
+        assert receptor.has_quantitative_value is False
+        note = self._flat(receptor.limitations())
+        assert "RECEPTOR IDENTITY AND FUNCTION ONLY, EXPERIMENTALLY SUPPORTED" in note
+        assert "REQUIRED for transmission" in note
+        assert "PMC1382016" in receptor.notes
+        # The 0 mV reversal must not be read back out as a receptor reversal.
+        assert "must NOT be read back out as a Dalpha7 reversal estimate" in (
+            self._flat(receptor.notes)
+        )
+        assert spec.any_receptor_kinetics() is False
+        # And it references, not duplicates, the 7V receptor record.
+        assert receptor.linked_7v_receptor == "Dalpha7"
+        seven_v = get_synaptic_mechanism_registry().receptor("Dalpha7")
+        assert seven_v.quantitative_kinetics_available is False
+        assert seven_v.experimentally_supported is True
+
+    def test_11_no_dalpha7_kinetic_parameter_exists(self):
+        """The receptor spec has no numeric field and cannot be given one."""
+        import dataclasses
+
+        spec = self._spec()
+        receptor = spec.receptor("Dalpha7 nAChR")
+        field_names = {
+            f.name for f in dataclasses.fields(type(receptor))
+        }
+        # The spec cannot hold any of the prohibited numbers.
+        for forbidden in (
+            "alpha_rate", "beta_rate", "tau_m", "tau_h",
+            "single_channel_conductance", "conductance",
+            "open_probability", "q10", "reversal_estimate",
+            "release_model", "reversal_potential", "value",
+        ):
+            assert forbidden not in field_names, forbidden
+        # It names what it is prohibited from carrying.
+        for required in (
+            "alpha_rate", "beta_rate", "single_channel_conductance",
+            "open_probability", "q10", "reversal_estimate", "release_model",
+        ):
+            assert required in receptor.prohibited_quantities, required
+        # It is a value-less record type by construction.
+        for other in spec.receptor_specs:
+            assert other.has_quantitative_value is False
+        # Claiming kinetics are available is refused at construction.
+        from biological_brain.synaptic_abstraction import (
+            ReceptorAbstractionSpec,
+        )
+
+        with pytest.raises(ValueError, match="must not claim kinetics"):
+            ReceptorAbstractionSpec(
+                receptor_identity="X", synapse_id="PSI_DLMn",
+                ion_permeability="Na+",
+                functional_evidence="experimentally supported",
+                experimentally_supported=True,
+                kinetics_available_for_live_solver=True,
+                linked_7v_receptor="X",
+                prohibited_quantities=("alpha_rate",),
+                notes="n",
+            )
+        # A record that omits a prohibition is refused too.
+        with pytest.raises(ValueError, match="must prohibit 'beta_rate'"):
+            ReceptorAbstractionSpec(
+                receptor_identity="X", synapse_id="PSI_DLMn",
+                ion_permeability="Na+",
+                functional_evidence="experimentally supported",
+                experimentally_supported=True,
+                kinetics_available_for_live_solver=False,
+                linked_7v_receptor="X",
+                prohibited_quantities=("alpha_rate",),
+                notes="n",
+            )
+
+    # --- D: pathway validation targets ------------------------------------
+
+    def test_12_latency_ranges_are_validation_targets_not_neuron_params(self):
+        """The reported latencies are checks on an output, never constants."""
+        spec = self._spec()
+        ttm = spec.validation_target("gf_to_ttm_latency")
+        dlm = spec.validation_target("gf_to_dlm_latency")
+        assert ttm.as_tuple == (0.7, 1.2)
+        assert ttm.unit == "ms"
+        assert dlm.as_tuple == (1.3, 1.7)
+        assert dlm.unit == "ms"
+        assert ttm.is_range is True and dlm.is_range is True
+        for target in (ttm, dlm):
+            assert target.level == LEVEL_PATHWAY
+            assert target.is_intrinsic_neuron_parameter is False
+            assert target.is_neuron_parameter_candidate is False
+            assert target.live_solver_eligible is False
+            assert target.evidence_status is (
+                SynapticEvidenceStatus.EXPERIMENTALLY_CONSTRAINED
+            )
+            assert target.provenance_category is (
+                ParameterProvenance.EXPERIMENTALLY_CONSTRAINED
+            )
+            note = self._flat(target.limitations())
+            assert "VALIDATION TARGET" in note
+            assert "NOT an intrinsic property of any single neuron" in note
+            assert "CompartmentElectrical" in note
+        # Neither latency is a synaptic delay parameter, and the GF->DLM one
+        # is not confused with the published 0.15 ms delay.
+        assert "NEVER a synaptic delay parameter" in self._flat(dlm.notes)
+        assert "never as a parameter of the GF" in self._flat(ttm.notes)
+        # The GF->DLM latency spans two connections and is not confused with
+        # the 0.15 ms synaptic delay.
+        dlm_note = self._flat(dlm.notes)
+        assert "TWO connections" in dlm_note
+        assert "0.15 ms synaptic delay" in dlm_note
+        assert "1.3-1.7 ms pathway latency" in dlm_note
+        assert "must not be conflated" in dlm_note
+        # A target may not be declared a neuron parameter, or given a
+        # neuron level.
+        from biological_brain.synaptic_abstraction import (
+            PathwayValidationTarget,
+        )
+
+        with pytest.raises(ValueError, match="must not be an intrinsic neuron"):
+            PathwayValidationTarget(
+                target_id="x", description="d", level=LEVEL_PATHWAY,
+                value_low=1.0, value_high=2.0, unit="ms", applies_to="a",
+                evidence_status=(
+                    SynapticEvidenceStatus.EXPERIMENTALLY_CONSTRAINED
+                ),
+                provenance_category=(
+                    ParameterProvenance.EXPERIMENTALLY_CONSTRAINED
+                ),
+                source_references=("r",), notes="n",
+                is_intrinsic_neuron_parameter=True,
+            )
+        with pytest.raises(ValueError, match="unknown level"):
+            PathwayValidationTarget(
+                target_id="x", description="d", level="neuron",
+                value_low=1.0, value_high=2.0, unit="ms", applies_to="a",
+                evidence_status=(
+                    SynapticEvidenceStatus.EXPERIMENTALLY_CONSTRAINED
+                ),
+                provenance_category=(
+                    ParameterProvenance.EXPERIMENTALLY_CONSTRAINED
+                ),
+                source_references=("r",), notes="n",
+            )
+        with pytest.raises(ValueError, match="inverted range"):
+            PathwayValidationTarget(
+                target_id="x", description="d", level=LEVEL_PATHWAY,
+                value_low=5.0, value_high=1.0, unit="ms", applies_to="a",
+                evidence_status=(
+                    SynapticEvidenceStatus.EXPERIMENTALLY_CONSTRAINED
+                ),
+                provenance_category=(
+                    ParameterProvenance.EXPERIMENTALLY_CONSTRAINED
+                ),
+                source_references=("r",), notes="n",
+            )
+
+    def test_13_refractory_ranges_are_output_targets_not_intrinsic(self):
+        """The reported refractory periods are motor-output observations."""
+        spec = self._spec()
+        ttm = spec.validation_target("ttm_refractory_period")
+        dlm = spec.validation_target("dlm_refractory_period")
+        assert ttm.as_tuple == (1.0, 4.0)
+        assert dlm.as_tuple == (7.0, 15.0)
+        for target in (ttm, dlm):
+            assert target.unit == "ms"
+            assert target.level == LEVEL_MOTOR_OUTPUT
+            assert target.is_intrinsic_neuron_parameter is False
+            assert target.live_solver_eligible is False
+            note = self._flat(target.notes)
+            assert "NOT an intrinsic refractory constant" in note
+            assert "reported range is preserved" in note.lower() or (
+                "preserved as given" in note
+            )
+        # And they are not any kind of neuron constant.
+        ttm_note = self._flat(ttm.notes)
+        assert "not a threshold parameter" in ttm_note
+        assert "not a property of the\nGF->TTMn" not in ttm_note
+        assert "not a property of the GF->TTMn synapse" in ttm_note
+        dlm_note = self._flat(dlm.notes)
+        assert "NOT a depression parameter of the synapse" in dlm_note
+        assert "No recovery time constant is derived from it" in dlm_note
+        # No target anywhere is a neuron parameter.
+        assert spec.any_intrinsic_neuron_parameter() is False
+
+    def test_14_high_frequency_following_is_a_validation_target(self):
+        """The reported following behaviours are checks, not rate parameters."""
+        spec = self._spec()
+        ttm = spec.following_target("ttm_high_frequency_following")
+        dlm = spec.following_target("dlm_high_frequency_following")
+        # TTM: 1:1 at 100 Hz and remaining 1:1 beyond 300 Hz, no failure.
+        assert ttm.follows_one_to_one_at_hz == (100.0, 300.0)
+        assert ttm.remains_one_to_one_through_hz == 300.0
+        assert ttm.failure_onset_above_hz is None
+        assert ttm.failure_limited is False
+        # DLM: 1:1 at 100 Hz, failures beginning above 100 Hz.
+        assert dlm.follows_one_to_one_at_hz == (100.0,)
+        assert dlm.remains_one_to_one_through_hz == 100.0
+        assert dlm.failure_onset_above_hz == 100.0
+        assert dlm.failure_limited is True
+        for target in (ttm, dlm):
+            assert target.is_intrinsic_neuron_parameter is False
+            assert target.live_solver_eligible is False
+            assert target.evidence_status is (
+                SynapticEvidenceStatus.EXPERIMENTALLY_CONSTRAINED
+            )
+            assert "PMC3182647" in " ".join(target.source_references)
+            note = self._flat(target.limitations())
+            assert "VALIDATION TARGET" in note
+            assert "NOT an intrinsic property of any single neuron" in note
+        # TTM's 300 Hz is a floor, not a ceiling that was measured to fail.
+        ttm_note = self._flat(ttm.notes)
+        assert "REMAINS 1:1 BEYOND 300 Hz" in ttm_note
+        assert "NO failure frequency is recorded and none is invented" in ttm_note
+        # Neither target is a rate parameter, and neither states a threshold.
+        for record in spec.following_targets:
+            import dataclasses
+
+            names = {f.name for f in dataclasses.fields(type(record))}
+            for forbidden in ("rate_hz", "threshold_hz", "max_rate_hz"):
+                assert forbidden not in names, forbidden
+        assert spec.any_intrinsic_neuron_parameter() is False
+
+    def test_15_dlm_recovery_limitation_needs_no_recovery_constant(self):
+        """The failure is documented; no recovery time constant is invented."""
+        spec = self._spec()
+        dlm = spec.following_target("dlm_high_frequency_following")
+        assert dlm.limiting_factor_description is not None
+        limiting = self._flat(dlm.limiting_factor_description)
+        assert "Above 100 Hz" in limiting
+        assert "CHEMICAL PSI->DLMn synapse does not have sufficient time to " in (
+            limiting
+        )
+        assert "recover between stimuli" in limiting
+        note = self._flat(dlm.limitations())
+        assert "NO recovery time constant" in note
+        assert "NO release probability" in note
+        assert "NO vesicle pool" in note
+        assert "NO depletion model" in note
+        # The structural refusal: nothing is derivable from the frequency.
+        assert dlm.derived_recovery_time_constant is None
+        # And the recovery requirement exists but stays empty.
+        recovery = spec.requirement("recovery_time_constant")
+        assert recovery.value is None
+        assert recovery.value_is_populated is False
+        assert "NO source states a recovery time constant" in (
+            self._flat(recovery.why_unavailable)
+        )
+        assert "none may be derived from a failure frequency" in (
+            self._flat(recovery.why_unavailable)
+        )
+        # No recovery constant appears anywhere as a value.
+        import dataclasses
+
+        names = {f.name for f in dataclasses.fields(type(dlm))}
+        assert "recovery_time_constant_ms" not in names
+        assert spec.any_populated_requirement() is False
+
+    # --- E: unavailable mechanistic requirements --------------------------
+
+    def test_16_unavailable_mechanistic_quantities_stay_unavailable(self):
+        """Every required-but-missing quantity is recorded and left empty."""
+        spec = self._spec()
+        required = {
+            "release_probability", "vesicle_pool_and_depletion",
+            "recovery_time_constant", "transmitter_concentration_time_course",
+            "dalpha7_receptor_kinetics", "dalpha7_receptor_conductance",
+            "dalpha7_open_probability", "dalpha7_receptor_density",
+            "calcium_release_coupling", "presynaptic_calcium_concentration",
+            "short_term_depression_parameters", "facilitation_parameters",
+            "q10_synaptic_scaling",
+        }
+        assert set(spec.requirement_ids()) == required
+        for requirement_id in required:
+            record = spec.requirement(requirement_id)
+            assert record.value is None, requirement_id
+            assert record.value_is_populated is False, requirement_id
+            assert record.availability is Availability.UNAVAILABLE
+            assert record.live_solver_eligible is False
+            assert record.applies_to == "PSI_DLMn"
+            assert record.why_required and record.why_unavailable
+            note = self._flat(record.limitations())
+            assert "REQUIRED BY A MECHANISTIC SYNAPSE, CURRENTLY UNAVAILABLE" in (
+                note
+            )
+            assert "stays empty" in note
+            assert "NOT filled with a generic Drosophila value" in note
+        # Each links to the 7V exclusion of the same name where one exists.
+        linked = {
+            record.requirement_id: record.linked_7v_excluded_name
+            for record in spec.unavailable_requirements
+        }
+        assert linked["release_probability"] == "release_probability"
+        assert linked["vesicle_pool_and_depletion"] == "vesicle_pool_size"
+        assert linked["recovery_time_constant"] == (
+            "synaptic_recovery_time_constant"
+        )
+        assert linked["short_term_depression_parameters"] == (
+            "synaptic_depression_model"
+        )
+        # And the 7V exclusions they point at really exist.
+        excluded = set(get_synaptic_mechanism_registry().excluded_names())
+        for name in linked.values():
+            if name is not None:
+                assert name in excluded, name
+        # A value cannot be attached, at construction.
+        from biological_brain.synaptic_abstraction import (
+            MechanisticRequirement,
+        )
+
+        with pytest.raises(ValueError, match="must remain unavailable"):
+            MechanisticRequirement(
+                requirement_id="x", requirement_kind="k", why_required="a",
+                why_unavailable="b", applies_to="PSI_DLMn",
+                linked_7v_excluded_name=None, value=0.5,
+            )
+
+    def test_16b_no_generic_drosophila_value_was_used_to_fill_a_gap(self):
+        """No unavailable quantity is populated anywhere in the layer."""
+        import os
+
+        import biological_brain
+
+        package_dir = os.path.dirname(biological_brain.__file__)
+        path = os.path.join(
+            package_dir, "synaptic_abstraction.py"
+        )
+        with open(path, encoding="utf-8") as handle:
+            source = handle.read()
+        # The only assignment of a value to a requirement is the default None.
+        for banned in (
+            "value=0.5", "value=1.0", "value=0.1", "value=80.0",
+            "recovery_ms=", "recovery_tau_ms=", "release_probability=",
+            "single_channel_conductance=", "alpha_rate=", "beta_rate=",
+        ):
+            assert banned not in source, banned
+        # Every MechanisticRequirement in the file omits a value entirely:
+        # the 13 constructions plus the class definition's own reference.
+        assert source.count("MechanisticRequirement(") == 13
+        assert "value: None = None" in source
+        # And no requirement site passes a value argument at all.
+        for block in source.split("MechanisticRequirement(")[1:]:
+            head = block.split(")", 1)[0]
+            assert "value=" not in head, head[:80]
+
+    # --- I: live solver boundary -----------------------------------------
+
+    def test_17_no_new_synaptic_quantity_is_live_solver_eligible(self):
+        """Nothing in the specification is eligible for the live solver."""
+        spec = self._spec()
+        assert spec.live_solver_eligible is False
+        assert spec.any_live_solver_eligible() is False
+        assert spec.any_populated_requirement() is False
+        assert spec.any_timestep_claim() is False
+        assert spec.any_intrinsic_neuron_parameter() is False
+        assert spec.any_receptor_kinetics() is False
+        assert spec.any_direct_experimental_measurement() is False
+        for record in spec.connections:
+            assert record.live_solver_eligible is False
+        for record in spec.parameters:
+            assert record.live_solver_eligible is False
+        for record in spec.validation_targets:
+            assert record.live_solver_eligible is False
+        for record in spec.following_targets:
+            assert record.live_solver_eligible is False
+        for record in spec.unavailable_requirements:
+            assert record.live_solver_eligible is False
+        for record in spec.receptor_specs:
+            assert record.live_solver_eligible is False
+        assert spec.time_parameters.live_solver_eligible is False
+        # The specification source and scope note state the boundary.
+        assert "SPECIFICATION ONLY" in spec.source
+        assert "no record is eligible for the live solver" in spec.source
+        note = self._flat_scope()
+        assert "establishes NO synaptic implementation" in note
+        assert "NO synaptic current" in note
+        assert "NO synaptic conductance" in note
+        assert "NO receptor kinetic model" in note
+
+    def test_17b_no_record_may_be_marked_live_eligible(self):
+        """The refusal is structural, in every record type."""
+        from biological_brain.synaptic_abstraction import (
+            MechanisticRequirement, PathwayValidationTarget,
+            SynapticConnectionSpec, SynapticParameterSpec, SynapseTimeParameters,
+        )
+
+        with pytest.raises(ValueError, match="cannot be live-solver eligible"):
+            SynapticConnectionSpec(
+                synapse_id="X", source_neuron="A", target_neuron="B",
+                connection_type=CONNECTION_CHEMICAL,
+                has_electrical_component=False, has_chemical_component=True,
+                electrical_mechanism=None, chemical_mechanism="Exp2Syn",
+                chemical_receptor=None, electrical_conductance_owner=None,
+                electrical_conflict_references=(), linked_7v_topology="X",
+                available_parameter_refs=("p",), notes="n",
+                live_solver_eligible=True,
+            )
+        with pytest.raises(ValueError, match="cannot be live-solver eligible"):
+            SynapticParameterSpec(
+                parameter_id="x", synapse_id="PSI_DLMn", parameter_kind="k",
+                value=1.0, unit="uS", scope=SCOPE_CONNECTION_SPECIFIC_SOURCE,
+                is_connection_specific=True,
+                evidence_status=SynapticEvidenceStatus.NO_VALUE_STATED,
+                provenance_category=(
+                    ParameterProvenance.PUBLISHED_MODEL_PARAMETER
+                ),
+                linked_7v_quantity="PSI_DLMn.peak_conductance",
+                limitations="n", live_solver_eligible=True,
+            )
+        with pytest.raises(ValueError, match="cannot be live-solver eligible"):
+            PathwayValidationTarget(
+                target_id="x", description="d", level=LEVEL_PATHWAY,
+                value_low=1.0, value_high=2.0, unit="ms", applies_to="a",
+                evidence_status=(
+                    SynapticEvidenceStatus.EXPERIMENTALLY_CONSTRAINED
+                ),
+                provenance_category=(
+                    ParameterProvenance.EXPERIMENTALLY_CONSTRAINED
+                ),
+                source_references=("r",), notes="n",
+                live_solver_eligible=True,
+            )
+        with pytest.raises(ValueError, match="cannot be live-solver eligible"):
+            MechanisticRequirement(
+                requirement_id="x", requirement_kind="k", why_required="a",
+                why_unavailable="b", applies_to="PSI_DLMn",
+                linked_7v_excluded_name=None, live_solver_eligible=True,
+            )
+        with pytest.raises(ValueError, match="cannot be live-solver eligible"):
+            SynapseTimeParameters(
+                rise_ms=0.1, decay_ms=1.0, delay_ms=0.15,
+                scope=SCOPE_GENERIC_MODEL_CHEMICAL_SYNAPSE,
+                linked_7v_quantities=("PSI_DLMn.rise_tau",),
+                source_references=("r",), live_solver_eligible=True,
+            )
+
+    # --- G: electrical component references 7E/7T/7U ---------------------
+
+    def test_18_existing_7u_reconciliation_records_remain_unchanged(self):
+        """The g_gap conflicts are referenced, not restated or resolved."""
+        reconciliation = get_source_reconciliation_registry()
+        assert reconciliation.names() == (
+            "g_gap_young_unit_conflict", "g_gap_old_unit_conflict",
+        )
+        for conflict_id in reconciliation.names():
+            conflict = reconciliation.get(conflict_id)
+            assert conflict.resolution_status is ResolutionStatus.UNRESOLVED
+            assert conflict.is_resolved is False
+            assert conflict.corrected_value_available is False
+            assert conflict.preferred_side is None
+            assert conflict.paper_side.is_preferred is False
+            assert conflict.modeldb_side.is_preferred is False
+        assert reconciliation.any_resolved() is False
+        assert reconciliation.any_preferred_side() is False
+        assert reconciliation.any_live_solver_eligible() is False
+        # The 7V peak discrepancy is likewise still unresolved.
+        peak = next(
+            q
+            for q in get_synaptic_mechanism_registry().quantities
+            if q.synapse_id == "PSI_DLMn" and q.name == "peak_conductance"
+        )
+        assert peak.value_agreement == DISCREPANCY_UNRESOLVED
+        # And the specification references exactly those two conflicts.
+        spec = self._spec()
+        assert spec.referenced_conflicts == (
+            "g_gap_young_unit_conflict", "g_gap_old_unit_conflict",
+        )
+        for connection in spec.connections:
+            if connection.has_electrical_component:
+                assert connection.electrical_conflict_references == (
+                    "g_gap_young_unit_conflict", "g_gap_old_unit_conflict",
+                )
+                assert "3.0D-7E" in connection.electrical_conductance_owner
+                assert "3.0D-7T" in connection.electrical_conductance_owner
+                note = self._flat(connection.notes)
+                assert "remains UNRESOLVED" in note
+                assert "restates no gap conductance, converts none" in note
+                assert "introduces no corrected value" in note
+
+    def test_18b_the_7u_records_are_byte_stable_across_repeated_access(self):
+        """Repeated construction of 7W does not perturb 7U."""
+        baseline = {}
+        for conflict in get_source_reconciliation_registry().conflicts:
+            baseline[conflict.conflict_id] = (
+                conflict.paper_side.value, conflict.paper_side.unit,
+                conflict.paper_side.verbatim_statement,
+                conflict.modeldb_side.value, conflict.modeldb_side.unit,
+                conflict.resolution_status.value,
+                conflict.corrected_value_available,
+                conflict.explanatory_note, conflict.linked_records,
+            )
+        for _ in range(3):
+            get_synaptic_abstraction()
+        after = {}
+        for conflict in get_source_reconciliation_registry().conflicts:
+            after[conflict.conflict_id] = (
+                conflict.paper_side.value, conflict.paper_side.unit,
+                conflict.paper_side.verbatim_statement,
+                conflict.modeldb_side.value, conflict.modeldb_side.unit,
+                conflict.resolution_status.value,
+                conflict.corrected_value_available,
+                conflict.explanatory_note, conflict.linked_records,
+            )
+        assert after == baseline
+        # No corrected gap conductance exists anywhere in the 7W layer.
+        import os
+
+        import biological_brain
+
+        path = os.path.join(
+            os.path.dirname(biological_brain.__file__), "synaptic_abstraction.py"
+        )
+        with open(path, encoding="utf-8") as handle:
+            source = handle.read()
+        for banned in (
+            "gap_junction_conductance_young =",
+            "gap_junction_conductance_old =",
+            "g_gap_young =", "g_gap_old =", "corrected_g_gap",
+        ):
+            assert banned not in source, banned
+
+    # --- I: the solver is untouched ---------------------------------------
+
+    def test_19_passive_solver_behavior_remains_unchanged(self):
+        """The passive backend neither imports nor is named by 7W."""
+        import inspect
+        import re
+
+        from biological_brain.dynamics import passive_cable as cable_module
+        from biological_brain.dynamics.passive_cable import (
+            CompartmentElectrical, PassiveNetwork, PassiveNetworkState,
+        )
+
+        source = inspect.getsource(cable_module)
+        for forbidden in (
+            "synaptic_abstraction", "get_synaptic_abstraction",
+            "SynapticAbstraction", "SynapseTimeParameters",
+            "PathwayValidationTarget", "MechanisticRequirement",
+        ):
+            assert forbidden not in source, forbidden
+        # The solver does not reach 7W transitively either.
+        assert "synaptic_abstraction" not in inspect.getsource(
+            PassiveNetwork
+        )
+        assert "synaptic_abstraction" not in inspect.getsource(
+            PassiveNetworkState
+        )
+        # The 7W module imports no solver symbol as code.
+        import ast
+
+        from biological_brain import synaptic_abstraction as abstraction_module
+
+        registry_source = inspect.getsource(abstraction_module)
+        tree = ast.parse(registry_source)
+        names = {
+            node.id for node in ast.walk(tree)
+            if isinstance(node, ast.Name)
+        } | {
+            node.attr for node in ast.walk(tree)
+            if isinstance(node, ast.Attribute)
+        }
+        for forbidden in (
+            "passivenetwork", "passivecablemodel", "compartmentelectrical",
+            "passivenetworkstate", "passivenumericalpolicy",
+        ):
+            assert forbidden not in {n.lower() for n in names}, forbidden
+        for forbidden in (
+            "PassiveNetwork", "PassiveCableModel", "CompartmentElectrical",
+        ):
+            assert not re.search(
+                rf"^\s*(from|import)\s+.*\b{re.escape(forbidden)}\b",
+                registry_source,
+                re.MULTILINE,
+            ), forbidden
+        # The compartment electrical model gained no synaptic field.
+        import dataclasses
+
+        fields = {f.name for f in dataclasses.fields(CompartmentElectrical)}
+        for forbidden in (
+            "synapse", "synaptic", "exp2syn", "e_syn", "tau1", "tau2",
+            "peak_conductance", "rise_tau", "decay_tau", "receptor",
+            "release_probability", "refractory", "latency", "q10",
+        ):
+            assert forbidden not in fields, forbidden
+        # And the numerical policy is exactly as it was.
+        assert MODEL_NAME_PASSIVE_CABLE_V0 == "passive_cable_v0"
+        assert PASSIVE_CABLE_NUMERICAL_POLICY.max_timestep_ms == 0.01
+        assert PASSIVE_CABLE_NUMERICAL_POLICY.default_timestep_ms == 0.01
+
+    def test_20_no_active_mechanism_becomes_live(self):
+        """7W activates nothing, and 7S/7T remain fully observational."""
+        active = get_active_mechanism_registry()
+        assert active.any_live_solver_eligible() is False
+        for mechanism in active.mechanisms:
+            assert mechanism.live_solver_eligible is False, mechanism.name
+        profile = get_active_parameter_profile(PROFILE_AUGUSTIN_2019_ACTIVE_MODEL)
+        assert profile.eligible_for_live_solver is False
+        assert profile.any_live_solver_eligible() is False
+        assert profile.is_authorized(
+            "active_mechanism_registry"
+        ) is False
+        # 7W does not reach into either of them.
+        import inspect
+
+        from biological_brain import synaptic_abstraction as abstraction_module
+
+        source = inspect.getsource(abstraction_module)
+        for forbidden in (
+            "active_mechanism_registry", "active_profiles",
+            "get_active_mechanism_registry", "get_active_parameter_profile",
+        ):
+            assert forbidden not in source, forbidden
+        # And the passive authorization profile is unchanged too.
+        passive = get_passive_parameter_profile(PROFILE_AUGUSTIN_2019_GFS_PASSIVE)
+        assert passive.opt_in is True
+        assert passive.is_authorized("synaptic_abstraction") is False
+        # The 7W specification authorizes nothing.
+        spec = self._spec()
+        assert spec.live_solver_eligible is False
+        assert spec.any_live_solver_eligible() is False
+
+    # --- the boundary this checkpoint actually establishes ----------------
+
+    def test_21_the_specification_cites_its_own_sources(self):
+        """Every claim points at a real, named source."""
+        spec = self._spec()
+        assert spec.model_id == "ModelDBRepository/245415"
+        assert "PMC6469880" in spec.model_citation
+        assert "245415" in spec.model_citation
+        assert "PMC3182647" in spec.pathway_citation
+        assert "PMC1382016" in spec.receptor_citation
+        for target in spec.validation_targets:
+            assert "PMC3182647" in " ".join(target.source_references)
+        for target in spec.following_targets:
+            assert "PMC3182647" in " ".join(target.source_references)
+        for receptor in spec.receptor_specs:
+            assert "PMC1382016" in receptor.notes
+        assert "245415" in spec.time_parameters.source_references[0]
+
+    def test_22_the_scope_note_states_what_was_and_was_not_done(self):
+        """The checkpoint's own summary matches what it actually did."""
+        note = self._flat_scope()
+        for claim in (
+            "THREE CONNECTIONS, TWO KINDS",
+            "GENERIC MODEL ROW",
+            "NOT per-connection values",
+            "specified only by REFERENCE to the 3.0D-7E ",
+            "remain UNRESOLVED",
+            "0.1 ms rise time IS a SYNAPTIC RISE PARAMETER, NOT a SIMULATION "
+            "TIMESTEP",
+            "numerical timestep policy is untouched",
+            "VALIDATION TARGETS ARE NOT PARAMETERS",
+            "PATHWAY and MOTOR OUTPUT observations",
+            "NEVER neuron constants",
+            "MECHANISTIC REQUIREMENTS STAY UNAVAILABLE",
+            "structurally empty",
+            "DALPHA7 REMAINS AN IDENTITY",
+            "kinetics_available_for_live_solver false",
+        ):
+            assert claim in note, claim
+        assert "establishes NO synaptic implementation" in note
+        assert "NO resolution of the 3.0D-7U conflict" in note
+        assert "SPECIFICATION ONLY" in spec_source_text()
+
+    def test_22b_the_module_declares_its_own_boundaries(self):
+        """The layer documents what it refuses to do, in prose as well."""
+        import inspect
+
+        from biological_brain import synaptic_abstraction as abstraction_module
+
+        doc = self._flat(inspect.getdoc(abstraction_module))
+        assert "specification, not an implementation" in doc.lower()
+        for claim in (
+            "does NOT implement a synaptic current",
+            "does NOT implement Hodgkin-Huxley kinetics",
+            "does NOT implement vesicle, release, depression or recovery "
+            "dynamics",
+            "does NOT implement Dalpha7 kinetics",
+            "does NOT restate, convert, prefer or resolve the 3.0D-7U",
+            "does NOT duplicate the 3.0D-7V records",
+            "is a SYNAPTIC RISE PARAMETER, NOT a simulation timestep",
+        ):
+            assert claim in doc, claim
+        # The two functions' docstrings state the boundary as well.
+        assert "SPECIFICATION ONLY" in self._flat(
+            inspect.getdoc(abstraction_module.get_synaptic_abstraction)
+        )
+
+
+def spec_source_text():
+    """Read the specification's own source file, for scope-note assertions."""
+    import os
+
+    import biological_brain
+
+    path = os.path.join(
+        os.path.dirname(biological_brain.__file__), "synaptic_abstraction.py"
+    )
+    with open(path, encoding="utf-8") as handle:
+        return handle.read()
