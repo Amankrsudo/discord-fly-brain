@@ -18,6 +18,23 @@ from biological_brain.synaptic_abstraction import (
     LEVEL_MOTOR_OUTPUT, LEVEL_PATHWAY, SCOPE_CONNECTION_SPECIFIC_SOURCE,
     SCOPE_GENERIC_MODEL_CHEMICAL_SYNAPSE, get_synaptic_abstraction,
 )
+from biological_brain.motor_output_abstraction import (
+    CONNECTION_CHEMICAL_NMJ, MEASUREMENT_END_TO_END_GFS_OUTPUT,
+    MeasurementLevel, NEUROTRANSMITTER_GLUTAMATE,
+    get_motor_output_abstraction,
+)
+from biological_brain.looming_abstraction import (
+    CONNECTION_DIRECT_VISUAL_INPUT, FEATURE_ANGULAR_SIZE,
+    FEATURE_ANGULAR_VELOCITY, FORM_GAUSSIAN, FORM_LINEAR, FORM_SUM,
+    NEURON_GF, NEURON_LC4, NEURON_LPLC2,
+    STIMULUS_DISPLAY_FRAME_RATE, STIMULUS_RADIUS_OVER_VELOCITY_RATIO,
+    get_looming_abstraction,
+)
+from biological_brain.sensorimotor_integration import (
+    COMBINATION_QUALITATIVE_SUM, ESCAPE_MODE_DISTINCTION, OUTPUT_SPIKE_TIMING,
+    ROUTE_DLM_FLIGHT, ROUTE_TTM_JUMP, STATE_FLYING, STATE_PERCHED_NON_FLYING,
+    get_sensorimotor_integration,
+)
 from biological_brain.source_reconciliation import (
     ResolutionStatus, get_source_reconciliation_registry,
 )
@@ -9187,18 +9204,46 @@ class TestImplicitBackwardEulerIntegration:
         import biological_brain
         import biological_brain.dynamics.passive_cable as module
 
-        for path in (module.__file__, biological_brain.__file__):
-            with open(path, encoding="utf-8") as handle:
-                text = handle.read().lower()
-            for forbidden in (
-                "class synapse", "synapticconductance", "gapjunction",
-                "hodgkinhuxley", "hodgkin_huxley_channel", "shakb",
-                "alpha7", "dalpha7", "alpha9", "rectification",
-            ):
-                assert forbidden not in text, forbidden
+        # The implicit backward-Euler path itself must still contain no
+        # mechanism at all, so the full forbidden list applies to it verbatim.
+        for forbidden in (
+            "class synapse", "synapticconductance", "gapjunction",
+            "hodgkinhuxley", "hodgkin_huxley_channel", "shakb",
+            "alpha7", "dalpha7", "alpha9", "rectification",
+        ):
+            with open(module.__file__, encoding="utf-8") as handle:
+                assert forbidden not in handle.read().lower(), forbidden
 
+        # The package surface is shared by later authorized checkpoints. As of
+        # 3.0D-8C an explicit electrical GAP JUNCTION is legitimately exported
+        # from the electrical_coupling module (the ModelDB gap2 mechanism), and
+        # that is the ONLY mechanism the package may carry. Every other
+        # mechanism term stays forbidden, and the one allowed gap-junction term
+        # must come from the 8C module, never from the passive implicit path.
+        allowed_in_package = {"gapjunction"}
+        with open(biological_brain.__file__, encoding="utf-8") as handle:
+            package_text = handle.read().lower()
+        for forbidden in (
+            "class synapse", "synapticconductance",
+            "hodgkinhuxley", "hodgkin_huxley_channel", "shakb",
+            "alpha7", "dalpha7", "alpha9", "rectification",
+        ):
+            assert forbidden not in package_text, forbidden
+        # The allowed term is present, and comes from electrical_coupling.
+        assert "gapjunction" in package_text
+        gap_lines = [
+            line for line in package_text.splitlines()
+            if "gapjunction" in line
+        ]
+        assert len(gap_lines) == 1
+        assert ".dynamics.electrical_coupling" in gap_lines[0]
+        # And the passive implicit module the guard protects still exports no
+        # mechanism: none of its own dataclasses is a synapse.
         from biological_brain.dynamics.passive_cable import AxialConnection
 
+        for f in AxialConnection.__dataclass_fields__:
+            assert "synap" not in f.lower()
+            assert "gap" not in f.lower()
         assert {f for f in AxialConnection.__dataclass_fields__} == {
             "parent_id", "child_id", "resistance_ohm", "derivation",
             "computational_source", "source_model_id", "source_statement",
@@ -13701,3 +13746,7428 @@ def spec_source_text():
     )
     with open(path, encoding="utf-8") as handle:
         return handle.read()
+
+
+class TestMotorOutputAbstraction:
+    """3.0D-7X: the GFS output end and the neuromuscular junctions.
+
+    Standard GFS electrophysiology stimulates the GF and records from the
+    TTM and DLM muscles, so every reported latency, refractory period and
+    following ratio is an END-TO-END GFS OUTPUT measurement. This checkpoint
+    specifies the two glutamatergic NMJs, records that measurement boundary,
+    records direct motor-neuron stimulation as an experimental bypass rather
+    than a simulator input, and links the 3.0D-7W validation targets by name
+    without restating their numbers.
+
+    SPECIFICATION ONLY: no muscle, no NMJ current, no glutamate receptor, no
+    release dynamics, no solver input, and no change to the passive backend,
+    the timestep policy, 7U, 7V or 7W.
+    """
+
+    def _spec(self):
+        from biological_brain.motor_output_abstraction import (
+            get_motor_output_abstraction,
+        )
+
+        return get_motor_output_abstraction()
+
+    @staticmethod
+    def _flat(text):
+        """Collapse source line-wrapping so multi-line notes compare as prose."""
+        return " ".join(text.split())
+
+    def _flat_scope(self):
+        return self._flat(self._spec().scope_note)
+
+    def _module_source(self):
+        import os
+
+        import biological_brain
+
+        path = os.path.join(
+            os.path.dirname(biological_brain.__file__),
+            "motor_output_abstraction.py",
+        )
+        with open(path, encoding="utf-8") as handle:
+            return handle.read()
+
+    # --- A/B: motor outputs, NMJ identity, neurotransmitter ---------------
+
+    def test_1_ttmn_to_ttm_exists(self):
+        """The TTMn->TTM NMJ is specified."""
+        spec = self._spec()
+        record = spec.output("TTMn_TTM")
+        assert record.presynaptic_neuron == "TTMn"
+        assert record.postsynaptic_muscle == "TTM"
+        assert spec.output_for_neuron("TTMn").output_id == "TTMn_TTM"
+        assert spec.output_for_muscle("TTM").output_id == "TTMn_TTM"
+        note = self._flat(record.biological_role)
+        assert "tergotrochanteral" in note
+        assert "extensor" in note
+        # It carries a source and a supported identity.
+        assert record.experimentally_supported is True
+        assert record.evidence_status is (
+            SynapticEvidenceStatus.EXPERIMENTALLY_CONSTRAINED
+        )
+        assert record.provenance_category is (
+            ParameterProvenance.EXPERIMENTALLY_CONSTRAINED
+        )
+        assert "PMC3182647" in " ".join(record.source_references)
+
+    def test_2_dlmn_to_dlm_exists(self):
+        """The DLMn->DLM NMJ is specified."""
+        spec = self._spec()
+        record = spec.output("DLMn_DLM")
+        assert record.presynaptic_neuron == "DLMn"
+        assert record.postsynaptic_muscle == "DLM"
+        assert spec.output_for_neuron("DLMn").output_id == "DLMn_DLM"
+        assert spec.output_for_muscle("DLM").output_id == "DLMn_DLM"
+        note = self._flat(record.biological_role)
+        assert "dorsal longitudinal" in note
+        assert "wing depressors" in note
+        assert record.experimentally_supported is True
+        assert record.evidence_status is (
+            SynapticEvidenceStatus.EXPERIMENTALLY_CONSTRAINED
+        )
+        assert "PMC3466648" in " ".join(record.source_references)
+        # And exactly two motor outputs exist, no more.
+        assert spec.output_ids() == ("TTMn_TTM", "DLMn_DLM")
+
+    def test_3_both_are_chemical_neuromuscular_junctions(self):
+        """Both output connections are chemical NMJs."""
+        spec = self._spec()
+        for record in spec.motor_outputs:
+            assert record.connection_type == CONNECTION_CHEMICAL_NMJ
+            assert record.is_nmj is True
+            assert record.connection_type == (
+                "chemical_neuromuscular_junction"
+            )
+        # The type is checked, not merely documented.
+        from biological_brain.motor_output_abstraction import MotorOutputSpec
+
+        base = dict(
+            output_id="X", presynaptic_neuron="A", postsynaptic_muscle="M",
+            neurotransmitter=NEUROTRANSMITTER_GLUTAMATE, biological_role="r",
+            evidence_status=SynapticEvidenceStatus.EXPERIMENTALLY_CONSTRAINED,
+            provenance_category=(
+                ParameterProvenance.EXPERIMENTALLY_CONSTRAINED
+            ),
+            experimentally_supported=True,
+            kinetics_available_for_live_solver=False,
+            source_references=("r",), notes="n",
+        )
+        with pytest.raises(ValueError, match="must be a"):
+            MotorOutputSpec(**base, connection_type="electrical")
+        # A non-glutamatergic record is refused: no other transmitter is stated.
+        with pytest.raises(ValueError, match="glutamatergic"):
+            MotorOutputSpec(
+                **{
+                    **base,
+                    "neurotransmitter": "acetylcholine",
+                },
+                connection_type=CONNECTION_CHEMICAL_NMJ,
+            )
+
+    def test_4_both_are_glutamatergic(self):
+        """Glutamate is the recorded transmitter identity for both NMJs."""
+        spec = self._spec()
+        for record in spec.motor_outputs:
+            assert record.neurotransmitter == NEUROTRANSMITTER_GLUTAMATE
+            assert record.neurotransmitter == "glutamate"
+        assert spec.glutamatergic_outputs() == ("TTMn_TTM", "DLMn_DLM")
+        # The sources are cited for the identity itself.
+        joined = self._flat(" ".join(
+            reference
+            for record in spec.motor_outputs
+            for reference in record.source_references
+        ))
+        assert "glutamatergic" in joined.lower()
+        # Glutamate identity does not license a receptor subtype.
+        for record in spec.motor_outputs:
+            import dataclasses
+
+            names = {f.name for f in dataclasses.fields(type(record))}
+            for forbidden in (
+                "receptor_subtype", "receptor", "receptor_identity",
+                "glutamate_receptor", "glutamate_receptor_subtype",
+            ):
+                assert forbidden not in names, forbidden
+        assert "DOES NOT LICENSE A RECEPTOR SUBTYPE" in self._flat_scope()
+        assert "no receptor subtype is asserted" in self._flat_scope().lower()
+
+    def test_5_neither_has_invented_numeric_nmj_kinetics(self):
+        """Neither NMJ record carries any number, and none is invented."""
+        import dataclasses
+
+        spec = self._spec()
+        for record in spec.motor_outputs:
+            assert record.kinetics_available_for_live_solver is False
+            assert record.has_quantitative_value is False
+            names = {f.name for f in dataclasses.fields(type(record))}
+            for forbidden in (
+                "value", "conductance", "conductance_us", "peak_conductance",
+                "glutamate_concentration", "release_probability",
+                "vesicle_pool", "receptor_density", "receptor_kinetics",
+                "single_channel_conductance", "rise_time", "decay_time",
+                "reversal_potential", "calcium_coupling", "depression",
+                "facilitation", "q10", "amplitude", "latency",
+            ):
+                assert forbidden not in names, forbidden
+        assert spec.any_nmj_quantitative_value() is False
+        assert spec.any_nmj_kinetics() is False
+        # Every excluded quantity is recorded and structurally empty.
+        expected = {
+            "nmj_peak_conductance", "glutamate_concentration",
+            "nmj_release_probability", "nmj_vesicle_pool_and_depletion",
+            "nmj_receptor_density", "nmj_receptor_kinetics",
+            "nmj_receptor_single_channel_conductance", "nmj_rise_time",
+            "nmj_decay_time", "nmj_reversal_potential",
+            "nmj_calcium_release_coupling", "nmj_short_term_depression",
+            "nmj_facilitation", "nmj_q10_temperature_scaling",
+        }
+        assert set(spec.unavailable_ids()) == expected
+        for quantity_id in expected:
+            record = spec.unavailable(quantity_id)
+            assert record.value is None, quantity_id
+            assert record.value_is_populated is False, quantity_id
+            note = self._flat(record.limitations())
+            assert "CURRENTLY UNAVAILABLE" in note
+            assert "stays empty" in note
+            assert "NOT filled with a generic Drosophila value" in note
+        assert spec.any_populated_nmj_quantity() is False
+        # And claiming kinetics is refused at construction.
+        from biological_brain.motor_output_abstraction import MotorOutputSpec
+
+        with pytest.raises(ValueError, match="must not claim kinetics"):
+            MotorOutputSpec(
+                output_id="X", presynaptic_neuron="A",
+                postsynaptic_muscle="M",
+                connection_type=CONNECTION_CHEMICAL_NMJ,
+                neurotransmitter=NEUROTRANSMITTER_GLUTAMATE,
+                biological_role="r",
+                evidence_status=(
+                    SynapticEvidenceStatus.EXPERIMENTALLY_CONSTRAINED
+                ),
+                provenance_category=(
+                    ParameterProvenance.EXPERIMENTALLY_CONSTRAINED
+                ),
+                experimentally_supported=True,
+                kinetics_available_for_live_solver=True,
+                source_references=("r",), notes="n",
+            )
+
+    def test_5b_central_synapse_values_are_barred_from_the_nmj(self):
+        """The 7V rise, decay and reversal are not NMJ values."""
+        spec = self._spec()
+        for quantity_id in (
+            "nmj_rise_time", "nmj_decay_time", "nmj_reversal_potential",
+            "nmj_peak_conductance", "glutamate_concentration",
+        ):
+            record = spec.unavailable(quantity_id)
+            assert record.must_not_be_inherited_from, quantity_id
+            note = self._flat(record.limitations())
+            assert "NOT inherited from" in note, quantity_id
+        # The rise time explicitly refuses the 0.1 ms central value.
+        assert "0.1 ms" in self._flat(
+            spec.unavailable("nmj_rise_time").must_not_be_inherited_from
+        )
+        assert "CENTRAL PSI->DLMn" in self._flat(
+            spec.unavailable("nmj_rise_time").must_not_be_inherited_from
+        )
+        # The peak conductance refuses the 80 uS central value.
+        assert "80 uS" in self._flat(
+            spec.unavailable("nmj_peak_conductance").must_not_be_inherited_from
+        )
+        # The transmitter refuses the cholinergic central synapse entirely.
+        assert "acetylcholine" in self._flat(
+            spec.unavailable("glutamate_concentration").must_not_be_inherited_from
+        )
+        # And where 7V/7W already excluded the same concept, it is linked
+        # rather than duplicated.
+        seven_v = get_synaptic_mechanism_registry()
+        excluded = set(seven_v.excluded_names())
+        seven_w_requirements = set(
+            get_synaptic_abstraction().requirement_ids()
+        )
+        linked = 0
+        for record in spec.unavailable_nmj_quantities:
+            if record.linked_7v_excluded_name is not None:
+                assert record.linked_7v_excluded_name in excluded, (
+                    record.quantity_id
+                )
+                linked += 1
+            if record.linked_7w_requirement_id is not None:
+                assert record.linked_7w_requirement_id in (
+                    seven_w_requirements
+                ), record.quantity_id
+                linked += 1
+        assert linked >= 8
+        # No NMJ quantity invents a fresh exclusion name where one exists.
+        for name in ("release_probability", "vesicle_pool_size",
+                     "calcium_dependent_release", "facilitation_model",
+                     "q10_synaptic_scaling",
+                     "synaptic_depression_model",
+                     "dalpha7_receptor_density"):
+            assert name in excluded
+
+    def test_6_neither_is_live_solver_eligible(self):
+        """Nothing in the 7X layer is eligible for the live solver."""
+        spec = self._spec()
+        assert spec.live_solver_eligible is False
+        assert spec.any_live_solver_eligible() is False
+        assert spec.any_populated_nmj_quantity() is False
+        assert spec.any_nmj_kinetics() is False
+        assert spec.any_nmj_quantitative_value() is False
+        assert spec.any_nmj_measurement() is False
+        assert spec.any_nmj_exclusive_attribution() is False
+        assert spec.any_simulator_input() is False
+        assert spec.any_derivable_nmj_parameter() is False
+        assert spec.any_linked_value() is False
+        for record in spec.motor_outputs:
+            assert record.live_solver_eligible is False
+        for record in spec.measurement_boundaries:
+            assert record.live_solver_eligible is False
+        for record in spec.bypass_conditions:
+            assert record.live_solver_eligible is False
+        for record in spec.validation_links:
+            assert record.live_solver_eligible is False
+        for record in spec.unavailable_nmj_quantities:
+            assert record.live_solver_eligible is False
+        # Refused at construction in every record type.
+        from biological_brain.motor_output_abstraction import (
+            BypassConditionSpec, MotorOutputSpec, OutputMeasurementBoundary,
+            OutputValidationLink, UnavailableNmjQuantity,
+        )
+
+        with pytest.raises(ValueError, match="cannot be live-solver eligible"):
+            MotorOutputSpec(
+                output_id="X", presynaptic_neuron="A",
+                postsynaptic_muscle="M",
+                connection_type=CONNECTION_CHEMICAL_NMJ,
+                neurotransmitter=NEUROTRANSMITTER_GLUTAMATE,
+                biological_role="r",
+                evidence_status=(
+                    SynapticEvidenceStatus.EXPERIMENTALLY_CONSTRAINED
+                ),
+                provenance_category=(
+                    ParameterProvenance.EXPERIMENTALLY_CONSTRAINED
+                ),
+                experimentally_supported=True,
+                kinetics_available_for_live_solver=False,
+                source_references=("r",), notes="n",
+                live_solver_eligible=True,
+            )
+        with pytest.raises(ValueError, match="cannot be live-solver eligible"):
+            OutputMeasurementBoundary(
+                measurement_id="x", recorded_observable="o",
+                recording_site="r", stimulus_site="s",
+                measurement_level=MeasurementLevel.END_TO_END_GFS_OUTPUT,
+                attributable_to_nmj_exclusively=False,
+                measurement_stages=("brain/GF stimulus",),
+                source_references=("r",), notes="n",
+                live_solver_eligible=True,
+            )
+        with pytest.raises(ValueError, match="cannot be live-solver eligible"):
+            OutputValidationLink(
+                link_id="x", linked_7w_target="gf_to_ttm_latency",
+                linked_7w_layer="3.0D-7W", recorded_observable="o",
+                classification=MEASUREMENT_END_TO_END_GFS_OUTPUT,
+                is_nmj_parameter=False,
+                measurement_level=MeasurementLevel.END_TO_END_GFS_OUTPUT,
+                source_references=("r",), notes="n",
+                live_solver_eligible=True,
+            )
+        with pytest.raises(ValueError, match="cannot be live-solver eligible"):
+            UnavailableNmjQuantity(
+                quantity_id="x", quantity_kind="k", applies_to="a",
+                why_required="r", why_unavailable="u",
+                linked_7v_excluded_name=None,
+                linked_7w_requirement_id=None,
+                must_not_be_inherited_from=None,
+                live_solver_eligible=True,
+            )
+
+    # --- C: output measurement boundary ----------------------------------
+
+    def test_7_ttm_latency_remains_an_end_to_end_measurement(self):
+        """A TTM recording is a GFS output, not an NMJ measurement."""
+        boundary = self._spec().boundary("ttm_muscle_response")
+        assert boundary.measurement_level is (
+            MeasurementLevel.END_TO_END_GFS_OUTPUT
+        )
+        assert boundary.is_end_to_end is True
+        assert boundary.is_nmj_measurement is False
+        assert boundary.attributable_to_nmj_exclusively is False
+        assert boundary.recording_site.startswith("TTM muscle")
+        assert "brain" in boundary.stimulus_site
+        # The full measurement chain is named, as stage NAMES.
+        stages = boundary.measurement_stages
+        assert "brain/GF stimulus" in stages
+        assert "GF conduction" in stages
+        assert "central circuit synapse(s)" in stages
+        assert "motor neuron propagation" in stages
+        assert "glutamatergic neuromuscular junction" in stages
+        assert "muscle response" in stages
+        assert boundary.stage_count == 6
+        note = self._flat(boundary.limitations())
+        assert "END-TO-END GFS OUTPUT MEASUREMENT" in note
+        assert "NOT an NMJ measurement" in note
+        assert "cannot be attributed exclusively to the neuromuscular" in note
+        # And the source's own central attribution is recorded.
+        assert "GF-TTMn electrochemical synapse" in self._flat(boundary.notes)
+        assert self._spec().any_nmj_exclusive_attribution() is False
+        assert self._spec().any_nmj_measurement() is False
+        # Exclusive attribution is refused at construction.
+        from biological_brain.motor_output_abstraction import (
+            OutputMeasurementBoundary,
+        )
+
+        with pytest.raises(ValueError, match="not be attributable to the NMJ"):
+            OutputMeasurementBoundary(
+                measurement_id="x", recorded_observable="o",
+                recording_site="r", stimulus_site="s",
+                measurement_level=MeasurementLevel.END_TO_END_GFS_OUTPUT,
+                attributable_to_nmj_exclusively=True,
+                measurement_stages=(
+                    "brain/GF stimulus", "GF conduction",
+                    "central circuit synapse(s)", "motor neuron propagation",
+                    "glutamatergic neuromuscular junction", "muscle response",
+                ),
+                source_references=("r",), notes="n",
+            )
+        # A stage that is not a name is refused: no simulated component here.
+        with pytest.raises(ValueError, match="stage NAMES"):
+            OutputMeasurementBoundary(
+                measurement_id="x", recorded_observable="o",
+                recording_site="r", stimulus_site="s",
+                measurement_level=MeasurementLevel.END_TO_END_GFS_OUTPUT,
+                attributable_to_nmj_exclusively=False,
+                measurement_stages=(
+                    "brain/GF stimulus", "GF conduction",
+                    "central circuit synapse(s)", "motor neuron propagation",
+                    "glutamatergic neuromuscular junction", "muscle response",
+                    1.0,
+                ),
+                source_references=("r",), notes="n",
+            )
+
+    def test_8_dlm_latency_remains_an_end_to_end_measurement(self):
+        """A DLM recording sums two central synapses plus the NMJ."""
+        boundary = self._spec().boundary("dlm_muscle_response")
+        assert boundary.measurement_level is (
+            MeasurementLevel.END_TO_END_GFS_OUTPUT
+        )
+        assert boundary.is_nmj_measurement is False
+        assert boundary.attributable_to_nmj_exclusively is False
+        assert boundary.recording_site.startswith("DLM muscle")
+        stages = boundary.measurement_stages
+        assert len(stages) == 6
+        note = self._flat(boundary.notes)
+        assert "DISYNAPTIC" in note
+        assert "TWO central synapses" in note
+        assert "cannot be read as an NMJ latency" in note
+        assert "central chemical PSI-DLMn synapse" in note
+        # Both recordings share the same measurement level.
+        for record in self._spec().measurement_boundaries:
+            assert record.measurement_level is (
+                MeasurementLevel.END_TO_END_GFS_OUTPUT
+            )
+            assert record.measurement_level.value == (
+                "end_to_end_GFS_output"
+            )
+        assert MEASUREMENT_END_TO_END_GFS_OUTPUT == "end_to_end_GFS_output"
+
+    # --- E: validation target linkage ------------------------------------
+
+    def test_9_7w_latency_targets_are_referenced_not_duplicated(self):
+        """The latency ranges stay owned by 7W and are not restated here."""
+        spec = self._spec()
+        ttm = spec.link("ttm_latency_output_measurement")
+        dlm = spec.link("dlm_latency_output_measurement")
+        assert ttm.linked_7w_target == "gf_to_ttm_latency"
+        assert dlm.linked_7w_target == "gf_to_dlm_latency"
+        for link in (ttm, dlm):
+            assert link.linked_7w_layer == "3.0D-7W"
+            assert link.classification == MEASUREMENT_END_TO_END_GFS_OUTPUT
+            assert link.is_nmj_parameter is False
+            assert link.carries_a_value is False
+            assert link.live_solver_eligible is False
+            note = self._flat(link.limitations())
+            assert "END-TO-END GFS OUTPUT MEASUREMENT" in note
+            assert "REFERENCE to a 3.0D-7W validation target" in note
+            assert "NOT an NMJ intrinsic parameter" in note
+        assert "0.7-1.2" in self._flat(ttm.notes)
+        assert "1.3-1.7" in self._flat(dlm.notes)
+        assert "NOT restated here" in self._flat(ttm.notes)
+        # The link record has no numeric field at all.
+        import dataclasses
+
+        names = {f.name for f in dataclasses.fields(type(ttm))}
+        for forbidden in (
+            "value", "value_low", "value_high", "unit", "range", "ms",
+            "low", "high",
+        ):
+            assert forbidden not in names, forbidden
+        assert spec.any_linked_value() is False
+        # The 7W targets still hold the real values, unchanged.
+        seven_w = get_synaptic_abstraction()
+        assert seven_w.validation_target(
+            "gf_to_ttm_latency"
+        ).as_tuple == (0.7, 1.2)
+        assert seven_w.validation_target(
+            "gf_to_dlm_latency"
+        ).as_tuple == (1.3, 1.7)
+        # Marking a link as an NMJ parameter is refused.
+        with pytest.raises(ValueError, match="NOT be an NMJ parameter"):
+            _build_link_with_nmj_flag()
+
+    def test_10_7w_following_targets_are_referenced_not_duplicated(self):
+        """The following observations stay owned by 7W."""
+        spec = self._spec()
+        ttm = spec.link("ttm_following_output_measurement")
+        dlm = spec.link("dlm_following_output_measurement")
+        assert ttm.linked_7w_target == "ttm_high_frequency_following"
+        assert dlm.linked_7w_target == "dlm_high_frequency_following"
+        for link in (ttm, dlm):
+            assert link.linked_7w_layer == "3.0D-7W"
+            assert link.is_nmj_parameter is False
+            assert link.carries_a_value is False
+        assert "REFERENCED, NOT DUPLICATED" in self._flat(ttm.notes)
+        # The DLM link records that the failure is CENTRAL, not the NMJ.
+        dlm_note = self._flat(dlm.notes)
+        assert "CENTRAL" in dlm_note
+        assert "NOT to the glutamatergic NMJ" in dlm_note
+        assert "1:1 under direct motor-neuron stimulation" in dlm_note
+        # And 7W still owns the following numbers.
+        seven_w = get_synaptic_abstraction()
+        assert seven_w.following_target(
+            "ttm_high_frequency_following"
+        ).follows_one_to_one_at_hz == (100.0, 300.0)
+        assert seven_w.following_target(
+            "dlm_high_frequency_following"
+        ).failure_onset_above_hz == 100.0
+
+    def test_11_refractory_measurements_are_not_nmj_parameters(self):
+        """The refractory periods are muscle-output observations only."""
+        spec = self._spec()
+        ttm = spec.link("ttm_refractory_output_measurement")
+        dlm = spec.link("dlm_refractory_output_measurement")
+        assert ttm.linked_7w_target == "ttm_refractory_period"
+        assert dlm.linked_7w_target == "dlm_refractory_period"
+        for link in (ttm, dlm):
+            assert link.is_nmj_parameter is False
+            assert link.classification == MEASUREMENT_END_TO_END_GFS_OUTPUT
+            assert link.carries_a_value is False
+        # Both are defined on muscle responses, not on the junction.
+        assert "TWO RESPONSES FROM THE MUSCLE" in self._flat(ttm.notes)
+        assert "MUSCLE RESPONSES" in self._flat(dlm.notes)
+        ttm_note = self._flat(ttm.notes)
+        assert "NOT an intrinsic refractory constant of the TTMn" in ttm_note
+        assert "NOT a depression or recovery parameter" in ttm_note
+        dlm_note = self._flat(dlm.notes)
+        assert "NOT an intrinsic refractory constant of the DLMn" in dlm_note
+        assert "NOT a depression parameter of the DLMn->DLM NMJ" in dlm_note
+        # The long DLM refractory is attributed to the CENTRAL synapse.
+        assert "CENTRAL PSI-DLMn junction" in dlm_note
+        # And no range is restated.
+        assert spec.any_linked_value() is False
+        # 7W still owns them, unchanged.
+        seven_w = get_synaptic_abstraction()
+        assert seven_w.validation_target(
+            "ttm_refractory_period"
+        ).as_tuple == (1.0, 4.0)
+        assert seven_w.validation_target(
+            "dlm_refractory_period"
+        ).as_tuple == (7.0, 15.0)
+        # Every 7X target is referenced, and the set is exactly 7W's six.
+        assert set(spec.referenced_7w_targets) == {
+            "gf_to_ttm_latency", "gf_to_dlm_latency",
+            "ttm_refractory_period", "dlm_refractory_period",
+            "ttm_high_frequency_following", "dlm_high_frequency_following",
+        }
+        spec.verifies_against_7w()
+
+    # --- D/F: direct stimulation bypass and NMJ functionality ------------
+
+    def test_12_direct_motor_neuron_stimulation_is_a_bypass(self):
+        """Thoracic stimulation is an experimental bypass, not an input."""
+        bypass = self._spec().bypass("direct_motor_neuron_stimulation")
+        assert bypass.measurement_level is (
+            MeasurementLevel.MOTOR_NEURON_BYPASS
+        )
+        assert bypass.is_simulator_input is False
+        assert bypass.quantitative_nmj_parameter_derivable is False
+        assert bypass.yields_nmj_parameter is None
+        assert "thoracic" in self._flat(bypass.stimulation_site).lower()
+        # It bypasses the stimulus, conduction and the central synapses.
+        assert "brain/GF stimulus" in bypass.bypassed_stages
+        assert "GF conduction" in bypass.bypassed_stages
+        assert "central circuit synapse(s)" in bypass.bypassed_stages
+        # It does NOT bypass the motor neuron or the NMJ: that is the point.
+        assert "motor neuron propagation" not in bypass.bypassed_stages
+        assert "glutamatergic neuromuscular junction" not in (
+            bypass.bypassed_stages
+        )
+        purpose = self._flat(bypass.purpose)
+        assert "bypassing the GF" in purpose
+        assert "assess whether the motor neuron and NMJ output remain" in (
+            purpose
+        )
+        # The sources and the binary nature of the result are recorded.
+        assert "PMC1974813" in " ".join(bypass.source_references)
+        assert "PMC3466648" in " ".join(bypass.source_references)
+        note = self._flat(bypass.limitations())
+        assert "EXPERIMENTAL BYPASS CONDITION, NOT A SIMULATOR INPUT" in note
+        assert "BINARY, NOT QUANTITATIVE" in note
+        assert "NO NMJ parameter may be inferred" in note
+        spec = self._spec()
+        assert spec.any_simulator_input() is False
+        assert spec.any_derivable_nmj_parameter() is False
+        # Both "it is an input" and "a parameter is derivable" are refused.
+        from biological_brain.motor_output_abstraction import (
+            BypassConditionSpec,
+        )
+
+        common = dict(
+            bypass_id="x", description="d", stimulation_site="s",
+            bypassed_stages=("GF conduction",), purpose="p",
+            evidence_status=SynapticEvidenceStatus.EXPERIMENTALLY_CONSTRAINED,
+            provenance_category=(
+                ParameterProvenance.EXPERIMENTALLY_CONSTRAINED
+            ),
+            measurement_level=MeasurementLevel.MOTOR_NEURON_BYPASS,
+            source_references=("r",), notes="n",
+        )
+        with pytest.raises(ValueError, match="must not be a simulator input"):
+            BypassConditionSpec(
+                **common, quantitative_nmj_parameter_derivable=False,
+                is_simulator_input=True,
+            )
+        with pytest.raises(ValueError, match="must not permit a quantitative"):
+            BypassConditionSpec(
+                **common, quantitative_nmj_parameter_derivable=True,
+            )
+
+    def test_12b_nmj_functionality_evidence_is_recorded_without_a_number(self):
+        """Preserved output under bypass proves function, not a transfer law."""
+        spec = self._spec()
+        notes = self._flat(
+            " ".join(
+                record.notes for record in spec.bypass_conditions
+            )
+        )
+        # The experimental finding itself.
+        assert "always resulted in a muscle response to every stimulus" in notes
+        assert "NO response to brain stimulation" in notes
+        assert "and not the NMJs" in notes
+        assert "NMJ function is unaffected" in notes
+        # And the explicit refusal to quantify it.
+        assert "NO NMJ parameter is derived from it" in notes
+        assert "NO NMJ parameter may be inferred, fitted or back-calculated" in (
+            self._flat(
+                self._spec().bypass(
+                    "direct_motor_neuron_stimulation"
+                ).limitations()
+            )
+        )
+        assert spec.any_derivable_nmj_parameter() is False
+        # The 14 unavailable quantities remain the only place numbers could
+        # have entered, and every one is empty.
+        assert len(spec.unavailable_nmj_quantities) == 14
+        assert spec.any_populated_nmj_quantity() is False
+
+    # --- I: no muscle model ----------------------------------------------
+
+    def test_13_no_muscle_membrane_model_exists(self):
+        """The muscle has capacitance, resistance and voltage nowhere."""
+        import dataclasses
+
+        spec = self._spec()
+        # None of the 7X record types carries a muscle electrical field.
+        from biological_brain.motor_output_abstraction import (
+            BypassConditionSpec, MotorOutputSpec, OutputMeasurementBoundary,
+            OutputValidationLink, UnavailableNmjQuantity,
+        )
+
+        for record_type in (
+            MotorOutputSpec, OutputMeasurementBoundary, BypassConditionSpec,
+            OutputValidationLink, UnavailableNmjQuantity,
+        ):
+            names = {f.name for f in dataclasses.fields(record_type)}
+            for forbidden in (
+                "muscle_capacitance", "muscle_capacitance_per_area",
+                "muscle_resistance", "muscle_membrane_resistance",
+                "muscle_conductance", "muscle_voltage", "muscle_state",
+                "muscle_membrane_potential", "threshold", "resting_potential",
+                "length_um", "diameter_um", "area_cm2",
+            ):
+                assert forbidden not in names, (record_type.__name__, forbidden)
+        # And no muscle state container exists at all.
+        for name in dir(spec):
+            assert "muscle_state" not in name.lower()
+        # The project-wide statement.
+        scope = self._flat_scope()
+        assert "no muscle capacitance, resistance, voltage state" in scope
+        assert "contractile state" in scope
+        for record in spec.motor_outputs:
+            note = self._flat(record.limitations())
+            assert "no muscle membrane resistance" in note
+            assert "no muscle voltage state" in note
+        # The source file names no muscle electrical quantity either.
+        source = self._module_source().lower()
+        for banned in (
+            "muscle_capacitance", "muscle_resistance", "muscle_voltage",
+            "muscle_membrane_potential", "muscle_state",
+        ):
+            assert banned not in source, banned
+        # CompartmentElectrical gained nothing.
+        from biological_brain.dynamics.passive_cable import (
+            CompartmentElectrical,
+        )
+
+        fields = {f.name for f in dataclasses.fields(CompartmentElectrical)}
+        for forbidden in (
+            "muscle", "muscle_capacitance", "ttm", "dlm", "nmj",
+            "contractile", "force",
+        ):
+            assert forbidden not in fields, forbidden
+
+    def test_14_no_muscle_force_or_contractile_model_exists(self):
+        """No contractile state, calcium dynamics, force or stretch model."""
+        spec = self._spec()
+        scope = self._flat_scope()
+        for claim in (
+            "contractile state",
+            "calcium dynamics",
+            "stretch-activation model",
+        ):
+            assert claim in scope, claim
+        # The refusal is stated on the muscle records too.
+        for record in spec.motor_outputs:
+            note = self._flat(record.limitations())
+            assert "THE MUSCLE IS AN OUTPUT ENDPOINT, NOT A MODEL" in note
+            assert "no muscle capacitance" in note
+            assert "no contractile state" in note
+        for record in spec.measurement_boundaries:
+            assert "THE MUSCLE IS AN OUTPUT ENDPOINT" in self._flat(
+                record.limitations()
+            )
+        # And the module source creates no such field or function.
+        source = self._module_source().lower()
+        for banned in (
+            "def muscle_", "class muscle", "muscle_force(", "stretch_activation",
+            "_force_", "contractile_state =",
+        ):
+            assert banned not in source, banned
+        # Nor is a contractile quantity silently recorded as unavailable-but-
+        # actually present: the muscle is simply out of scope.
+        assert "THE MUSCLE IS AN OUTPUT ENDPOINT" in self._flat(
+            spec.motor_outputs[0].limitations()
+        )
+
+    # --- H: live solver boundary -----------------------------------------
+
+    def test_15_no_solver_module_is_imported(self):
+        """7X imports no solver and no active layer."""
+        import ast
+        import inspect
+        import re
+
+        from biological_brain import motor_output_abstraction as module
+
+        source = inspect.getsource(module)
+        tree = ast.parse(source)
+        # The import edges themselves.
+        imported = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom):
+                imported.append(node.module or "")
+            elif isinstance(node, ast.Import):
+                imported.extend(a.name for a in node.names)
+        allowed = {
+            "", "dataclasses", "enum", "typing",
+            "provenance", "synaptic_mechanism_registry",
+            "synaptic_abstraction",
+        }
+        for name in imported:
+            assert name in allowed, name
+        # No solver or active module is named in an import statement.
+        for forbidden in (
+            "PassiveNetwork", "PassiveNetworkState", "PassiveCableModel",
+            "CompartmentElectrical", "PassiveNumericalPolicy",
+            "DynamicsModel", "active_profiles", "active_mechanism_registry",
+        ):
+            assert not re.search(
+                rf"^\s*(from|import)\s+.*\b{re.escape(forbidden)}\b",
+                source, re.MULTILINE,
+            ), forbidden
+        # No solver symbol is referenced as code, only in prose.
+        names = {
+            node.id for node in ast.walk(tree)
+            if isinstance(node, ast.Name)
+        } | {
+            node.attr for node in ast.walk(tree)
+            if isinstance(node, ast.Attribute)
+        }
+        lowered = {n.lower() for n in names}
+        for forbidden in (
+            "passivenetwork", "passivenetworkstate", "passivecablemodel",
+            "compartmentelectrical", "passivenumericalpolicy",
+            "dynamicmodel", "get_active_mechanism_registry",
+            "get_active_parameter_profile",
+        ):
+            assert forbidden not in lowered, forbidden
+        # The provenance/spec layers it may import are the only real ones.
+        assert "get_motor_output_abstraction" in dir(module)
+        # And the solver never names 7X.
+        from biological_brain.dynamics import passive_cable as cable_module
+
+        assert "motor_output_abstraction" not in inspect.getsource(
+            cable_module
+        )
+        # The numerical policy is untouched.
+        assert PASSIVE_CABLE_NUMERICAL_POLICY.max_timestep_ms == 0.01
+
+    def test_16_7u_reconciliation_remains_unchanged(self):
+        """The gap-junction unit conflicts are untouched by 7X."""
+        reconciliation = get_source_reconciliation_registry()
+        assert reconciliation.names() == (
+            "g_gap_young_unit_conflict", "g_gap_old_unit_conflict",
+        )
+        for conflict_id in reconciliation.names():
+            conflict = reconciliation.get(conflict_id)
+            assert conflict.resolution_status is ResolutionStatus.UNRESOLVED
+            assert conflict.is_resolved is False
+            assert conflict.corrected_value_available is False
+            assert conflict.preferred_side is None
+        assert reconciliation.any_resolved() is False
+        assert reconciliation.any_preferred_side() is False
+        # 7X introduces no gap conductance and no corrected value. (The
+        # shakB/tetanus-toxin mutant names are legitimate experimental
+        # references here, not a gap-junction conductance.)
+        source = self._module_source()
+        for banned in (
+            "g_gap", "gap_junction_conductance", "corrected_g_gap",
+        ):
+            assert banned not in source, banned
+
+    def test_17_7v_synaptic_abstraction_remains_unchanged(self):
+        """The 7W layer is referenced, never modified or duplicated."""
+        spec = self._spec()
+        seven_w = get_synaptic_abstraction()
+        # 7W still owns every target 7X links to, with its own values.
+        assert len(seven_w.validation_targets) == 4
+        assert len(seven_w.following_targets) == 2
+        assert seven_w.any_live_solver_eligible() is False
+        assert seven_w.any_timestep_claim() is False
+        assert seven_w.any_receptor_kinetics() is False
+        assert seven_w.any_populated_requirement() is False
+        # 7X duplicates none of them: it has no numeric field anywhere.
+        source = self._module_source()
+        # 7X names a 7W target only as an identifier; the 7W numbers
+        # themselves never appear as 7X-assigned values.
+        seven_w_targets = {
+            target.target_id
+            for target in (*seven_w.validation_targets, *seven_w.following_targets)
+        }
+        assert seven_w_targets == set(spec.referenced_7w_targets)
+        for link in spec.validation_links:
+            assert link.linked_7w_target in seven_w_targets
+        import dataclasses
+
+        from biological_brain.motor_output_abstraction import (
+            OutputValidationLink,
+        )
+
+        link_names = {f.name for f in dataclasses.fields(OutputValidationLink)}
+        for forbidden in ("value", "value_low", "value_high", "unit"):
+            assert forbidden not in link_names, forbidden
+        # 7W's own records are untouched: the five central synapses and their
+        # parameters are still exactly as 7W left them.
+        assert seven_w.connection_ids() == (
+            "GF_TTMn", "GF_PSI", "PSI_DLMn",
+        )
+        assert seven_w.parameter("chemical_peak_conductance").value == 80.0
+        assert seven_w.parameter("chemical_rise_time_ms").value == 0.1
+        assert seven_w.parameter("chemical_decay_time_ms").value == 1.0
+        assert seven_w.parameter("chemical_delay_ms").value == 0.15
+        # And the 7V registry is untouched too.
+        seven_v = get_synaptic_mechanism_registry()
+        assert len(seven_v.quantities) == 21
+        assert seven_v.any_live_solver_eligible() is False
+        assert seven_v.any_receptor_kinetics() is False
+        peak = seven_v.get("peak_conductance")
+        assert peak.value_agreement == DISCREPANCY_UNRESOLVED
+
+    def test_18_no_sensory_or_looming_implementation_appears(self):
+        """7X adds no sensory drive, and the loom maps are untouched."""
+        source = self._module_source().lower()
+        # 7X only ever names these to REFUSE them; what matters is that no
+        # sensory or looming identifier, map or driver exists in the module.
+        for banned in (
+            "looming_map", "loomingmap", "fallback_map", "sensory_input",
+            "looming_left", "looming_right", "looming_front",
+        ):
+            assert banned not in source, banned
+        # The refusal is stated explicitly instead.
+        assert "does not implement sensory or looming input" in source
+        # The project-level sensory maps are unchanged in size and content.
+        import biological_brain
+
+        assert set(biological_brain.LOOMING_MAP) == {
+            "loomingLeft", "loomingRight", "loomingFront",
+        }
+        assert set(biological_brain.FALLBACK_MAP) == {
+            "lightLevel", "nociception", "dangerOdor", "touch",
+        }
+        assert len(biological_brain.LOOMING_MAP) == 3
+        assert len(biological_brain.FALLBACK_MAP) == 4
+        # And nothing in 7X maps a stimulus onto a current.
+        from biological_brain.motor_output_abstraction import (
+            MotorOutputSpec,
+        )
+
+        import dataclasses
+
+        names = {f.name for f in dataclasses.fields(MotorOutputSpec)}
+        for forbidden in ("current", "input_current", "drive", "amplitude"):
+            assert forbidden not in names, forbidden
+
+    # --- the boundary this checkpoint actually establishes ----------------
+
+    def test_19_the_scope_note_states_what_was_and_was_not_done(self):
+        """The checkpoint's own summary matches what it did."""
+        note = self._flat_scope()
+        for claim in (
+            "TWO GLUTAMATERGIC NMJs",
+            "EXPERIMENTALLY SUPPORTED IDENTITY AND TYPE",
+            "NO quantitative NMJ parameter exists",
+            "carries no numeric field at all",
+            "GLUTAMATE IDENTITY DOES NOT LICENSE A RECEPTOR SUBTYPE",
+            "no LARVAL Drosophila NMJ receptor data is imported",
+            "THE MUSCLE IS AN OUTPUT ENDPOINT, NOT A MODEL",
+            "END_TO_END_GFS_OUTPUT",
+            "CANNOT be attributed exclusively to the NMJ",
+            "THE BYPASS IS AN EXPERIMENTAL CONDITION, NOT A SIMULATOR INPUT",
+            "That result is BINARY",
+            "VALIDATION TARGETS ARE REFERENCED, NOT DUPLICATED",
+            "PATHWAY/OUTPUT MEASUREMENT recorded at a muscle",
+            "FOURTEEN NMJ QUANTITIES ARE REQUIRED AND UNAVAILABLE",
+            "structurally empty",
+            "barred from being inherited from the central PSI->DLMn values",
+        ):
+            assert claim in note, claim
+        assert "establishes NO muscle model, NO NMJ current" in note
+        assert "does NOT modify 3.0D-7U, 3.0D-7V or 3.0D-7W" in note
+        assert "SPECIFICATION ONLY" in self._spec().source
+
+    def test_20_the_module_declares_its_own_boundaries(self):
+        """The layer documents what it refuses to do, in prose as well."""
+        import inspect
+
+        from biological_brain import motor_output_abstraction as module
+
+        doc = self._flat(inspect.getdoc(module))
+        for claim in (
+            "does NOT implement a muscle, a muscle membrane, or a contractile "
+            "element",
+            "does NOT implement an NMJ current, conductance, or glutamate "
+            "receptor",
+            "does NOT implement transmitter release, vesicles, depletion or "
+            "recovery",
+            "does NOT add glutamate receptor kinetics, density or conductance",
+            "does NOT infer an NMJ transfer function from a "
+            "bypass-stimulation result",
+            "does NOT split a measured end-to-end latency into NMJ and central "
+            "parts",
+            "does NOT duplicate the 3.0D-7W validation targets or their numbers",
+            "does NOT copy the central PSI->DLMn rise, decay or reversal values "
+            "onto an NMJ",
+            "does NOT import larval Drosophila NMJ receptor data",
+            "does NOT implement sensory or looming input",
+            "does NOT modify the 3.0D-7U gap-junction reconciliation",
+        ):
+            assert claim in doc, claim
+        # And the constructor's docstring.
+        assert "SPECIFICATION ONLY" in self._flat(
+            inspect.getdoc(module.get_motor_output_abstraction)
+        )
+
+    def test_21_the_layer_cites_its_own_sources(self):
+        """Every claim points at a real, named source."""
+        spec = self._spec()
+        assert spec.model_id == "ModelDBRepository/245415"
+        assert "PMC3182647" in spec.model_citation
+        joined = self._flat(" ".join(
+            reference
+            for record in (
+                *spec.motor_outputs,
+                *spec.measurement_boundaries,
+                *spec.bypass_conditions,
+                *spec.validation_links,
+            )
+            for reference in record.source_references
+        ))
+        # All four named research sources appear.
+        for pmc in ("PMC3182647", "PMC2946074", "PMC1974813", "PMC3466648"):
+            assert pmc in joined, pmc
+        # And the standard brain-stimulus / muscle-record convention is cited.
+        assert "brain" in spec.boundary("ttm_muscle_response").stimulus_site
+        assert "TTM" in spec.boundary("ttm_muscle_response").recording_site
+        assert "DLM" in spec.boundary("dlm_muscle_response").recording_site
+
+
+def _build_link_with_nmj_flag():
+    """A validation link that wrongly claims to be an NMJ parameter."""
+    from biological_brain.motor_output_abstraction import (
+        CONNECTION_CHEMICAL_NMJ,
+        MEASUREMENT_END_TO_END_GFS_OUTPUT,
+        MeasurementLevel,
+        OutputValidationLink,
+    )
+    from biological_brain.synaptic_mechanism_registry import (
+        SynapticEvidenceStatus,
+    )
+
+    return OutputValidationLink(
+        link_id="bad", linked_7w_target="gf_to_ttm_latency",
+        linked_7w_layer="3.0D-7W", recorded_observable="o",
+        classification=MEASUREMENT_END_TO_END_GFS_OUTPUT,
+        is_nmj_parameter=True,
+        measurement_level=MeasurementLevel.END_TO_END_GFS_OUTPUT,
+        source_references=("r",), notes="n",
+    )
+
+
+class TestLoomingAbstraction:
+    """3.0D-7Y: the visual input end and the GF looming response.
+
+    LC4 carries angular velocity to the GF and LPLC2 carries the entire
+    angular-size component, both by direct connection. Ache et al. 2019
+    publish a phenomenological model summing a linear velocity term with a
+    Gaussian size term; this checkpoint records that MODEL STRUCTURE and
+    refuses every coefficient, because the paper is behind a subscription and
+    because a phenomenological function is not a mechanism.
+
+    SPECIFICATION ONLY: no visual-neuron dynamics, no Hodgkin-Huxley kinetics,
+    no photoreceptors, no optic-lobe circuitry, no synaptic conductance, no GF
+    sensory conductance, no sensory timestep, and no change to the passive
+    backend, 7U, 7V, 7W or 7X.
+    """
+
+    def _spec(self):
+        return get_looming_abstraction()
+
+    @staticmethod
+    def _flat(text):
+        return " ".join(str(text).split())
+
+    def _flat_scope(self):
+        return self._flat(self._spec().scope_note)
+
+    def _module_source(self):
+        import os
+
+        import biological_brain
+
+        path = os.path.join(
+            os.path.dirname(biological_brain.__file__), "looming_abstraction.py"
+        )
+        with open(path, encoding="utf-8") as handle:
+            return handle.read()
+
+    # --- 1-6: the two neurons, their features and their target -------------
+
+    def test_1_lc4_exists(self):
+        """LC4 is specified as a visual projection neuron."""
+        spec = self._spec()
+        assert "LC4" in spec.neuron_classes()
+        record = spec.neuron(NEURON_LC4)
+        assert record.neuron_class == "LC4"
+        assert record.is_visual_projection_neuron is True
+        assert record.is_optic_lobe_neuron is True
+        assert record.drives_gf_directly is True
+        assert record.experimentally_supported is True
+        assert record.mechanistic_live_solver_ready is False
+        assert record.evidence_status is (
+            SynapticEvidenceStatus.EXPERIMENTALLY_CONSTRAINED
+        )
+        assert record.provenance_category is (
+            ParameterProvenance.EXPERIMENTALLY_CONSTRAINED
+        )
+        # It is an optic-lobe neuron, not one of the modelled descending cells.
+        assert "Optic lobe" in record.anatomical_location
+        assert "3.0D-7A" in record.anatomical_location
+        # And the source that assigns the velocity feature is cited.
+        assert "30827912" in " ".join(record.source_references)
+
+    def test_2_lplc2_exists(self):
+        """LPLC2 is specified as a visual projection neuron."""
+        spec = self._spec()
+        assert "LPLC2" in spec.neuron_classes()
+        record = spec.neuron(NEURON_LPLC2)
+        assert record.neuron_class == "LPLC2"
+        assert record.is_visual_projection_neuron is True
+        assert record.is_optic_lobe_neuron is True
+        assert record.drives_gf_directly is True
+        assert record.experimentally_supported is True
+        assert record.mechanistic_live_solver_ready is False
+        # Klapoetke et al. 2017 is the anatomical source.
+        assert "PMC7457385" in " ".join(record.source_references)
+        # And exactly two visual projection neurons are recorded.
+        assert spec.neuron_classes() == ("LC4", "LPLC2")
+
+    def test_3_lc4_feature_is_angular_velocity(self):
+        """LC4 carries angular velocity."""
+        spec = self._spec()
+        record = spec.neuron(NEURON_LC4)
+        assert record.feature_extracted == "angular_velocity"
+        assert record.feature_extracted == FEATURE_ANGULAR_VELOCITY
+        assert spec.neuron_for_feature(FEATURE_ANGULAR_VELOCITY) is record
+        note = self._flat(record.notes)
+        assert "ANGULAR-VELOCITY" in note
+        assert "PMC5893817" in " ".join(record.source_references)
+
+    def test_4_lplc2_feature_is_angular_size(self):
+        """LPLC2 carries angular size, and the whole size component."""
+        spec = self._spec()
+        record = spec.neuron(NEURON_LPLC2)
+        assert record.feature_extracted == "angular_size"
+        assert record.feature_extracted == FEATURE_ANGULAR_SIZE
+        assert spec.neuron_for_feature(FEATURE_ANGULAR_SIZE) is record
+        note = self._flat(record.notes)
+        assert "ENTIRE ANGULAR-SIZE COMPONENT" in note
+        assert "entire GF size component" in note
+
+    def test_5_both_target_gf(self):
+        """Both neurons project to the GF and to nothing else."""
+        spec = self._spec()
+        for record in spec.projection_neurons:
+            assert record.target_neuron == "GF"
+            assert record.target_neuron == NEURON_GF
+        assert spec.neurons_targeting("GF") == ("LC4", "LPLC2")
+        # The GF input record names both.
+        gf_input = spec.gf_input("lc4_and_lplc2_to_gf")
+        assert gf_input.target_neuron == NEURON_GF
+        assert set(gf_input.input_neurons) == {"LC4", "LPLC2"}
+        # A target other than the GF is refused at construction.
+        with pytest.raises(ValueError, match="must target"):
+            _build_neuron(target_neuron="TTMn")
+
+    def test_6_both_are_direct_visual_inputs(self):
+        """The connection type is direct_visual_input, enforced."""
+        spec = self._spec()
+        for record in spec.projection_neurons:
+            assert record.connection_type == "direct_visual_input"
+            assert record.connection_type == CONNECTION_DIRECT_VISUAL_INPUT
+        assert "DIRECT VISUAL INPUT" in self._flat(
+            spec.gf_input("lc4_and_lplc2_to_gf").limitations()
+        )
+        with pytest.raises(ValueError, match="must be recorded as a"):
+            _build_neuron(connection_type="indirect")
+
+    # --- 7-11: nothing is given a mechanism --------------------------------
+
+    def test_7_lc4_and_lplc2_have_no_membrane_conductance(self):
+        """Neither visual neuron carries a membrane conductance."""
+        import dataclasses
+
+        spec = self._spec()
+        for record in spec.projection_neurons:
+            assert record.has_quantitative_parameter is False
+            names = {f.name for f in dataclasses.fields(type(record))}
+            for forbidden in (
+                "conductance", "membrane_conductance", "input_resistance",
+                "membrane_resistance", "channel_density", "max_conductance",
+                "conductance_density", "input_current", "current",
+            ):
+                assert forbidden not in names, forbidden
+        assert spec.any_membrane_conductance() is False
+        assert "NO LC4 membrane conductance" in self._flat(
+            spec.unavailable("lc4_membrane_conductance").why_unavailable
+            + spec.neuron(NEURON_LC4).notes
+        )
+        assert spec.unavailable("lc4_membrane_conductance").value is None
+        assert spec.unavailable("lplc2_membrane_conductance").value is None
+        # And claiming a mechanism is refused at construction.
+        with pytest.raises(ValueError, match="must not be marked mechanistically"):
+            _build_neuron(mechanistic_live_solver_ready=True)
+
+    def test_8_no_hodgkin_huxley_kinetics_are_invented(self):
+        """No HH kinetics exist for LC4 or LPLC2."""
+        spec = self._spec()
+        for neuron in (NEURON_LC4, NEURON_LPLC2):
+            record = spec.unavailable(f"{neuron.lower()}_hodgkin_huxley_kinetics")
+            assert record.value is None
+            assert record.quantity_kind == "hodgkin_huxley_kinetic"
+            assert "rate constants" in self._flat(record.why_required)
+            # The GF kinetics of 7S are explicitly barred as a source.
+            assert "3.0D-7S" in self._flat(
+                record.must_not_be_inherited_from
+            )
+            assert "GF Hodgkin-Huxley kinetics recorded at 3.0D-7S" in (
+                self._flat(record.must_not_be_inherited_from)
+            )
+        assert spec.any_hodgkin_huxley_kinetics() is False
+        assert spec.any_mechanistically_ready() is False
+        # And no channel model is claimed to exist for either neuron.
+        assert "no Hodgkin-Huxley kinetics exist for LC4 or LPLC2" in (
+            self._flat(record.limitations())
+        )
+
+    def test_9_no_lc4_to_gf_conductance_is_invented(self):
+        """The LC4->GF synaptic conductance does not exist here."""
+        spec = self._spec()
+        record = spec.unavailable("lc4_to_gf_synaptic_conductance")
+        assert record.value is None
+        assert record.value_is_populated is False
+        assert record.quantity_kind == "synaptic_conductance"
+        assert record.applies_to == "LC4 -> GF"
+        assert "3.0D-7V" in self._flat(record.must_not_be_inherited_from)
+        assert spec.any_synaptic_conductance() is False
+        assert spec.any_populated_sensory_quantity() is False
+        # And the GF input record cannot carry one.
+        gf_input = spec.gf_input("lc4_and_lplc2_to_gf")
+        assert gf_input.gf_sensory_conductance is None
+        assert gf_input.has_conductance is False
+        assert gf_input.attributable_gf_synaptic_conductance is False
+        with pytest.raises(ValueError, match="must not carry a GF sensory"):
+            _build_gf_input(gf_sensory_conductance=1.0)
+        with pytest.raises(ValueError, match="must not be treated as a GF"):
+            _build_gf_input(attributable_gf_synaptic_conductance=True)
+
+    def test_10_no_lplc2_to_gf_conductance_is_invented(self):
+        """The LPLC2->GF synaptic conductance does not exist here."""
+        spec = self._spec()
+        record = spec.unavailable("lplc2_to_gf_synaptic_conductance")
+        assert record.value is None
+        assert record.applies_to == "LPLC2 -> GF"
+        # The GF depolarization is explicitly not a conductance.
+        assert "depolarization" in self._flat(record.why_unavailable)
+        assert "not a unitary conductance" in self._flat(
+            record.must_not_be_inherited_from
+        )
+        assert spec.any_synaptic_conductance() is False
+        # And the two synaptic conductances are the only ones of that kind.
+        synaptic = [
+            q.quantity_id for q in spec.unavailable_sensory_quantities
+            if q.quantity_kind == "synaptic_conductance"
+        ]
+        assert set(synaptic) == {
+            "lc4_to_gf_synaptic_conductance", "lplc2_to_gf_synaptic_conductance",
+        }
+
+    def test_11_no_receptor_kinetics_are_invented(self):
+        """No receptor identity or kinetics at the sensory synapses."""
+        spec = self._spec()
+        record = spec.unavailable("sensory_receptor_kinetics")
+        assert record.value is None
+        assert "No retrieved source names a receptor" in self._flat(
+            record.why_unavailable
+        )
+        # The central Dalpha7 receptor is barred as a source.
+        assert "Dalpha7" in self._flat(record.must_not_be_inherited_from)
+        assert "different receptor at a different synapse" in self._flat(
+            record.must_not_be_inherited_from
+        )
+        assert spec.any_receptor_kinetics() is False
+        # The reversal potential, release probabilities and Q10 are empty too.
+        for quantity_id in (
+            "gf_sensory_reversal_potential", "sensory_q10",
+            "lc4_release_probability", "lplc2_release_probability",
+            "lc4_channel_densities", "lplc2_channel_densities",
+        ):
+            record = spec.unavailable(quantity_id)
+            assert record.value is None, quantity_id
+            assert record.value_is_populated is False, quantity_id
+
+    # --- 12-13: phenomenological terms are functions, not currents -----------
+
+    def test_12_velocity_term_is_distinct_from_a_membrane_current(self):
+        """The LC4 term is a published function, not a current."""
+        import dataclasses
+
+        spec = self._spec()
+        term = spec.term("lc4_angular_velocity_term")
+        assert term.provided_by == "LC4"
+        assert term.input_feature == FEATURE_ANGULAR_VELOCITY
+        assert term.functional_form == "linear"
+        assert term.functional_form == FORM_LINEAR
+        assert term.is_membrane_current is False
+        assert term.is_a_mechanism is False
+        assert term.carries_a_coefficient is False
+        assert term.equation_available is False
+        # The record type has nowhere to put a current or a coefficient.
+        names = {f.name for f in dataclasses.fields(type(term))}
+        for forbidden in (
+            "slope", "amplitude", "current", "conductance", "weight",
+            "offset", "value", "coefficient", "time_constant",
+        ):
+            assert forbidden not in names, forbidden
+        assert spec.any_membrane_current() is False
+        assert spec.any_model_coefficient() is False
+        # And the refusal is stated.
+        note = self._flat(term.limitations())
+        assert "PUBLISHED PHENOMENOLOGICAL FUNCTION, NOT A MECHANISM" in note
+        assert "NO term is converted into a current" in note
+        # Marking it a current is refused.
+        with pytest.raises(ValueError, match="must NOT be a membrane current"):
+            _build_term(is_membrane_current=True)
+        with pytest.raises(ValueError, match="must not claim the equation"):
+            _build_term(equation_available=True)
+
+    def test_13_size_term_is_distinct_from_a_membrane_current(self):
+        """The LPLC2 term is a published function, not a current."""
+        spec = self._spec()
+        term = spec.term("lplc2_angular_size_term")
+        assert term.provided_by == "LPLC2"
+        assert term.input_feature == FEATURE_ANGULAR_SIZE
+        assert term.functional_form == "gaussian"
+        assert term.functional_form == FORM_GAUSSIAN
+        assert term.is_membrane_current is False
+        assert term.is_a_mechanism is False
+        assert term.carries_a_coefficient is False
+        # Amplitude, width and offset are unavailable, and it says so.
+        note = self._flat(term.notes)
+        assert "GAUSSIAN AMPLITUDE, WIDTH AND OFFSET ARE NOT AVAILABLE" in note
+        assert "none is fitted to a response curve" in note
+        # The combined term is the sum, and still not a current.
+        combined = spec.term("gf_looming_response")
+        assert combined.functional_form == FORM_SUM
+        assert combined.is_membrane_current is False
+        assert "RELATIVE WEIGHTING OF THE TWO TERMS IS NOT AVAILABLE" in (
+            self._flat(combined.notes)
+        )
+        assert "not a mechanism" in self._flat(combined.notes).lower()
+        # Exactly three terms: velocity, size, and their sum.
+        assert spec.term_ids() == (
+            "lc4_angular_velocity_term", "lplc2_angular_size_term",
+            "gf_looming_response",
+        )
+        assert "PMC5893817" in " ".join(term.source_references)
+        assert "30827912" in " ".join(term.source_references)
+
+    # --- 14-15: opponency and silencing -------------------------------------
+
+    def test_14_lplc2_radial_motion_opponency_is_qualitative(self):
+        """Outward excites, inward inhibits, and nothing numeric is attached."""
+        import dataclasses
+
+        spec = self._spec()
+        outward = spec.opponency("lplc2_outward_motion_excitatory")
+        inward = spec.opponency("lplc2_inward_motion_inhibitory")
+        assert outward.functional_effect == "excitatory"
+        assert outward.is_excitatory is True
+        assert outward.is_inhibitory is False
+        assert "outward" in outward.motion_direction
+        assert inward.functional_effect == "inhibitory"
+        assert inward.is_inhibitory is True
+        assert inward.is_excitatory is False
+        assert "inward" in inward.motion_direction
+        # Qualitative only: no conductance, reversal, delay or value anywhere.
+        for record in (outward, inward):
+            assert record.is_qualitative is True
+            assert record.has_conductance is False
+            assert record.has_reversal_potential is False
+            assert record.has_synaptic_delay is False
+            assert record.has_quantitative_value is False
+            names = {f.name for f in dataclasses.fields(type(record))}
+            for forbidden in (
+                "value", "amplitude", "reversal_potential_mv",
+                "conductance_us", "synaptic_delay_ms", "receptive_field",
+            ):
+                assert forbidden not in names, forbidden
+        # The source quotes are recorded, and Klapoetke is cited.
+        assert "each dendritic arm also receives local inhibitory inputs" in (
+            self._flat(inward.notes)
+        )
+        assert "PMC7457385" in " ".join(inward.source_references)
+        # There is no inhibitory or excitatory conductance quantity at all.
+        assert spec.any_membrane_conductance() is False
+        # Attaching one is refused.
+        with pytest.raises(ValueError, match="must not carry a conductance"):
+            _build_opponency(has_conductance=True)
+        with pytest.raises(ValueError, match="must remain qualitative"):
+            _build_opponency(is_qualitative=False)
+
+    def test_15_lplc2_silencing_removes_the_size_component(self):
+        """The silencing result is an experimental validation statement."""
+        spec = self._spec()
+        target = spec.target("lplc2_silencing_removes_size_component")
+        assert target.requires_component == "LPLC2"
+        assert target.carries_a_value is False
+        assert target.is_numeric_latency_target is False
+        assert target.target_kind == "qualitative_observation"
+        note = self._flat(target.notes)
+        assert "LPLC2 silencing eliminates the size component" in note
+        assert "leaving only the velocity component" in note
+        assert "statement about which component survives" in note.lower()
+        assert spec.any_numeric_latency_target() is False
+        assert spec.any_target_value() is False
+        # It is a statement, not a number: no numeric field exists.
+        import dataclasses
+
+        names = {f.name for f in dataclasses.fields(type(target))}
+        for forbidden in ("value", "value_low", "value_high", "latency_ms"):
+            assert forbidden not in names, forbidden
+        with pytest.raises(ValueError, match="must not be a numeric latency"):
+            _build_target(is_numeric_latency_target=True)
+
+    # --- G: the five validation targets -------------------------------------
+
+    def test_16_the_five_validation_targets_exist(self):
+        """All five targets are recorded, and all five are statements."""
+        spec = self._spec()
+        assert spec.target_ids() == (
+            "gf_response_has_velocity_and_size_components",
+            "lplc2_silencing_removes_size_component",
+            "lc4_contributes_angular_velocity_information",
+            "lplc2_contributes_angular_size_information",
+            "combined_feature_model_reproduces_response_timing",
+        )
+        for record in spec.validation_targets:
+            assert record.carries_a_value is False
+            assert record.live_solver_eligible is False
+            assert record.source_references
+        # The velocity and size contributions are the separable components.
+        velocity = spec.target("lc4_contributes_angular_velocity_information")
+        assert velocity.requires_component == "LC4"
+        assert "increases as r/v decreases" in self._flat(velocity.notes)
+        size = spec.target("lplc2_contributes_angular_size_information")
+        assert size.requires_component == "LPLC2"
+        assert "remains constant" in self._flat(size.notes)
+        combined = spec.target("gf_response_has_velocity_and_size_components")
+        assert combined.requires_component == "LC4 and LPLC2"
+        # The combined-model target is a capability, not a latency.
+        timing = spec.target("combined_feature_model_reproduces_response_timing")
+        assert timing.target_kind == "phenomenological_capability"
+        assert "NO ABSOLUTE PEAK TIME IS STATED" in self._flat(timing.notes)
+        assert "3.0D-7W" in timing.notes
+
+    # --- C: stimulus features are not membrane variables ---------------------
+
+    def test_17_stimulus_features_are_not_membrane_variables(self):
+        """angular_size and angular_velocity are external stimulus features."""
+        import dataclasses
+
+        spec = self._spec()
+        assert spec.feature_ids() == (
+            "angular_velocity", "angular_size",
+        )
+        for record in spec.stimulus_features:
+            assert record.is_membrane_variable is False
+            assert record.feature_kind == "external_stimulus_feature"
+            assert record.is_external_stimulus is True
+            assert record.has_numeric_value is False
+            names = {f.name for f in dataclasses.fields(type(record))}
+            for forbidden in (
+                "value", "amplitude", "conductance", "current", "voltage",
+                "rate_per_second", "degrees_per_second",
+            ):
+                assert forbidden not in names, forbidden
+        assert spec.feature("angular_velocity").carried_by == "LC4"
+        assert spec.feature("angular_size").carried_by == "LPLC2"
+        assert spec.any_membrane_variable() is False
+        # And the refusal is explicit.
+        assert "NOT A MEMBRANE VARIABLE" in self._flat(
+            spec.feature("angular_size").limitations()
+        )
+        with pytest.raises(ValueError, match="must NOT be a membrane variable"):
+            _build_feature(is_membrane_variable=True)
+        with pytest.raises(ValueError, match="must be recorded as an external"):
+            _build_feature(feature_kind="membrane_state")
+
+    # --- 18: no solver import -----------------------------------------------
+
+    def test_18_no_solver_module_is_imported(self):
+        """7Y imports no solver, no active layer and no motor-output layer."""
+        import ast
+        import inspect
+        import re
+
+        from biological_brain import looming_abstraction as module
+
+        source = inspect.getsource(module)
+        tree = ast.parse(source)
+        imported = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom):
+                imported.append(node.module or "")
+            elif isinstance(node, ast.Import):
+                imported.extend(alias.name for alias in node.names)
+        # The import edges themselves.
+        banned_modules = (
+            "dynamics", "dynamics.passive_cable", "passive_cable",
+            "active_profiles", "active_mechanism_registry",
+            "active_conductance_registry", "passive_profiles",
+            "electrical_representation", "computational_topology",
+            "morphology", "morphology_builder", "gfs_morphology",
+        )
+        for name in imported:
+            for banned in banned_modules:
+                assert banned not in name, (name, banned)
+        assert "dynamics" not in imported
+        # No solver symbol is REFERENCED BY CODE anywhere in the module. The
+        # module docstring and its boundary strings name these classes only to
+        # refuse them, so the check is on the parsed tree, not on raw text.
+        referenced = {
+            node.id for node in ast.walk(tree)
+            if isinstance(node, ast.Name)
+        } | {
+            node.attr for node in ast.walk(tree)
+            if isinstance(node, ast.Attribute)
+        } | {
+            node.value.id for node in ast.walk(tree)
+            if isinstance(node, ast.Attribute) and isinstance(
+                node.value, ast.Name
+            )
+        }
+        for banned in (
+            "PassiveNetwork", "PassiveNetworkState", "CompartmentElectrical",
+            "PassiveCableModel", "LIFVoltageModel", "ConductanceDynamicsModel",
+            "CableParameters", "GFSMorphology", "build_compartment_model",
+            "MotorOutputSpec", "UnavailableNmjQuantity", "LOOMING_MAP",
+            "FALLBACK_MAP",
+        ):
+            assert banned not in referenced, banned
+        # The existing sensory maps are not imported or referenced at all.
+        for banned in ("LOOMING_MAP", "FALLBACK_MAP", "BiologicalBrain"):
+            assert banned not in source, banned
+        # The only 7Y dependency on an earlier layer is that lazy verifier.
+        assert "get_synaptic_mechanism_registry" in source
+        assert "get_synaptic_abstraction" in source
+        assert "get_motor_output_abstraction" in source
+        # The layer's own boundary predicates are all False.
+        spec = self._spec()
+        assert spec.any_live_solver_eligible() is False
+        for record in (
+            *spec.projection_neurons, *spec.stimulus_features,
+            *spec.phenomenological_terms, *spec.opponency_components,
+            *spec.gf_visual_inputs, *spec.validation_targets,
+            *spec.unavailable_sensory_quantities, *spec.stimulus_rates,
+            *spec.pathway_diagrams,
+        ):
+            assert record.live_solver_eligible is False
+        # Marking anything live-solver eligible is refused.
+        with pytest.raises(ValueError, match="cannot be live-solver eligible"):
+            _build_neuron(live_solver_eligible=True)
+        with pytest.raises(ValueError, match="cannot be live-solver eligible"):
+            _build_target(live_solver_eligible=True)
+        with pytest.raises(ValueError, match="cannot be live-solver eligible"):
+            _build_term(live_solver_eligible=True)
+        with pytest.raises(ValueError, match="cannot be live-solver eligible"):
+            _build_feature(live_solver_eligible=True)
+        with pytest.raises(ValueError, match="cannot be live-solver eligible"):
+            _build_gf_input(live_solver_eligible=True)
+        with pytest.raises(ValueError, match="cannot be live-solver eligible"):
+            _build_opponency(live_solver_eligible=True)
+        with pytest.raises(ValueError, match="cannot be live-solver eligible"):
+            _build_rate(live_solver_eligible=True)
+        with pytest.raises(ValueError, match="cannot be live-solver eligible"):
+            _build_diagram(live_solver_eligible=True)
+        # And the layer itself.
+        with pytest.raises(ValueError, match="cannot be live-solver eligible"):
+            _build_layer(live_solver_eligible=True)
+
+    # --- 19-21: 7U, 7V and 7W are unchanged ---------------------------------
+
+    def test_19_7u_reconciliation_remains_unchanged(self):
+        """The gap-junction unit conflicts are untouched by 7Y."""
+        reconciliation = get_source_reconciliation_registry()
+        assert reconciliation.names() == (
+            "g_gap_young_unit_conflict", "g_gap_old_unit_conflict",
+        )
+        for conflict_id in reconciliation.names():
+            conflict = reconciliation.get(conflict_id)
+            assert conflict.resolution_status is ResolutionStatus.UNRESOLVED
+            assert conflict.is_resolved is False
+            assert conflict.corrected_value_available is False
+            assert conflict.preferred_side is None
+        assert reconciliation.any_resolved() is False
+        assert reconciliation.any_preferred_side() is False
+        # 7Y introduces no gap conductance and no corrected value.
+        source = self._module_source()
+        for banned in (
+            "g_gap", "gap_junction_conductance", "corrected_g_gap",
+        ):
+            assert banned not in source, banned
+
+    def test_20_7v_synaptic_registry_remains_unchanged(self):
+        """The 7V central synaptic registry is referenced, never modified."""
+        spec = self._spec()
+        seven_v = get_synaptic_mechanism_registry()
+        assert len(seven_v.quantities) == 21
+        assert seven_v.any_live_solver_eligible() is False
+        assert seven_v.any_receptor_kinetics() is False
+        peak = seven_v.get("peak_conductance")
+        assert peak.value_agreement == DISCREPANCY_UNRESOLVED
+        # 7V still owns the central chemical-synapse values.
+        seven_w = get_synaptic_abstraction()
+        assert seven_w.parameter("chemical_peak_conductance").value == 80.0
+        assert seven_w.parameter("chemical_rise_time_ms").value == 0.1
+        assert seven_w.parameter("chemical_decay_time_ms").value == 1.0
+        # Every 7Y link resolves to a real 7V exclusion.
+        excluded = set(seven_v.excluded_names())
+        linked = 0
+        for record in spec.unavailable_sensory_quantities:
+            if record.linked_7v_excluded_name is not None:
+                assert record.linked_7v_excluded_name in excluded, (
+                    record.quantity_id
+                )
+                linked += 1
+        assert linked >= 3
+        # And 7Y did not create a fresh exclusion where one exists.
+        for name in (
+            "release_probability", "calcium_dependent_release",
+            "q10_synaptic_scaling", "dalpha7_receptor_density",
+        ):
+            assert name in excluded
+        # The sensory reversal and the sensory synaptic conductances are
+        # explicitly barred from inheriting the central 0 mV and 80 uS.
+        reversal = spec.unavailable("gf_sensory_reversal_potential")
+        assert "0 mV" in self._flat(reversal.must_not_be_inherited_from)
+        assert "STANDARD MODEL VALUE" in self._flat(
+            reversal.must_not_be_inherited_from
+        )
+        for quantity_id in (
+            "lc4_to_gf_synaptic_conductance", "lplc2_to_gf_synaptic_conductance",
+        ):
+            assert "3.0D-7V" in self._flat(
+                spec.unavailable(quantity_id).must_not_be_inherited_from
+            )
+
+    def test_21_7w_and_7x_remain_unchanged(self):
+        """The 7W targets and the 7X NMJ quantities are named, not copied."""
+        spec = self._spec()
+        seven_w = get_synaptic_abstraction()
+        seven_x = get_motor_output_abstraction()
+        # 7W still owns every pathway target, unchanged.
+        assert len(seven_w.validation_targets) == 4
+        assert len(seven_w.following_targets) == 2
+        assert seven_w.any_live_solver_eligible() is False
+        assert seven_w.validation_target("gf_to_ttm_latency").as_tuple == (
+            0.7, 1.2
+        )
+        assert seven_w.validation_target(
+            "gf_to_dlm_latency"
+        ).as_tuple == (1.3, 1.7)
+        # 7X still owns its fourteen NMJ quantities, unchanged.
+        assert len(seven_x.unavailable_nmj_quantities) == 14
+        assert seven_x.any_live_solver_eligible() is False
+        assert seven_x.any_populated_nmj_quantity() is False
+        assert seven_x.output_ids() == ("TTMn_TTM", "DLMn_DLM")
+        # 7Y restates none of them.
+        source = self._module_source()
+        for number in ("0.7-1.2", "1.3-1.7", "1-4 ms", "7-15 ms", "100 Hz"):
+            assert number not in source, number
+        assert spec.any_motor_output_quantity() is False
+        # Every 7W and 7X link in 7Y resolves.
+        requirements = set(seven_w.requirement_ids())
+        nmj_quantities = set(seven_x.unavailable_ids())
+        linked = 0
+        for record in spec.unavailable_sensory_quantities:
+            if record.linked_7w_requirement_id is not None:
+                assert record.linked_7w_requirement_id in requirements, (
+                    record.quantity_id
+                )
+                linked += 1
+            if record.linked_7x_quantity_id is not None:
+                assert record.linked_7x_quantity_id in nmj_quantities, (
+                    record.quantity_id
+                )
+                linked += 1
+        assert linked >= 6
+        spec.verifies_against_7w_and_7x()
+
+    # --- 16: no sensory timestep --------------------------------------------
+
+    def test_22_no_visual_timestep_is_introduced(self):
+        """A stimulus frame rate is not a neural integration timestep."""
+        spec = self._spec()
+        frame = spec.stimulus_rate(STIMULUS_DISPLAY_FRAME_RATE)
+        assert frame.is_neural_timestep is False
+        assert frame.changes_timestep_policy is False
+        assert "180 Hz" in frame.reported_description
+        assert "it is not an integration time" in self._flat(frame.notes).lower()
+        ratio = spec.stimulus_rate(STIMULUS_RADIUS_OVER_VELOCITY_RATIO)
+        assert ratio.is_neural_timestep is False
+        assert "NOT A TIME CONSTANT" in self._flat(ratio.notes)
+        assert spec.any_visual_timestep() is False
+        assert spec.any_timestep_policy_change() is False
+        # The project's own numerical policy is untouched.
+        from biological_brain.dynamics.passive_cable import (
+            PASSIVE_CABLE_NUMERICAL_POLICY,
+        )
+
+        assert PASSIVE_CABLE_NUMERICAL_POLICY.default_timestep_ms == 0.01
+        assert PASSIVE_CABLE_NUMERICAL_POLICY.max_timestep_ms == 0.01
+        # And neither record may be promoted to a timestep.
+        with pytest.raises(ValueError, match="must NOT be a neural timestep"):
+            _build_rate(is_neural_timestep=True)
+        with pytest.raises(ValueError, match="must not change the numerical"):
+            _build_rate(changes_timestep_policy=True)
+
+    # --- 22: no motor-output implementation ---------------------------------
+
+    def test_23_no_motor_output_implementation_appears(self):
+        """The stage diagram names the motor end and implements none of it."""
+        import dataclasses
+
+        spec = self._spec()
+        diagram = spec.diagram("looming_to_escape_pathway")
+        assert diagram.stages == (
+            "visual stimulus", "LC4 / LPLC2 feature extraction", "GF",
+            "TTMn / PSI / DLMn", "NMJs", "muscle output",
+        )
+        assert diagram.stage_count == 6
+        assert diagram.has_weights is False
+        assert "3.0D-7W" in diagram.motor_output_owned_by
+        assert "3.0D-7X" in diagram.motor_output_owned_by
+        # The stages are strings, never simulated components.
+        names = {f.name for f in dataclasses.fields(type(diagram))}
+        for forbidden in ("weights", "delays", "conductances", "values"):
+            assert forbidden not in names, forbidden
+        note = self._flat(diagram.limitations())
+        assert "A SPECIFICATION DIAGRAM, NOT A NUMERICAL SIMULATOR" in note
+        assert "NOT restated here" in note
+        with pytest.raises(ValueError, match="must name the stage"):
+            _build_diagram(stages=("visual stimulus",))
+        with pytest.raises(ValueError, match="must record that the NMJ"):
+            _build_diagram(motor_output_owned_by=("3.0D-7W",))
+
+    # --- the boundary this checkpoint actually establishes -------------------
+
+    def test_24_the_scope_note_states_what_was_and_was_not_done(self):
+        """The checkpoint's own summary matches what it did."""
+        note = self._flat_scope()
+        for claim in (
+            "TWO VISUAL PROJECTION NEURONS DRIVE THE GF DIRECTLY",
+            "ANGULAR-VELOCITY",
+            "ENTIRE ANGULAR-SIZE",
+            "optic-lobe visual projection neurons",
+            "NOT part of the central-brain descending-neuron morphology",
+            "EXTERNAL, NOT MEMBRANE VARIABLES",
+            "THE PUBLISHED MODEL IS A FUNCTION, NOT A MECHANISM",
+            "NO COEFFICIENT IS RECORDED",
+            "UNKNOWN, and none is guessed or fitted",
+            "LPLC2 RADIAL MOTION OPPONENCY IS QUALITATIVE",
+            "NO GF SENSORY CONDUCTANCE IS CREATED",
+            "a CONNECTION, not a conductance",
+            "THIRTEEN SENSORY QUANTITIES ARE REQUIRED AND UNAVAILABLE",
+            "NO SENSORY TIMESTEP IS INTRODUCED",
+            "VALIDATION TARGETS ARE QUALITATIVE",
+            "MOTOR-OUTPUT TARGETS ARE NOT DUPLICATED",
+        ):
+            assert claim in note, claim
+        assert "establishes NO visual-neuron model" in note
+        assert "does NOT modify 3.0D-7U, 3.0D-7V, 3.0D-7W or 3.0D-7X" in note
+        assert "SPECIFICATION ONLY" in self._spec().source
+        # All thirteen unavailable quantities are named in the scope note.
+        spec = self._spec()
+        assert len(spec.unavailable_sensory_quantities) == 13
+        for quantity_id in spec.unavailable_ids():
+            record = spec.unavailable(quantity_id)
+            assert record.value is None, quantity_id
+            assert "stays empty" in self._flat(record.limitations())
+            assert "NOT filled with a generic Drosophila value" in self._flat(
+                record.limitations()
+            )
+
+    def test_25_the_module_declares_its_own_boundaries(self):
+        """The layer documents what it refuses to do, in prose as well."""
+        import inspect
+
+        from biological_brain import looming_abstraction as module
+
+        doc = self._flat(inspect.getdoc(module))
+        for claim in (
+            "does NOT implement LC4 membrane dynamics or Hodgkin-Huxley "
+            "kinetics",
+            "does NOT implement LPLC2 membrane dynamics or Hodgkin-Huxley "
+            "kinetics",
+            "does NOT implement photoreceptors, the phototransduction cascade, "
+            "or any optic-lobe circuit",
+            "does NOT create an LC4->GF or LPLC2->GF synaptic conductance",
+            "does NOT create a GF sensory conductance or modify the GF "
+            "morphology, the GF passive parameters, the GF active profile",
+            "does NOT convert a phenomenological term into a membrane current",
+            "does NOT invent a velocity-term slope, a Gaussian amplitude, width "
+            "or offset",
+            "does NOT reinterpret a stimulus frame rate, presentation rate or "
+            "experimental sampling interval as a neural integration timestep",
+            "does NOT duplicate the 3.0D-7W validation targets or the 3.0D-7X "
+            "NMJ quantities",
+        ):
+            assert claim in doc, claim
+        assert "SPECIFICATION ONLY" in self._flat(
+            inspect.getdoc(module.get_looming_abstraction)
+        )
+
+    def test_26_the_layer_cites_its_own_sources(self):
+        """Every claim points at a real, named source."""
+        spec = self._spec()
+        assert spec.model_id == "ModelDBRepository/245415"
+        assert "30827912" in spec.model_citation
+        joined = " ".join(
+            reference
+            for record in (
+                *spec.projection_neurons,
+                *spec.stimulus_features,
+                *spec.phenomenological_terms,
+                *spec.opponency_components,
+                *spec.gf_visual_inputs,
+                *spec.validation_targets,
+                *spec.stimulus_rates,
+            )
+            for reference in record.source_references
+        )
+        # All four named research sources appear.
+        for reference in (
+            "30827912", "PMC7457385", "PMC5893817", "PMC10263144",
+        ):
+            assert reference in joined, reference
+        # The paywall is recorded rather than glossed over.
+        assert "inPMC: N" in spec.model_citation
+        assert "behind a subscription" in spec.model_citation
+
+
+def _neuron_kwargs(**overrides):
+    kwargs = dict(
+        neuron_class="X", cell_class="c", feature_extracted=(
+            FEATURE_ANGULAR_VELOCITY
+        ),
+        target_neuron=NEURON_GF,
+        connection_type=CONNECTION_DIRECT_VISUAL_INPUT,
+        anatomical_location="Optic lobe.",
+        evidence_status=SynapticEvidenceStatus.EXPERIMENTALLY_CONSTRAINED,
+        provenance_category=ParameterProvenance.EXPERIMENTALLY_CONSTRAINED,
+        experimentally_supported=True,
+        mechanistic_live_solver_ready=False,
+        source_references=("r",), notes="n",
+    )
+    kwargs.update(overrides)
+    return kwargs
+
+
+def _build_neuron(**overrides):
+    from biological_brain.looming_abstraction import VisualProjectionNeuronSpec
+
+    return VisualProjectionNeuronSpec(**_neuron_kwargs(**overrides))
+
+
+def _term_kwargs(**overrides):
+    kwargs = dict(
+        term_id="t", provided_by="LC4",
+        input_feature=FEATURE_ANGULAR_VELOCITY,
+        functional_form=FORM_LINEAR, published_statement="s",
+        combines_into="gf_looming_response", equation_available=False,
+        evidence_status=SynapticEvidenceStatus.EXPERIMENTALLY_CONSTRAINED,
+        provenance_category=ParameterProvenance.EXPERIMENTALLY_CONSTRAINED,
+        source_references=("r",), notes="n",
+    )
+    kwargs.update(overrides)
+    return kwargs
+
+
+def _build_term(**overrides):
+    from biological_brain.looming_abstraction import PhenomenologicalModelTerm
+
+    return PhenomenologicalModelTerm(**_term_kwargs(**overrides))
+
+
+def _feature_kwargs(**overrides):
+    kwargs = dict(
+        feature_id=FEATURE_ANGULAR_SIZE, feature_name="angular size (rho)",
+        feature_kind="external_stimulus_feature", described_as="d",
+        carried_by="LPLC2", used_by=NEURON_GF,
+        evidence_status=SynapticEvidenceStatus.EXPERIMENTALLY_CONSTRAINED,
+        provenance_category=ParameterProvenance.EXPERIMENTALLY_CONSTRAINED,
+        source_references=("r",), notes="n",
+    )
+    kwargs.update(overrides)
+    return kwargs
+
+
+def _build_feature(**overrides):
+    from biological_brain.looming_abstraction import StimulusFeatureSpec
+
+    return StimulusFeatureSpec(**_feature_kwargs(**overrides))
+
+
+def _opponency_kwargs(**overrides):
+    kwargs = dict(
+        component_id="c", motion_direction="outward", functional_effect=(
+            "excitatory"
+        ),
+        described_as="d",
+        evidence_status=SynapticEvidenceStatus.EXPERIMENTALLY_CONSTRAINED,
+        provenance_category=ParameterProvenance.EXPERIMENTALLY_CONSTRAINED,
+        source_references=("r",), notes="n",
+    )
+    kwargs.update(overrides)
+    return kwargs
+
+
+def _build_opponency(**overrides):
+    from biological_brain.looming_abstraction import (
+        RadialMotionOpponencyComponent,
+    )
+
+    return RadialMotionOpponencyComponent(**_opponency_kwargs(**overrides))
+
+
+def _gf_input_kwargs(**overrides):
+    kwargs = dict(
+        input_id="i", target_neuron=NEURON_GF,
+        input_neurons=(NEURON_LC4, NEURON_LPLC2), connection_basis="c",
+        reported_response="r", attributable_gf_synaptic_conductance=False,
+        modifies_gf_morphology=False, modifies_gf_passive_parameters=False,
+        modifies_gf_active_profile=False,
+        evidence_status=SynapticEvidenceStatus.EXPERIMENTALLY_CONSTRAINED,
+        provenance_category=ParameterProvenance.EXPERIMENTALLY_CONSTRAINED,
+        source_references=("r",), notes="n",
+    )
+    kwargs.update(overrides)
+    return kwargs
+
+
+def _build_gf_input(**overrides):
+    from biological_brain.looming_abstraction import GFVisualInputRecord
+
+    return GFVisualInputRecord(**_gf_input_kwargs(**overrides))
+
+
+def _target_kwargs(**overrides):
+    kwargs = dict(
+        target_id="t", statement="s",
+        target_kind="qualitative_observation", observable="o",
+        requires_component="LC4",
+        evidence_status=SynapticEvidenceStatus.EXPERIMENTALLY_CONSTRAINED,
+        provenance_category=ParameterProvenance.EXPERIMENTALLY_CONSTRAINED,
+        source_references=("r",), notes="n",
+    )
+    kwargs.update(overrides)
+    return kwargs
+
+
+def _build_target(**overrides):
+    from biological_brain.looming_abstraction import LoomingValidationTarget
+
+    return LoomingValidationTarget(**_target_kwargs(**overrides))
+
+
+def _rate_kwargs(**overrides):
+    kwargs = dict(
+        rate_id=STIMULUS_DISPLAY_FRAME_RATE,
+        rate_kind="stimulus_presentation_rate", reported_description="d",
+        belongs_to="the stimulus presentation apparatus",
+        source_references=("r",), notes="n",
+    )
+    kwargs.update(overrides)
+    return kwargs
+
+
+def _build_rate(**overrides):
+    from biological_brain.looming_abstraction import StimulusRateBoundary
+
+    return StimulusRateBoundary(**_rate_kwargs(**overrides))
+
+
+def _build_diagram(**overrides):
+    from biological_brain.looming_abstraction import PathwayStageDiagram
+
+    kwargs = dict(
+        diagram_id="d", description="desc", stages=(
+            "visual stimulus", "LC4 / LPLC2 feature extraction", "GF",
+            "TTMn / PSI / DLMn", "NMJs", "muscle output",
+        ),
+        motor_output_owned_by=("3.0D-7W", "3.0D-7X"),
+        source_references=("r",), notes="n",
+    )
+    kwargs.update(overrides)
+    return PathwayStageDiagram(**kwargs)
+
+
+def _build_layer(**overrides):
+    from biological_brain.looming_abstraction import get_looming_abstraction
+
+    layer = get_looming_abstraction()
+    return type(layer)(**{
+        **{f: getattr(layer, f) for f in layer.__dataclass_fields__},
+        **overrides,
+    })
+
+
+# --- 3.0D-7Z builders ----------------------------------------------------------
+
+
+def _seven_z_spec():
+    return get_sensorimotor_integration()
+
+
+def _build_input(**overrides):
+    from biological_brain.sensorimotor_integration import (
+        SensorimotorInputRecord,
+    )
+
+    spec = _seven_z_spec()
+    base = spec.input_record(spec.input_ids()[0])
+    kwargs = {f: getattr(base, f) for f in base.__dataclass_fields__}
+    kwargs.update(overrides)
+    return SensorimotorInputRecord(**kwargs)
+
+
+def _build_boundary(**overrides):
+    from biological_brain.sensorimotor_integration import GFIntegrationBoundary
+
+    spec = _seven_z_spec()
+    base = spec.boundary(spec.boundary_ids()[0])
+    kwargs = {f: getattr(base, f) for f in base.__dataclass_fields__}
+    kwargs.update(overrides)
+    return GFIntegrationBoundary(**kwargs)
+
+
+def _build_gf_output(**overrides):
+    from biological_brain.sensorimotor_integration import GFOutputAbstraction
+
+    spec = _seven_z_spec()
+    base = spec.gf_output(spec.gf_outputs[0].output_id)
+    kwargs = {f: getattr(base, f) for f in base.__dataclass_fields__}
+    kwargs.update(overrides)
+    return GFOutputAbstraction(**kwargs)
+
+
+def _build_state(**overrides):
+    from biological_brain.sensorimotor_integration import (
+        BehavioralStateRecord,
+    )
+
+    spec = _seven_z_spec()
+    base = spec.behavioral_state(spec.state_ids()[0])
+    kwargs = {f: getattr(base, f) for f in base.__dataclass_fields__}
+    kwargs.update(overrides)
+    return BehavioralStateRecord(**kwargs)
+
+
+def _build_route(**overrides):
+    from biological_brain.sensorimotor_integration import MotorPathwayRoute
+
+    spec = _seven_z_spec()
+    base = spec.route(spec.route_ids()[0])
+    kwargs = {f: getattr(base, f) for f in base.__dataclass_fields__}
+    kwargs.update(overrides)
+    return MotorPathwayRoute(**kwargs)
+
+
+def _build_distinction(**overrides):
+    from biological_brain.sensorimotor_integration import (
+        EscapeModeDistinction,
+    )
+
+    spec = _seven_z_spec()
+    base = spec.distinction(spec.escape_mode_distinctions[0].distinction_id)
+    kwargs = {f: getattr(base, f) for f in base.__dataclass_fields__}
+    kwargs.update(overrides)
+    return EscapeModeDistinction(**kwargs)
+
+
+def _build_unavailable(**overrides):
+    from biological_brain.sensorimotor_integration import (
+        UnavailableIntegrationQuantity,
+    )
+
+    spec = _seven_z_spec()
+    base = spec.unavailable(spec.unavailable_ids()[0])
+    kwargs = {f: getattr(base, f) for f in base.__dataclass_fields__}
+    kwargs.update(overrides)
+    return UnavailableIntegrationQuantity(**kwargs)
+
+
+def _build_seven_z_target(**overrides):
+    from biological_brain.sensorimotor_integration import (
+        IntegrationValidationTarget,
+    )
+
+    spec = _seven_z_spec()
+    base = spec.target(spec.target_ids()[0])
+    kwargs = {f: getattr(base, f) for f in base.__dataclass_fields__}
+    kwargs.update(overrides)
+    return IntegrationValidationTarget(**kwargs)
+
+
+def _build_chain(**overrides):
+    from biological_brain.sensorimotor_integration import SensorimotorChain
+
+    spec = _seven_z_spec()
+    base = spec.chains[0]
+    kwargs = {f: getattr(base, f) for f in base.__dataclass_fields__}
+    kwargs.update(overrides)
+    return SensorimotorChain(**kwargs)
+
+
+def _build_seven_z_layer(**overrides):
+    spec = _seven_z_spec()
+    return type(spec)(**{
+        **{f: getattr(spec, f) for f in spec.__dataclass_fields__},
+        **overrides,
+    })
+
+
+class TestSensorimotorIntegration:
+    """3.0D-7Z: the sensorimotor chain and the behavioural decision boundary.
+
+    The chain runs from an external looming stimulus, through the 3.0D-7Y
+    visual feature abstraction, across a GF sensory integration boundary and a
+    GF behavioural-output decision boundary, into the 3.0D-7W central GFS
+    abstraction and out to the 3.0D-7X motor and NMJ output abstraction.
+
+    Three things are usually assumed rather than stated, and this checkpoint
+    states them as boundaries: the GF output is SPIKE TIMING rather than a
+    continuous command, behavioural state is a real variable rather than a
+    constant, and short-mode and long-mode takeoff are different programs on
+    different pathways.
+
+    SPECIFICATION ONLY: no Hodgkin-Huxley dynamics, no synaptic current, no GF
+    spike generator, no gating function, no decision threshold, no
+    probability, no timestep, no duplicated parameter, and no change to the
+    passive backend, 7U, 7V, 7W, 7X or 7Y.
+    """
+
+    def _spec(self):
+        return _seven_z_spec()
+
+    @staticmethod
+    def _flat(text):
+        return " ".join(str(text).split())
+
+    def _flat_scope(self):
+        return self._flat(self._spec().scope_note)
+
+    def _module_source(self):
+        import os
+
+        import biological_brain
+
+        path = os.path.join(
+            os.path.dirname(biological_brain.__file__),
+            "sensorimotor_integration.py",
+        )
+        with open(path, encoding="utf-8") as handle:
+            return handle.read()
+
+    # --- 1-4: the sensorimotor inputs ---------------------------------------
+
+    def test_1_angular_velocity_input_is_a_stimulus_coordinate(self):
+        """LC4's angular velocity arrives as a feature, not a membrane state."""
+        spec = self._spec()
+        record = spec.input_record("angular_velocity_to_gf")
+        assert record.referenced_layer == "3.0D-7Y"
+        assert record.feature_id == "angular_velocity"
+        assert record.feature_source_neuron == "LC4"
+        assert record.arrives_at == "GF"
+        assert record.feature_representation == "external_stimulus_feature"
+        assert record.is_external_stimulus is True
+        assert record.is_membrane_variable is False
+        assert record.uses_membrane_voltage_representation is False
+        assert record.has_quantitative_parameter is False
+        assert record.live_solver_eligible is False
+        assert "30827912" in " ".join(record.source_references)
+
+    def test_2_angular_size_input_is_a_stimulus_coordinate(self):
+        """LPLC2's angular size arrives as a feature, not a membrane state."""
+        spec = self._spec()
+        record = spec.input_record("angular_size_to_gf")
+        assert record.feature_id == "angular_size"
+        assert record.feature_source_neuron == "LPLC2"
+        assert record.feature_representation == "external_stimulus_feature"
+        assert record.is_membrane_variable is False
+        assert record.uses_membrane_voltage_representation is False
+        assert record.has_quantitative_parameter is False
+        assert record.live_solver_eligible is False
+        assert "PMC10263144" in " ".join(record.source_references)
+
+    def test_3_an_input_cannot_become_a_membrane_variable(self):
+        """The record type refuses the membrane reinterpretation."""
+        for override in (
+            {"is_membrane_variable": True},
+            {"uses_membrane_voltage_representation": True},
+            {"has_quantitative_parameter": True},
+            {"live_solver_eligible": True},
+        ):
+            with pytest.raises(ValueError):
+                _build_input(**override)
+
+    def test_4_an_input_must_reference_7y_and_a_real_stimulus_feature(self):
+        """The input must be 7Y-owned and represented as a stimulus feature."""
+        with pytest.raises(ValueError):
+            _build_input(referenced_layer="3.0D-7W")
+        with pytest.raises(ValueError):
+            _build_input(feature_representation="membrane_voltage")
+        with pytest.raises(ValueError):
+            _build_input(source_references=())
+
+    # --- 5-8: the GF sensory integration boundary -----------------------------
+
+    def test_5_the_integration_boundary_is_qualitative(self):
+        """The GF combines the two streams with a qualitative sum."""
+        spec = self._spec()
+        boundary = spec.boundary("gf_sensory_integration_boundary")
+        assert boundary.integrates_neuron == "GF"
+        assert boundary.input_feature_ids == ("angular_velocity", "angular_size")
+        assert boundary.input_record_ids == spec.input_ids()
+        assert boundary.combination_type == COMBINATION_QUALITATIVE_SUM
+        assert boundary.combination_is_qualitative is True
+        assert boundary.is_a_mechanism is False
+        assert boundary.input_count == 2
+        assert boundary.spatially_distributed_input is True
+        assert boundary.live_solver_eligible is False
+
+    def test_6_the_boundary_references_the_7y_terms(self):
+        """The combination is stated as a link to 3.0D-7Y's own terms."""
+        boundary = _seven_z_spec().boundary("gf_sensory_integration_boundary")
+        seven_y = get_looming_abstraction()
+        assert boundary.referenced_7y_term_ids == (
+            "lc4_angular_velocity_term", "lplc2_angular_size_term",
+            "gf_looming_response",
+        )
+        for term_id in boundary.referenced_7y_term_ids:
+            assert term_id in seven_y.term_ids(), term_id
+        # An empty term list is rejected at construction.
+        with pytest.raises(ValueError):
+            _build_boundary(referenced_7y_term_ids=())
+
+    def test_7_the_boundary_refuses_every_mechanistic_claim(self):
+        """No coefficient, current, conductance, reversal potential, threshold."""
+        for override in (
+            {"carries_a_coefficient": True},
+            {"is_membrane_current": True},
+            {"has_conductance": True},
+            {"has_reversal_potential": True},
+            {"has_decision_threshold": True},
+            {"combination_is_qualitative": False},
+            {"is_live_solver_eligible": True},
+            {"live_solver_eligible": True},
+        ):
+            with pytest.raises(ValueError):
+                _build_boundary(**override)
+
+    def test_8_the_boundary_must_name_its_features_and_evidence(self):
+        """Empty features, empty terms and no source are all rejected."""
+        with pytest.raises(ValueError):
+            _build_boundary(input_feature_ids=())
+        with pytest.raises(ValueError):
+            _build_boundary(referenced_7y_term_ids=())
+        with pytest.raises(ValueError):
+            _build_boundary(source_references=())
+        with pytest.raises(ValueError):
+            _build_boundary(combination_type="linear_plus_gaussian_equation")
+
+    # --- 9-12: the GF output is spike timing, not a spike mechanism ---------
+
+    def test_9_the_gf_output_is_spike_timing(self):
+        """The output is the timing of a single action potential."""
+        spec = self._spec()
+        record = spec.gf_output("gf_action_potential_timing")
+        assert record.output_type == OUTPUT_SPIKE_TIMING
+        assert record.is_discrete is True
+        assert record.target_layer == "3.0D-7W"
+        assert "timing of a single spike" in record.behavioural_evidence
+        assert "30827912" in " ".join(record.source_references)
+        assert "PMC7444277" in " ".join(record.source_references)
+
+    def test_10_the_gf_output_refuses_every_spike_mechanism(self):
+        """No waveform, threshold, refractory mechanism or conduction delay."""
+        for override in (
+            {"mechanistic_live_solver_ready": True},
+            {"is_membrane_voltage": True},
+            {"is_continuous_motor_command": True},
+            {"has_spike_waveform": True},
+            {"has_threshold_voltage": True},
+            {"has_refractory_mechanism": True},
+            {"has_conduction_delay": True},
+            {"has_quantitative_value": True},
+            {"live_solver_eligible": True},
+        ):
+            with pytest.raises(ValueError):
+                _build_gf_output(**override)
+
+    def test_11_the_gf_output_must_keep_its_type_and_owner(self):
+        """The output type and the owning layer are not negotiable."""
+        with pytest.raises(ValueError):
+            _build_gf_output(output_type="continuous_motor_command")
+        with pytest.raises(ValueError):
+            _build_gf_output(target_layer="3.0D-7X")
+        with pytest.raises(ValueError):
+            _build_gf_output(behavioural_evidence="")
+        with pytest.raises(ValueError):
+            _build_gf_output(source_references=())
+
+    def test_12_the_timing_finding_is_not_a_spike_mechanism(self):
+        """The limitations prose says so explicitly."""
+        note = self._flat(
+            _seven_z_spec().gf_output("gf_action_potential_timing").limitations()
+        )
+        for claim in (
+            "SPIKE TIMING, NOT A SPIKE MECHANISM",
+            "NO SPIKE MECHANISM EXISTS HERE",
+            "may NOT be inferred from it",
+        ):
+            assert claim in note, claim
+        assert "NO PARAMETER IS DUPLICATED" in note
+
+    # --- 13-16: behavioural state is a boundary, not a gate ------------------
+
+    def test_13_both_behavioural_states_are_recorded(self):
+        """Perched/non-flying and flying are both explicit records."""
+        spec = self._spec()
+        assert spec.state_ids() == (
+            STATE_PERCHED_NON_FLYING, STATE_FLYING,
+        )
+        for state_id in spec.state_ids():
+            record = spec.behavioral_state(state_id)
+            assert record.state_kind == "behavioural_context"
+            assert record.coupling_to_visual_input
+            assert record.gating_is_qualitative is True
+            assert record.has_quantitative_value is False
+            assert "PMC7444277" in " ".join(record.source_references)
+
+    def test_14_no_gating_function_exists_on_a_state(self):
+        """A gate, a gate parameter and a transition probability are refused."""
+        for override in (
+            {"gating_function_available": True},
+            {"gating_is_qualitative": False},
+            {"has_transition_probability": True},
+            {"has_numeric_gate_parameter": True},
+            {"live_solver_eligible": True},
+        ):
+            with pytest.raises(ValueError):
+                _build_state(**override)
+
+    def test_15_a_state_must_state_its_coupling_and_evidence(self):
+        """A state with no coupling statement and no source is rejected."""
+        with pytest.raises(ValueError):
+            _build_state(coupling_to_visual_input="")
+        with pytest.raises(ValueError):
+            _build_state(source_references=())
+        with pytest.raises(ValueError):
+            _build_state(state_kind="synaptic_mechanism")
+
+    def test_16_the_flying_state_does_not_inherit_a_measured_gate(self):
+        """The DNp07 / DNp10 mechanisms are not transferred to the GF."""
+        flying = self._flat(
+            self._spec().behavioral_state(STATE_FLYING).limitations()
+        )
+        assert "BEHAVIOURAL CONTEXT, NOT A GATING FUNCTION" in flying
+        assert "NO STATE-DEPENDENT GATING FUNCTION EXISTS" in flying
+        assert "transferred to the GF as one" in flying
+
+    # --- 17-20: the motor routes are links, not parameters -------------------
+
+    def test_17_the_jump_route_is_named(self):
+        """GF -> TTMn -> TTM links 7W and 7X identifiers and no value."""
+        spec = self._spec()
+        route = spec.route(ROUTE_TTM_JUMP)
+        assert route.route_label == "GF -> TTMn -> TTM"
+        assert route.descending_neurons == ("GF", "TTMn")
+        assert route.terminal_muscle == "TTM"
+        assert route.linked_7w_connection_ids == ("GF_TTMn",)
+        assert route.linked_7x_output_id == "TTMn_TTM"
+        assert route.has_quantitative_parameter is False
+        assert route.stage_count == 3
+        assert route.live_solver_eligible is False
+
+    def test_18_the_flight_route_is_named(self):
+        """GF -> PSI -> DLMn -> DLM links 7W and 7X identifiers."""
+        spec = self._spec()
+        route = spec.route(ROUTE_DLM_FLIGHT)
+        assert route.route_label == "GF -> PSI -> DLMn -> DLM"
+        assert route.descending_neurons == ("GF", "PSI", "DLMn")
+        assert route.terminal_muscle == "DLM"
+        assert route.linked_7w_connection_ids == ("GF_PSI", "PSI_DLMn")
+        assert route.linked_7x_output_id == "DLMn_DLM"
+        assert route.has_quantitative_parameter is False
+        assert route.stage_count == 4
+
+    def test_19_a_route_refuses_to_own_or_carry_a_parameter(self):
+        """No route may duplicate a 7V, 7W or 7X quantity."""
+        for override in (
+            {"owns_synaptic_parameters": True},
+            {"owns_nmj_quantities": True},
+            {"carries_a_synaptic_parameter": True},
+            {"live_solver_eligible": True},
+        ):
+            with pytest.raises(ValueError):
+                _build_route(**override)
+        # And the record type has no field in which a value could be placed.
+        import dataclasses
+
+        from biological_brain.sensorimotor_integration import MotorPathwayRoute
+
+        field_names = {f.name for f in dataclasses.fields(MotorPathwayRoute)}
+        for forbidden in (
+            "value", "value_low", "value_high", "unit", "conductance",
+            "peak_conductance", "reversal_potential", "weight",
+        ):
+            assert forbidden not in field_names, forbidden
+
+    def test_20_a_route_must_keep_its_links_and_evidence(self):
+        """Broken 7W / 7X links and missing sources are rejected."""
+        with pytest.raises(ValueError):
+            _build_route(linked_7w_connection_ids=())
+        with pytest.raises(ValueError):
+            _build_route(linked_7w_target_ids=())
+        with pytest.raises(ValueError):
+            _build_route(linked_7x_output_id="")
+        with pytest.raises(ValueError):
+            _build_route(behavioural_role="")
+        with pytest.raises(ValueError):
+            _build_route(source_references=())
+
+    # --- 21-24: the short / long distinction is structural -------------------
+
+    def test_21_the_mode_distinction_is_structural(self):
+        """Short mode via the GF, long mode via parallel circuitry."""
+        spec = self._spec()
+        record = spec.distinction(ESCAPE_MODE_DISTINCTION)
+        assert "SHORT-MODE" in record.gf_pathway_role
+        assert "GF-INDEPENDENT" in record.parallel_pathway_role
+        assert "LONG-MODE" in record.parallel_pathway_role
+        assert record.relative_timing_is_biologically_relevant is True
+        assert record.has_numeric_boundary is False
+        assert "30827912" in " ".join(record.source_references)
+
+    def test_22_no_numeric_decision_boundary_can_be_set(self):
+        """Threshold, timing boundary and probability are structurally None."""
+        record = self._spec().distinction(ESCAPE_MODE_DISTINCTION)
+        for field_name in (
+            "decision_threshold", "timing_boundary_ms",
+            "mode_selection_probability",
+        ):
+            assert getattr(record, field_name) is None, field_name
+        for override in (
+            {"decision_threshold": 0.5},
+            {"timing_boundary_ms": 5.0},
+            {"mode_selection_probability": 0.5},
+            {"is_numeric_decision_boundary": True},
+            {"relative_timing_is_biologically_relevant": False},
+            {"live_solver_eligible": True},
+        ):
+            with pytest.raises(ValueError):
+                _build_distinction(**override)
+
+    def test_23_the_7w_latencies_are_not_a_decision_boundary(self):
+        """Pathway measurements are referenced, never combined into a rule."""
+        note = self._flat(
+            self._spec().distinction(ESCAPE_MODE_DISTINCTION).limitations()
+        )
+        assert "QUALITATIVE DISTINCTION, NOT A DECISION RULE" in note
+        assert "NO QUANTITATIVE DECISION BOUNDARY EXISTS" in note
+        assert "never copied or combined into one" in note
+        # And the 7W latencies are explicitly excluded as a decision rule.
+        excluded = self._flat(
+            self._spec().unavailable(
+                "short_vs_long_decision_boundary"
+            ).limitations()
+        )
+        assert "PATHWAY RESPONSE MEASUREMENTS" in excluded
+        assert "the difference between them" in excluded
+
+    def test_24_a_distinction_must_state_its_structure_and_evidence(self):
+        """An empty parallel role or a missing source is rejected."""
+        with pytest.raises(ValueError):
+            _build_distinction(parallel_pathway_role="")
+        with pytest.raises(ValueError):
+            _build_distinction(source_references=())
+
+    # --- 25-28: the nine unavailable integration quantities ------------------
+
+    def test_25_all_nine_integration_quantities_are_unavailable(self):
+        """Nine required-but-unavailable quantities, every one empty."""
+        spec = self._spec()
+        assert len(spec.unavailable_integration_quantities) == 9
+        assert spec.unavailable_ids() == (
+            "gf_spike_threshold", "gf_sensory_integration_coefficients",
+            "gf_sensory_synaptic_conductances",
+            "gf_sensory_synaptic_kinetics", "gf_spike_initiation_dynamics",
+            "state_dependent_gf_gating_function",
+            "short_vs_long_decision_boundary", "motor_command_probability",
+            "behavioural_state_transition_model",
+        )
+        for quantity_id in spec.unavailable_ids():
+            record = spec.unavailable(quantity_id)
+            assert record.value is None, quantity_id
+            assert record.value_is_populated is False
+            assert record.live_solver_eligible is False
+            assert record.why_required
+            assert record.why_unavailable
+
+    def test_26_an_unavailable_quantity_cannot_be_populated(self):
+        """Neither a value nor live eligibility can be set on an empty record."""
+        with pytest.raises(ValueError):
+            _build_unavailable(value=1.0)
+        with pytest.raises(ValueError):
+            _build_unavailable(live_solver_eligible=True)
+        with pytest.raises(ValueError):
+            _build_unavailable(why_required="")
+        with pytest.raises(ValueError):
+            _build_unavailable(why_unavailable="")
+
+    def test_27_no_measured_rate_is_transferred_to_the_gf(self):
+        """The limitations prose refuses every inheritance route."""
+        for quantity_id in (
+            "state_dependent_gf_gating_function",
+            "short_vs_long_decision_boundary", "motor_command_probability",
+        ):
+            record = self._spec().unavailable(quantity_id)
+            note = self._flat(record.limitations())
+            assert "stays empty" in note, quantity_id
+            assert "NOT filled with a generic Drosophila value" in note
+            assert record.must_not_be_inherited_from
+            assert "NOT inherited from" in note
+
+    def test_28_the_gf_conductances_link_to_7y_not_to_7v(self):
+        """The GF sensory conductances belong to 3.0D-7Y and stay there."""
+        spec = self._spec()
+        record = spec.unavailable("gf_sensory_synaptic_conductances")
+        assert record.linked_7y_quantity_id in get_looming_abstraction(
+        ).unavailable_ids()
+        # The central GF-TTMn peak conductance is NOT a sensory conductance.
+        assert "CENTRAL GF-TTMn" in record.must_not_be_inherited_from
+        # No model coefficient is claimed to exist at 7Y as a quantity id.
+        coefficients = spec.unavailable("gf_sensory_integration_coefficients")
+        assert coefficients.linked_7y_quantity_id is None
+        assert "lplc2_angular_size_term" in coefficients.why_unavailable
+        kinetics = spec.unavailable("gf_sensory_synaptic_kinetics")
+        assert kinetics.linked_7y_quantity_id is None
+
+    # --- 29-32: the validation targets ---------------------------------------
+
+    def test_29_the_validation_targets_are_qualitative(self):
+        """Every target is a statement, and none is a numeric decision target."""
+        spec = self._spec()
+        assert len(spec.validation_targets) == 8
+        for target_id in spec.target_ids():
+            record = spec.target(target_id)
+            assert record.carries_a_value is False
+            assert record.is_numeric_decision_target is False
+            assert record.target_kind in (
+                "qualitative_observation", "structural_constraint",
+            )
+            assert record.statement
+            assert record.observable
+            assert record.source_references
+
+    def test_30_a_target_cannot_become_a_numeric_decision_target(self):
+        """Nor can it be marked live."""
+        with pytest.raises(ValueError):
+            _build_seven_z_target(is_numeric_decision_target=True)
+        with pytest.raises(ValueError):
+            _build_seven_z_target(live_solver_eligible=True)
+        with pytest.raises(ValueError):
+            _build_seven_z_target(target_kind="numeric_threshold")
+        with pytest.raises(ValueError):
+            _build_seven_z_target(statement="")
+        with pytest.raises(ValueError):
+            _build_seven_z_target(source_references=())
+
+    def test_31_the_negative_target_records_the_absence_of_a_rule(self):
+        """The project asserts it has no decision rule, by construction."""
+        spec = self._spec()
+        record = spec.target("no_invented_quantitative_decision_rule_exists")
+        note = self._flat(record.limitations())
+        assert "NEGATIVE target" in note
+        assert "by construction rather than by convention" in note
+        assert "NO QUANTITATIVE DECISION BOUNDARY EXISTS" in note
+        assert record.requires_record == "decision boundary fields"
+
+    def test_32_the_state_target_requires_both_states(self):
+        """Behavioural state is an explicit record, not an implicit constant."""
+        spec = self._spec()
+        record = spec.target("behavioural_state_is_represented_explicitly")
+        assert len(spec.behavioral_states) == 2
+        note = self._flat(record.limitations())
+        assert "EXPERIMENTALLY SUPPORTED" in note
+        assert "no gating function is" in note
+
+    # --- 33-36: the chain ---------------------------------------------------
+
+    def test_33_the_chain_names_every_stage_with_an_owner(self):
+        """Six stages, one owner each, and 7Y / 7W / 7X own three of them."""
+        spec = self._spec()
+        assert len(spec.chains) == 1
+        chain = spec.chains[0]
+        assert chain.stage_count == 6
+        assert chain.stages == (
+            "external looming stimulus",
+            "3.0D-7Y visual feature abstraction",
+            "GF sensory integration boundary",
+            "GF behavioral-output decision boundary",
+            "3.0D-7W central GFS abstraction",
+            "3.0D-7X motor / NMJ output abstraction",
+        )
+        assert chain.stage_owners == (
+            "external stimulus", "3.0D-7Y", "3.0D-7Z boundary",
+            "3.0D-7Z boundary", "3.0D-7W", "3.0D-7X",
+        )
+        assert chain.owner_of("3.0D-7W central GFS abstraction") == "3.0D-7W"
+        with pytest.raises(KeyError):
+            chain.owner_of("no such stage")
+
+    def test_34_the_chain_carries_no_weight_delay_or_probability(self):
+        """No stage-to-stage quantity exists."""
+        for override in (
+            {"carries_weights": True},
+            {"carries_delays": True},
+            {"carries_probabilities": True},
+            {"live_solver_eligible": True},
+        ):
+            with pytest.raises(ValueError):
+                _build_chain(**override)
+        note = self._flat(_seven_z_spec().chains[0].limitations())
+        assert "A SPECIFICATION CHAIN, NOT A SIMULATOR" in note
+        assert "NO PARAMETER IS DUPLICATED" in note
+
+    def test_35_the_chain_must_keep_every_stage_and_owner(self):
+        """A missing stage, a ragged owner list and a missing 7W are refused."""
+        with pytest.raises(ValueError):
+            _build_chain(stages=("external looming stimulus",))
+        with pytest.raises(ValueError):
+            _build_chain(stage_owners=("external stimulus",))
+        with pytest.raises(ValueError):
+            _build_chain(
+                stage_owners=(
+                    "external stimulus", "3.0D-7Y", "3.0D-7Z boundary",
+                    "3.0D-7Z boundary", "3.0D-7Z", "3.0D-7X",
+                ),
+            )
+        with pytest.raises(ValueError):
+            _build_chain(source_references=())
+
+    def test_36_a_chain_stage_must_be_a_name(self):
+        """Stages are strings, never simulated components."""
+        with pytest.raises(ValueError):
+            _build_chain(stages=(
+                "external looming stimulus",
+                "3.0D-7Y visual feature abstraction",
+                "GF sensory integration boundary",
+                "GF behavioral-output decision boundary",
+                "3.0D-7W central GFS abstraction",
+                "3.0D-7X motor / NMJ output abstraction",
+                object(),
+            ))
+
+    # --- 37-40: the layer-level boundary predicates --------------------------
+
+    def test_37_every_any_predicate_is_false(self):
+        """The layer claims nothing, so every predicate reports nothing."""
+        spec = self._spec()
+        for name in dir(spec):
+            if not name.startswith("any_"):
+                continue
+            assert getattr(spec, name)() is False, name
+
+    def test_38_nothing_in_the_layer_is_live_solver_eligible(self):
+        """Not the layer, not a record, not the mechanism predicates."""
+        spec = self._spec()
+        assert spec.live_solver_eligible is False
+        assert spec.any_live_solver_eligible() is False
+        assert spec.any_mechanistically_ready() is False
+        assert spec.any_hodgkin_huxley_kinetics() is False
+        assert spec.any_synaptic_current() is False
+        assert spec.any_conductance() is False
+        assert spec.any_membrane_voltage() is False
+        assert spec.any_spike_mechanism() is False
+        with pytest.raises(ValueError):
+            _build_seven_z_layer(live_solver_eligible=True)
+
+    def test_39_no_decision_rule_gating_or_populated_quantity_exists(self):
+        """The decision, gate and quantity predicates are all false."""
+        spec = self._spec()
+        assert spec.any_numeric_decision_boundary() is False
+        assert spec.any_numeric_decision_target() is False
+        assert spec.any_gating_function() is False
+        assert spec.any_transition_probability() is False
+        assert spec.any_populated_integration_quantity() is False
+        assert spec.any_target_value() is False
+        assert spec.any_chain_weight() is False
+        assert spec.any_duplicated_parameter() is False
+        assert spec.any_timestep_policy_change() is False
+        assert spec.any_feature_as_membrane_variable() is False
+
+    def test_40_the_layer_needs_inputs_states_and_evidence(self):
+        """An empty chain cannot be constructed at all."""
+        with pytest.raises(ValueError):
+            _build_seven_z_layer(sensorimotor_inputs=())
+        with pytest.raises(ValueError):
+            _build_seven_z_layer(behavioral_states=())
+
+    # --- 41-46: cross-layer ownership ---------------------------------------
+
+    def test_41_every_referenced_7y_7w_and_7x_identifier_exists(self):
+        """The layer verifies its references at construction."""
+        spec = self._spec()
+        seven_y = get_looming_abstraction()
+        seven_w = get_synaptic_abstraction()
+        seven_x = get_motor_output_abstraction()
+        seven_w_targets = {
+            target.target_id for target in (
+                *seven_w.validation_targets, *seven_w.following_targets
+            )
+        }
+        seven_w_connections = set(seven_w.connection_ids())
+        for feature_id in spec.referenced_7y_records:
+            assert feature_id in (
+                *seven_y.feature_ids(), *seven_y.neuron_classes(),
+                *seven_y.term_ids(),
+            ), feature_id
+        for target_id in spec.referenced_7w_targets:
+            assert target_id in seven_w_targets, target_id
+        for output_id in spec.referenced_7x_outputs:
+            assert output_id in seven_x.output_ids(), output_id
+        for route in spec.motor_routes:
+            for connection_id in route.linked_7w_connection_ids:
+                assert connection_id in seven_w_connections, connection_id
+            assert route.linked_7x_output_id in seven_x.output_ids()
+
+    def test_42_a_broken_7w_reference_fails_loudly(self):
+        """The verification is real, not decorative."""
+        from biological_brain.sensorimotor_integration import MotorPathwayRoute
+
+        spec = _seven_z_spec()
+        route = spec.route(ROUTE_TTM_JUMP)
+        broken = MotorPathwayRoute(**{
+            **{f: getattr(route, f) for f in route.__dataclass_fields__},
+            "linked_7w_target_ids": ("no_such_7w_target",),
+        })
+        layer = _build_seven_z_layer(motor_routes=(broken,))
+        with pytest.raises(ValueError):
+            layer.verifies_against_7y_7w_7x()
+
+    def test_43_a_broken_7x_reference_fails_loudly(self):
+        """A 7X output that does not exist is rejected too."""
+        from biological_brain.sensorimotor_integration import MotorPathwayRoute
+
+        spec = _seven_z_spec()
+        route = spec.route(ROUTE_TTM_JUMP)
+        broken = MotorPathwayRoute(**{
+            **{f: getattr(route, f) for f in route.__dataclass_fields__},
+            "linked_7x_output_id": "no_such_7x_output",
+        })
+        layer = _build_seven_z_layer(motor_routes=(broken,))
+        with pytest.raises(ValueError):
+            layer.verifies_against_7y_7w_7x()
+
+    def test_44_a_broken_7y_feature_reference_fails_loudly(self):
+        """A 7Y feature that does not exist is rejected."""
+        from biological_brain.sensorimotor_integration import (
+            SensorimotorInputRecord,
+        )
+
+        spec = _seven_z_spec()
+        record = spec.input_record("angular_velocity_to_gf")
+        broken = SensorimotorInputRecord(**{
+            **{f: getattr(record, f) for f in record.__dataclass_fields__},
+            "feature_id": "no_such_feature",
+        })
+        layer = _build_seven_z_layer(sensorimotor_inputs=(broken,))
+        with pytest.raises(ValueError):
+            layer.verifies_against_7y_7w_7x()
+
+    def test_45_7v_7w_and_7x_still_own_their_own_values(self):
+        """The referenced layers are unchanged by 3.0D-7Z."""
+        seven_v = get_synaptic_mechanism_registry()
+        seven_w = get_synaptic_abstraction()
+        seven_x = get_motor_output_abstraction()
+        seven_y = get_looming_abstraction()
+        assert seven_v.any_live_solver_eligible() is False
+        assert seven_v.any_receptor_kinetics() is False
+        assert seven_w.any_live_solver_eligible() is False
+        assert seven_w.any_timestep_claim() is False
+        assert seven_x.any_live_solver_eligible() is False
+        assert seven_x.any_populated_nmj_quantity() is False
+        assert seven_y.any_live_solver_eligible() is False
+        assert seven_y.any_model_coefficient() is False
+        # 7W still owns its own numbers; 7Z copies none of them.
+        assert seven_w.parameter("chemical_peak_conductance").value == 80.0
+        source = self._module_source()
+        assert "80.0" not in source
+        assert "0.15" not in source
+
+    def test_46_the_layer_references_7v_7w_7x_and_7y_owners_by_name(self):
+        """The scope note names each owner explicitly."""
+        note = self._flat_scope()
+        for claim in (
+            "SENSORIMOTOR INPUT IS OWNED BY 3.0D-7Y",
+            "THE GF COMBINATION IS QUALITATIVE",
+            "THE INPUT IS SPATIALLY DISTRIBUTED, NOT WEIGHTED",
+            "THE GF OUTPUT IS SPIKE TIMING, NOT A SPIKE MECHANISM",
+            "BEHAVIORAL STATE IS AN EXPLICIT BOUNDARY",
+            "THE MOTOR ROUTES ARE NAMED LINKS",
+            "NO SYNAPTIC OR NMJ PARAMETER IS COPIED",
+            "THE SHORT / LONG DISTINCTION IS STRUCTURAL",
+            "NINE INTEGRATION QUANTITIES ARE REQUIRED AND UNAVAILABLE",
+            "3.0D-7V, 7W, 7X and 7Y REMAIN THE OWNERS",
+        ):
+            assert claim in note, claim
+        assert "does NOT modify 3.0D-7U, 3.0D-7V, 3.0D-7W, 3.0D-7X or " \
+            "3.0D-7Y" in note
+        assert "SPECIFICATION ONLY" in self._flat(self._spec().source)
+
+    # --- 47-52: hard boundaries in code and in prose ------------------------
+
+    def test_47_the_module_imports_no_mechanism_or_numerical_dependency(self):
+        """7Z imports provenance and the evidence enum, nothing else."""
+        import ast
+
+        tree = ast.parse(self._module_source())
+        imported = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                imported.update(alias.name for alias in node.names)
+            elif isinstance(node, ast.ImportFrom):
+                imported.add(node.module or "")
+        for banned in (
+            "numpy", "scipy", "math", "random", "torch",
+            "dynamics.passive_cable", "passive_cable", "active_mechanism_registry",
+            "morphology", "gfs_morphology", "neural_engine",
+        ):
+            assert banned not in imported, banned
+        # The 7Y / 7W / 7X imports live inside the lazy verification method, not
+        # at module scope, so 7Z never becomes an import-time dependency.
+        top_level = {
+            node.module or ""
+            for node in tree.body
+            if isinstance(node, (ast.Import, ast.ImportFrom))
+        }
+        assert top_level == {"dataclasses", "typing", "provenance",
+                             "synaptic_mechanism_registry"}, top_level
+
+    def test_48_no_mechanism_or_equation_identifier_appears_at_runtime(self):
+        """The AST names no conductance, channel, current or equation symbol."""
+        import ast
+
+        tree = ast.parse(self._module_source())
+        banned = (
+            "hodgkin_huxley", "hodgkin_huxley", "membrane_potential",
+            "resting_potential", "threshold_current", "conductance_uh",
+            "activation", "inactivation", "voltage_clamp", "solve_ivp",
+            "numpy", "scipy",
+        )
+        identifiers = {
+            node.id for node in ast.walk(tree) if isinstance(node, ast.Name)
+        } | {
+            node.attr for node in ast.walk(tree) if isinstance(node, ast.Attribute)
+        }
+        for identifier in identifiers:
+            for token in banned:
+                assert token not in identifier, identifier
+
+    def test_49_the_timestep_policy_is_untouched(self):
+        """7Z neither changes nor reads a solver timestep as a policy."""
+        policy = PASSIVE_CABLE_NUMERICAL_POLICY
+        assert policy.default_timestep_ms == 0.01
+        assert policy.max_timestep_ms == 0.01
+        assert _seven_z_spec().any_timestep_policy_change() is False
+        source = self._module_source()
+        for banned in ("timestep_ms", "time_step", "dt=", "PASSIVE_CABLE"):
+            assert banned not in source, banned
+
+    def test_50_the_escape_circuit_configuration_is_untouched(self):
+        """Adding 7Z neither reads nor writes the circuit configuration."""
+        import ast
+
+        assert BIOLOGICAL_CIRCUITS["escape"] is False
+        assert MODEL_NAME_LIF_VOLTAGE
+        tree = ast.parse(self._module_source())
+        identifiers = {
+            node.id for node in ast.walk(tree) if isinstance(node, ast.Name)
+        } | {
+            node.attr for node in ast.walk(tree)
+            if isinstance(node, ast.Attribute)
+        } | {
+            alias.name for node in ast.walk(tree)
+            if isinstance(node, (ast.Import, ast.ImportFrom))
+            for alias in node.names
+        }
+        for banned in (
+            "BIOLOGICAL_CIRCUITS", "BiologicalMode", "LOOMING_MAP",
+            "NeuralEngine", "assign", "activate", "solver", "CIRCUIT_DIR",
+        ):
+            assert banned not in identifiers, banned
+        # The module defines no simulation entry point at all.
+        defined = {
+            node.name for node in tree.body
+            if isinstance(node, (ast.FunctionDef, ast.ClassDef))
+        }
+        for banned in ("step", "simulate", "run", "solve", "advance"):
+            assert banned not in defined, banned
+
+    def test_51_the_module_declares_its_own_boundaries(self):
+        """The docstring documents every refusal in prose."""
+        import inspect
+
+        from biological_brain import sensorimotor_integration as module
+
+        doc = self._flat(inspect.getdoc(module))
+        for claim in (
+            "does NOT implement Hodgkin-Huxley dynamics",
+            "does NOT implement a synaptic current at any synapse in the chain",
+            "does NOT implement a GF spike generator, spike waveform, "
+            "threshold voltage",
+            "does NOT implement a state-dependent gating function",
+            "does NOT create a numeric short-versus-long decision boundary",
+            "does NOT duplicate a 3.0D-7W validation number",
+            "does NOT implement a membrane voltage, conductance or reversal "
+            "potential",
+            "does NOT interpret the 7Y stimulus features as membrane variables",
+            "does NOT introduce a timestep",
+            "does NOT import, modify or get imported by any passive-solver or",
+        ):
+            assert claim in doc, claim
+        assert "SPECIFICATION ONLY" in self._flat(
+            inspect.getdoc(module.get_sensorimotor_integration)
+        )
+
+    def test_52_the_layer_cites_its_own_sources(self):
+        """Every claim points at a named source."""
+        spec = self._spec()
+        assert spec.model_id == "ModelDBRepository/245415"
+        assert "30827912" in spec.model_citation
+        joined = " ".join(
+            reference
+            for record in (
+                *spec.sensorimotor_inputs,
+                *spec.gf_integration_boundaries,
+                *spec.gf_outputs,
+                *spec.behavioral_states,
+                *spec.motor_routes,
+                *spec.escape_mode_distinctions,
+                *spec.validation_targets,
+                *spec.chains,
+            )
+            for reference in record.source_references
+        )
+        for reference in (
+            "30827912", "PMC7444277", "PMC6469880", "PMC3182647",
+            "PMC10263144", "245415",
+        ):
+            assert reference in joined, reference
+        # The paywall and the non-transfer boundaries are recorded, not glossed.
+        assert "behind a subscription" in spec.model_citation
+        assert "bilateral or azimuthal weighting function is created" in (
+            self._flat_scope()
+        )
+
+
+# --- 3.0D-8A: the live GF active mechanism ----------------------------------
+
+
+def _eight_a_model(**overrides):
+    from biological_brain.dynamics.gf_active import GFActiveAxonModel
+
+    return GFActiveAxonModel(**overrides)
+
+
+def _eight_a_gf():
+    """The existing 3.0D-7G GF compartment model, on the 7F passive profile."""
+    from biological_brain.morphology_builder import build_gfs_compartment_models
+
+    model = build_gfs_compartment_models()["GF"]
+    model.passive_profile_name = PROFILE_AUGUSTIN_2019_GFS_PASSIVE
+    return model
+
+
+class TestGFAxonActiveMechanism:
+    """3.0D-8A: vendored nat/nap/k active dynamics on the GF axon.
+
+    THE FIRST LIVE DYNAMICS LAYER. 3.0D-7G integrated a passive cable; 8A
+    adds the three active mechanisms of the published Augustin et al. 2019
+    giant fiber model, transcribed from the vendored ModelDB 245415 source, on
+    top of that existing passive infrastructure and changes nothing about it.
+
+    The things most easily assumed rather than checked here are: that the
+    transcribed rate equations actually match the vendored ``.mod`` files, that
+    the applied conductances are the 7S authorized ones and not a second copy,
+    that ``gap2.mod`` and the other known-but-unmodelled channels stay out,
+    that the initial state is a declared rest voltage rather than an invented
+    one, that the "action potential" test is a waveform criterion rather than a
+    smuggled-in biological threshold, that the timestep policy is reused rather
+    than widened, and that the semi-implicit approximation is labelled as such
+    instead of being presented as a fully implicit solve.
+    """
+
+    # --- 1: equation provenance against the vendored .mod files -------------
+
+    def test_01_rate_equations_match_the_vendored_mod_files(self):
+        """Every rate expression is the verbatim .mod expression, not a fit."""
+        import os
+        import re
+
+        import biological_brain
+
+        channels = os.path.join(
+            os.path.dirname(biological_brain.__file__),
+            "data", "modeldb_245415", "channels",
+        )
+        nat = _eight_a_model().nat_rates
+        nap = _eight_a_model().nap_rates
+        k = _eight_a_model().k_rates
+
+        with open(os.path.join(channels, "nat.mod"), encoding="utf-8") as fh:
+            nat_text = " ".join(fh.read().split())
+        for verbatim in (
+            "minf = 1/(1+exp((vm-v1_2m)/km))",
+            "mtau = 0.13 + 3.43/(1+exp((vm+45.35)/5.98))",
+            "hinf = 1/(1+exp((vm-v1_2h)/kh))",
+            "htau = 0.36 + exp((vm+20.65)/-10.47)",
+        ):
+            assert verbatim in nat_text, verbatim
+        # The two 1e-7 floors are part of the source and are preserved.
+        assert nat_text.count("if (mtau<1e-7)") == 1
+        assert nat_text.count("if (htau<1e-7)") == 1
+        assert nat.mtau_floor == 1e-7
+
+        for name, rates in (("nap.mod", nap), ("k.mod", k)):
+            with open(os.path.join(channels, name), encoding="utf-8") as fh:
+                text = " ".join(fh.read().split())
+            assert "minf = 1/(1+exp((vm-v1_2m)/km))" in text, name
+            assert "mtau = 1" in text, name
+            # Neither nap nor k has an inactivation gate, exactly as in source.
+            assert "hinf" not in text, name
+            assert rates.tau_ms(-85.0) == 1.0
+            assert rates.tau_ms(40.0) == 1.0
+
+        # The transcription reproduces the source numerically. nat.mod's slope
+        # km is NEGATIVE (-8.92), which the verbatim expression reproduces
+        # because the sign lives in the parameter, not in the formula.
+        import math
+
+        model = _eight_a_model()
+        for v in (-85.0, -65.0, -20.0, 0.0, 30.0, 65.0):
+            assert model.nat_rates.minf(v) == pytest.approx(
+                1.0 / (1.0 + math.exp((v - model.nat_rates.v1_2m)
+                                      / model.nat_rates.km)), rel=1e-12
+            )
+            assert model.nat_rates.mtau_ms(v) == pytest.approx(
+                0.13 + 3.43 / (1.0 + math.exp((v + 45.35) / 5.98)), rel=1e-12
+            )
+            assert model.nat_rates.hinf(v) == pytest.approx(
+                1.0 / (1.0 + math.exp((v - model.nat_rates.v1_2h)
+                                      / model.nat_rates.kh)), rel=1e-12
+            )
+            assert model.nat_rates.htau_ms(v) == pytest.approx(
+                0.36 + math.exp((v + 20.65) / -10.47), rel=1e-12
+            )
+        # The source constants themselves, which are NOT the classic
+        # Hodgkin-Huxley ones, so a silent substitution would fail here.
+        assert model.nat_rates.v1_2m == -29.13
+        assert model.nat_rates.km == -8.92
+        assert model.nat_rates.v1_2h == -47.0
+        assert model.nat_rates.kh == 5.0
+        assert model.nat_rates.v1_2m != -40.0
+        assert model.nat_rates.km != 0.0
+        assert model.nap_rates.v1_2m == -48.77
+        assert model.nap_rates.km == -3.68
+        assert model.k_rates.v1_2m == -12.85
+        assert model.k_rates.km == -19.91
+        # nap.mod and k.mod are transcribed from their own files, not copied
+        # from nat.mod: the three mechanisms share no slope parameter.
+        assert model.nap_rates.v1_2m != model.nat_rates.v1_2m
+        assert model.k_rates.v1_2m != model.nap_rates.v1_2m
+        # The negative slope means activation RISES with voltage, and a
+        # positive-slope transcription would invert every one of these.
+        assert model.nat_rates.minf(0.0) > model.nat_rates.minf(-85.0)
+        assert model.k_rates.minf(0.0) > model.k_rates.minf(-85.0)
+        assert re.search(r"gna\s*=\s*gbar\*m\*m\*m\*h", nat_text, re.I)
+
+    def test_02_conductance_and_current_expressions_come_from_the_registry(self):
+        """g_Nat is m^3*h, g_Nap and g_K are m, and every expression is 7T."""
+        import re
+
+        model = _eight_a_model()
+        records = {r.mechanism_name: r for r in model.mechanism_records()}
+        assert set(records) == {"nat", "nap", "k"}
+        assert set(records["nat"].states) == {"m", "h"}
+        assert set(records["nap"].states) == {"m"}
+        assert set(records["k"].states) == {"m"}
+        # Only nat has an inactivation gate; nap and k do not.
+        assert records["nat"].has_inactivation_gate is True
+        assert records["nap"].has_inactivation_gate is False
+        assert records["k"].has_inactivation_gate is False
+        for name, record in records.items():
+            assert record.solve_method == "cnexp"
+            assert record.instantiated_in_gf is True
+            assert record.source_file.endswith(f"{name}.mod")
+            assert "245415" in record.source_url
+            assert record.equations
+        # nat's conductance is the source's gbar*m*m*m*h, i.e. m^3*h; nap and
+        # k are gbar*m, i.e. no inactivation at all.
+        assert re.search(
+            r"gna\s*=\s*gbar\*m\*m\*m\*h", records["nat"].conductance_expression,
+            re.I,
+        )
+        assert re.search(
+            r"gna\s*=\s*gbar\*m$", records["nap"].conductance_expression.strip(),
+            re.I,
+        )
+        assert re.search(
+            r"gk\s*=\s*gbar\*m$", records["k"].conductance_expression.strip(), re.I
+        )
+        # The current expressions use the same reversal ions as the source.
+        assert "ena" in records["nat"].current_expression
+        assert "ena" in records["nap"].current_expression
+        assert "ek" in records["k"].current_expression
+        # The three mechanisms are read from three DIFFERENT .mod files.
+        assert len({record.source_file for record in records.values()}) == 3
+
+    def test_03_the_gate_advance_is_the_exact_ode_solution_not_euler(self):
+        """The gating update solves x' = (x_inf - x)/tau exactly (cnexp)."""
+        from biological_brain.dynamics.gf_active import _advance_linear
+
+        import math
+
+        tau, dt, x0, target = 2.0, 0.01, 0.3, 0.7
+        expected = target + (x0 - target) * math.exp(-dt / tau)
+        assert _advance_linear(target, x0, tau, dt) == pytest.approx(
+            expected, rel=1e-14
+        )
+        # Forward Euler at the same dt is measurably different, so this is a
+        # real check of the scheme and not of the arithmetic.
+        euler = x0 + dt * (target - x0) / tau
+        assert _advance_linear(target, x0, tau, dt) != pytest.approx(euler, abs=1e-6)
+        # The EXACT solution over a halved dt moves strictly LESS than over the
+        # full dt, monotonically approaching the true value at t=dt. That is
+        # what "exact per step" means: a smaller step is not a different answer.
+        full = _advance_linear(target, x0, tau, dt)
+        half = _advance_linear(target, x0, tau, dt / 2.0)
+        assert x0 < half < full < target
+        assert half == pytest.approx(
+            target + (x0 - target) * math.exp(-dt / (2.0 * tau)), rel=1e-14
+        )
+        # A zero time constant is a numerical error, not a silent no-op.
+        with pytest.raises(Exception):
+            _advance_linear(target, x0, 0.0, dt)
+
+    # --- 2: parameter authorization ----------------------------------------
+
+    def test_04_applied_conductances_are_the_authorized_7s_values(self):
+        """The applied values are the 7S ones, in S/cm2, with no second copy."""
+        network = _eight_a_model().prepare(_eight_a_gf(), segment_count=1)
+        applied = {p.name: p for p in network.applied_parameters}
+        assert set(applied) == {"g_Na", "g_Nap", "g_K", "E_Na", "E_K"}
+        # Exactly one conversion, applied once and recorded.
+        assert applied["g_Na"].value == pytest.approx(0.3)
+        assert applied["g_Nap"].value == pytest.approx(0.00011)
+        assert applied["g_K"].value == pytest.approx(0.01)
+        assert applied["g_Na"].unit == "S/cm2"
+        assert applied["E_Na"].value == pytest.approx(65.0)
+        assert applied["E_K"].value == pytest.approx(-74.0)
+        assert applied["E_Na"].unit == "mV"
+        for record in applied.values():
+            assert record.is_experimental_gf_measurement is False
+            assert record.is_model_reproduction_parameter is True
+            assert record.profile_name == PROFILE_AUGUSTIN_2019_ACTIVE_MODEL
+            assert record.source
+            assert record.source_mechanism_file.endswith(".mod")
+            assert "MODEL-REPRODUCTION" in record.limitations()
+        # Nothing is claimed to be a direct GF measurement.
+        with pytest.raises(ValueError):
+            type(applied["g_Na"])(
+                **{
+                    **{f: getattr(applied["g_Na"], f)
+                       for f in applied["g_Na"].__dataclass_fields__},
+                    "is_experimental_gf_measurement": True,
+                }
+            )
+
+    def test_05_the_millisiemens_to_siemens_conversion_is_exactly_once(self):
+        """A mS/cm2 typo would be a 1000x error; the conversion is audited."""
+        profile = get_active_parameter_profile(PROFILE_AUGUSTIN_2019_ACTIVE_MODEL)
+        assert profile.get("g_Na").value == 300.0
+        assert profile.get("g_Na").unit == "mS/cm2"
+        network = _eight_a_model().prepare(_eight_a_gf(), segment_count=1)
+        applied = {p.name: p.value for p in network.applied_parameters}
+        assert applied["g_Na"] == pytest.approx(300.0 * 1e-3)
+        # The profile record itself is never rewritten by the consumer.
+        assert profile.get("g_Na").value == 300.0
+        assert profile.get("g_Na").unit == "mS/cm2"
+
+    def test_06_7s_7t_7f_are_cross_checked_and_a_conflict_raises(self):
+        """7T canonical values agree with 7S and 7F; a conflict is reported."""
+        from biological_brain.dynamics.gf_active import (
+            GFActiveAuthorizationError, AppliedActiveParameter,
+        )
+
+        model = _eight_a_model()
+        model.verify_against_7s_7t_7f()  # must not raise
+
+        registry = get_active_mechanism_registry()
+        nat_g = registry.get("nat").quantity("gnatbar")
+        profile = get_active_parameter_profile(PROFILE_AUGUSTIN_2019_ACTIVE_MODEL)
+        # 7T's CANONICAL unit for a density is mS/cm2, and on that canonical
+        # value 7T and 7S must agree exactly, so the two layers cannot drift.
+        # (7T's raw source-unit label for gnatbar is S/cm2 while its value is
+        # the 300 mS/cm2 figure; the comparison is made on the canonical value
+        # and on the canonical unit, which is why this is not a 1000x error.)
+        assert nat_g.canonical_unit == "mS/cm2"
+        assert nat_g.canonical_value == pytest.approx(300.0)
+        assert nat_g.canonical_value == profile.get("g_Na").value
+        assert profile.get("g_Na").unit == nat_g.canonical_unit
+        assert registry.get("nap").quantity("gnapbar").canonical_value == (
+            pytest.approx(profile.get("g_Nap").value)
+        )
+        assert registry.get("k").quantity("gkbar").canonical_value == (
+            pytest.approx(profile.get("g_K").value)
+        )
+        assert registry.get("nat").quantity("ena").value == (
+            pytest.approx(profile.get("E_Na").value)
+        )
+        assert registry.get("k").quantity("ek").value == (
+            pytest.approx(profile.get("E_K").value)
+        )
+
+        pas = registry.get("pas")
+        assert pas.quantity("gleak").canonical_value == pytest.approx(0.03)
+        assert pas.quantity("Eleak").value == pytest.approx(-85.0)
+
+        # A tampered 7S value is a conflict, and it is REPORTED, not resolved.
+        # The profile is frozen, so a conflicting copy is built rather than
+        # mutating the shared singleton.
+        import dataclasses
+
+        broken_g_na = dataclasses.replace(profile.get("g_Na"), value=999.0)
+        broken = dataclasses.replace(
+            profile,
+            parameters=tuple(
+                broken_g_na if record.name == "g_Na" else record
+                for record in profile.parameters
+            ),
+        )
+        broken_model = _eight_a_model()
+        broken_model._profile = broken
+        with pytest.raises(GFActiveAuthorizationError) as excinfo:
+            broken_model.verify_against_7s_7t_7f()
+        assert "SOURCE CONFLICT" in str(excinfo.value)
+        assert "not resolved" in str(excinfo.value)
+        # A tampered UNIT is also a conflict, reported the same way.
+        broken_unit = dataclasses.replace(
+            profile,
+            parameters=tuple(
+                dataclasses.replace(record, unit="mV")
+                if record.name == "g_Na" else record
+                for record in profile.parameters
+            ),
+        )
+        unit_model = _eight_a_model()
+        unit_model._profile = broken_unit
+        with pytest.raises(GFActiveAuthorizationError) as excinfo:
+            unit_model.verify_against_7s_7t_7f()
+        assert "UNIT CONFLICT" in str(excinfo.value)
+        # The shared singleton is untouched by either attempt.
+        assert profile.get("g_Na").value == 300.0
+        assert profile.get("g_Na").unit == "mS/cm2"
+
+    def test_07_an_unauthorized_profile_is_refused(self):
+        """No active profile is ever selected implicitly."""
+        from biological_brain.dynamics.gf_active import (
+            GFActiveAuthorizationError, GFActiveAxonModel,
+        )
+
+        with pytest.raises(GFActiveAuthorizationError) as excinfo:
+            GFActiveAxonModel(profile_name="not_a_profile")
+        assert "No active profile is ever selected implicitly" in str(excinfo.value)
+
+    # --- 3: no gap2, no out-of-scope mechanisms -----------------------------
+
+    def test_08_gap2_is_refused_and_the_7u_conflict_is_untouched(self):
+        """gap2.mod is not implemented and the 7U unit conflict stays open."""
+        from biological_brain.dynamics.gf_active import (
+            GFActiveScopeError, MECHANISM_GAP2,
+        )
+        from biological_brain.source_reconciliation import (
+            ResolutionStatus, get_source_reconciliation_registry,
+        )
+
+        model = _eight_a_model()
+        assert MECHANISM_GAP2 not in {
+            record.mechanism_name for record in model.mechanism_records()
+        }
+        with pytest.raises(GFActiveScopeError) as excinfo:
+            model.reject_unsupported_mechanism(MECHANISM_GAP2)
+        message = str(excinfo.value)
+        assert "NOT implemented" in message
+        assert "7U" in message
+        assert "UNRESOLVED" in message
+        # The refusal does not resolve, convert or approximate the conflict.
+        assert "not touch, resolve, convert or approximate" in message
+        registry = get_source_reconciliation_registry()
+        # The gap-junction unit conflict is still open after 8A ran, and both
+        # of its sides are still preserved rather than one being picked.
+        unresolved = [registry.get(name) for name in registry.unresolved()]
+        assert unresolved
+        assert all(
+            conflict.resolution_status == ResolutionStatus.UNRESOLVED
+            for conflict in unresolved
+        )
+        assert all(conflict.both_sides_preserved for conflict in unresolved)
+        assert all(
+            "g_gap" in conflict.parameter_name for conflict in unresolved
+        )
+
+    def test_09_the_implemented_mechanism_set_is_exactly_nat_nap_k(self):
+        """Three mechanisms, no more, and each is implemented."""
+        from biological_brain.dynamics.gf_active import (
+            GFActiveScopeError, GF_ACTIVE_MECHANISMS, MECHANISM_UNSUPPORTED,
+        )
+
+        model = _eight_a_model()
+        assert GF_ACTIVE_MECHANISMS == ("nat", "nap", "k")
+        for name in GF_ACTIVE_MECHANISMS:
+            with pytest.raises(GFActiveScopeError):
+                model.reject_unsupported_mechanism(name)
+        for name in ("DmCa1D", "Slowpoke", "ShakB", "Shaker", "Para",
+                     "Exp2Syn"):
+            assert name in MECHANISM_UNSUPPORTED
+            with pytest.raises(GFActiveScopeError) as excinfo:
+                model.reject_unsupported_mechanism(name)
+            assert "OUT OF SCOPE" in str(excinfo.value)
+            assert str(excinfo.value) != (
+                f"Mechanism '{name}' is OUT OF SCOPE for gf_active_v0. "
+                f"3.0D-8A implements only the vendored density channels "
+                f"['nat', 'nap', 'k']."
+            )
+
+    def test_10_non_gf_compartments_are_refused(self):
+        """The 3.0D-8A GF configuration refuses a non-GF model.
+
+        The engine is generic, but THIS configuration is pinned to the GF, so
+        a TTMn/PSI/DLMn model is still refused here. 3.0D-8D builds the TTMn
+        active axon through its own configuration of the same engine, not by
+        widening this one.
+        """
+        from biological_brain.dynamics.gf_active import GFActiveScopeError
+        from biological_brain.morphology_builder import build_gfs_compartment_models
+
+        models = build_gfs_compartment_models()
+        model = _eight_a_model()
+        assert model.neuron_id == "GF"
+        assert model.active_section_id == "GF_axon"
+        for neuron_type in ("TTMn", "PSI", "DLMn"):
+            target = models[neuron_type]
+            target.passive_profile_name = PROFILE_AUGUSTIN_2019_GFS_PASSIVE
+            with pytest.raises(GFActiveScopeError) as excinfo:
+                model.prepare(target, segment_count=1)
+            assert "is not 'GF'" in str(excinfo.value)
+            assert "the neuron this configuration activates" in str(
+                excinfo.value
+            )
+
+    # --- 4: rest state and gating bounds ------------------------------------
+
+    def test_11_the_initial_state_is_a_declared_rest_voltage(self):
+        """V starts at E_leak read from 7F, and gates at their own steady state."""
+        model = _eight_a_model()
+        network = model.prepare(_eight_a_gf(), segment_count=5)
+        state = model.initial_state(network)
+        assert model.rest_voltage_mV == -85.0
+        for segment in state.values():
+            assert segment.voltage_mV == -85.0
+            assert segment.all_finite()
+            # Exactly the three INITIAL blocks, not an assigned value.
+            assert segment.nat_m == pytest.approx(model.nat_rates.minf(-85.0))
+            assert segment.nat_h == pytest.approx(model.nat_rates.hinf(-85.0))
+            assert segment.nap_m == pytest.approx(model.nap_rates.minf(-85.0))
+            assert segment.k_m == pytest.approx(model.k_rates.minf(-85.0))
+        # The declared rest is a legitimate initial condition but NOT a fixed
+        # point of the complete active membrane: the active mechanisms drive
+        # the membrane away from it, which is a RESULT and not an assignment.
+        assert model.nat_rates.minf(-85.0) < 0.01
+        assert model.nat_rates.hinf(-85.0) > 0.99
+
+    def test_12_the_rest_run_is_finite_bounded_and_deterministic(self):
+        """With no injected current the run stays finite and reproducible."""
+        model_a = _eight_a_model()
+        network = model_a.prepare(_eight_a_gf(), segment_count=11)
+        trace_a = model_a.trace(network, network.segment_ids[0], 2.0)
+        model_b = _eight_a_model()
+        network_b = model_b.prepare(_eight_a_gf(), segment_count=11)
+        trace_b = model_b.trace(network_b, network_b.segment_ids[0], 2.0)
+        assert trace_a == trace_b
+        assert all(
+            v == v and abs(v) != float("inf") for v in trace_a
+        )
+        # Bounded: no gate escapes [0, 1] and no voltage runs away.
+        state = model_a.initial_state(network)
+        for _ in range(200):
+            model_a.step(network, state)
+        for segment in state.values():
+            assert segment.all_finite()
+            assert 0.0 <= segment.nat_m <= 1.0
+            assert 0.0 <= segment.nat_h <= 1.0
+            assert 0.0 <= segment.nap_m <= 1.0
+            assert 0.0 <= segment.k_m <= 1.0
+            assert -500.0 < segment.voltage_mV < 500.0
+
+    def test_13_a_trace_at_zero_amplitude_is_a_valid_resting_run(self):
+        """Zero amplitude is a legitimate resting run, not an error.
+
+        The active mechanisms have their own resting potential, which is NOT
+        E_leak: at rest the persistent Na and delayed-rectifier K conductances
+        are open, so the membrane relaxes a few mV above the declared initial
+        voltage. That drift is a RESULT of the mechanisms, not an assigned
+        value, and the declared rest is not a fixed point of the complete
+        active membrane. What matters here is that it is finite, bounded and
+        far from any spike.
+        """
+        model = _eight_a_model()
+        network = model.prepare(_eight_a_gf(), segment_count=11)
+        trace = model.trace(
+            network, network.segment_ids[0], 2.0, amplitude_A=0.0,
+        )
+        assert len(trace) == 200
+        assert all(v == v and abs(v) != float("inf") for v in trace)
+        # It drifts ABOVE the declared rest, by a small amount, and never
+        # anywhere near a spike.
+        assert -85.0 < max(trace) < -80.0
+        assert max(trace) < 0.0
+        diagnostic = model.ap_diagnostic(
+            tuple(trace), 0.01, network.segment_ids[0],
+            observation_floor_mV=40.0,
+        )
+        assert diagnostic.observed is False
+
+    # --- 5: stimulus-evoked action potential ---------------------------------
+
+    def test_14_the_modeldb_stimulus_fixture_is_transcribed_not_invented(self):
+        """120 nA for 0.03 ms at x=0 is gfpn.py's own circuit-latency fixture."""
+        from biological_brain.dynamics.gf_active import (
+            MODELDB_GF_STIMULUS_AMPLITUDE_A, MODELDB_GF_STIMULUS_DURATION_MS,
+            MODELDB_GF_STIMULUS_LOCATION, MODELDB_GF_STIMULUS_SOURCE,
+        )
+        import os
+
+        import biological_brain
+
+        assert MODELDB_GF_STIMULUS_AMPLITUDE_A == pytest.approx(120.0e-9)
+        assert MODELDB_GF_STIMULUS_DURATION_MS == 0.03
+        assert MODELDB_GF_STIMULUS_LOCATION == 0.0
+        assert "NOT A BIOLOGICAL STIMULUS" in MODELDB_GF_STIMULUS_SOURCE
+        assert "threshold" in MODELDB_GF_STIMULUS_SOURCE
+
+        root = os.path.join(
+            os.path.dirname(biological_brain.__file__), "data",
+            "modeldb_245415",
+        )
+        candidates = []
+        for dirpath, _dirs, files in os.walk(root):
+            for name in files:
+                if name == "gfpn.py":
+                    candidates.append(os.path.join(dirpath, name))
+        assert candidates, "gfpn.py is not vendored"
+        with open(candidates[0], encoding="utf-8") as fh:
+            source = " ".join(fh.read().split())
+        # The stimulus is a dict entry plus an IClamp on GF(stim_loc).
+        assert "'stim_amp': 120.0" in source or "'stim_amp':120.0" in source
+        assert "'stim_dur': 0.03" in source or "'stim_dur':0.03" in source
+        assert "'stim_loc': 0.0" in source or "'stim_loc':0.0" in source
+        assert "neuron.h.IClamp(self.GF(params['stim_loc']))" in source
+        # gfpn.py's own 51-segment discretization and its -30 mV delay helper
+        # are recorded here too, so 8A's choices are checkable against them.
+        assert "self.GF.nseg = 51" in source
+        assert "def get_delay(self, cell, thresh=-30)" in source
+        # 8A does NOT adopt gfpn.py's -30 mV or its -65 mV finalize voltage.
+        assert MODELDB_GF_STIMULUS_LOCATION == 0.0
+        # 8A uses the project's E_leak convention, NOT gfpn.py's
+        # 'finitialize(-65)' harness value, and does not adopt its -30 mV
+        # get_delay threshold either.
+        assert _eight_a_model().rest_voltage_mV == -85.0
+        assert _eight_a_model().rest_voltage_mV != -65.0
+
+    def test_15_the_stimulus_evokes_an_action_potential(self):
+        """The published fixture drives a depolarisation and a repolarisation."""
+        from biological_brain.dynamics.gf_active import (
+            MODELDB_GF_STIMULUS_AMPLITUDE_A, MODELDB_GF_STIMULUS_DURATION_MS,
+        )
+
+        model = _eight_a_model()
+        network = model.prepare(_eight_a_gf(), segment_count=11)
+        segment = network.segment_ids[0]
+        trace = model.trace(
+            network, segment, 2.0,
+            amplitude_A=MODELDB_GF_STIMULUS_AMPLITUDE_A,
+            amplitude_duration_ms=MODELDB_GF_STIMULUS_DURATION_MS,
+        )
+        diagnostic = model.ap_diagnostic(
+            tuple(trace), 0.01, segment, observation_floor_mV=40.0
+        )
+        assert diagnostic.all_finite is True
+        assert diagnostic.observed is True
+        # The peak approaches but does not pass the Na reversal potential: the
+        # published density does not reach E_Na at this timestep, and the
+        # implementation does not clamp or fake a full reversal.
+        assert 0.0 < diagnostic.peak_voltage_mV < 65.0
+        assert diagnostic.peak_time_ms > 0.0
+        assert diagnostic.peak_time_ms < 2.0
+        assert diagnostic.depolarization_mV > 100.0
+
+    def test_16_the_ap_criterion_is_waveform_derived_not_a_threshold(self):
+        """No voltage is ever called a threshold, and the reference is explicit."""
+        from biological_brain.dynamics.gf_active import (
+            MODELDB_GF_STIMULUS_AMPLITUDE_A, MODELDB_GF_STIMULUS_DURATION_MS,
+        )
+
+        model = _eight_a_model()
+        network = model.prepare(_eight_a_gf(), segment_count=11)
+        segment = network.segment_ids[0]
+        trace = model.trace(
+            network, segment, 2.0,
+            amplitude_A=MODELDB_GF_STIMULUS_AMPLITUDE_A,
+            amplitude_duration_ms=MODELDB_GF_STIMULUS_DURATION_MS,
+        )
+        diagnostic = model.ap_diagnostic(
+            tuple(trace), 0.01, segment, observation_floor_mV=40.0
+        )
+        criterion = " ".join(diagnostic.observation_criterion.split())
+        assert "NOT A BIOLOGICAL GF THRESHOLD" in criterion
+        assert "rheobase" in criterion
+        # The reference is the DECLARED rest voltage, supplied by the caller,
+        # not a value read back off the end of the trace.
+        assert diagnostic.rest_voltage_mV == model.rest_voltage_mV == -85.0
+        custom = model.ap_diagnostic(
+            tuple(trace), 0.01, segment, observation_floor_mV=40.0,
+            reference_voltage_mV=-90.0,
+        )
+        assert custom.rest_voltage_mV == -90.0
+        assert custom.depolarization_mV != pytest.approx(
+            diagnostic.depolarization_mV
+        )
+        # An impossible floor is not satisfied, and the rule is monotone in it.
+        assert model.ap_diagnostic(
+            tuple(trace), 0.01, segment, observation_floor_mV=10_000.0,
+        ).observed is False
+        # A flat trace at rest is not a spike.
+        flat = tuple([-85.0] * 100)
+        assert model.ap_diagnostic(flat, 0.01, segment, 40.0).observed is False
+        with pytest.raises(ValueError):
+            model.ap_diagnostic((), 0.01, segment, 40.0)
+
+    def test_17_no_gf_threshold_constant_exists_in_the_module(self):
+        """No voltage is ever CALLED a threshold, and none is defined."""
+        import inspect
+
+        from biological_brain.dynamics import gf_active
+
+        source = inspect.getsource(gf_active)
+        # The words may appear only in a negation, so this scans identifiers
+        # and assignments rather than prose.
+        import ast
+
+        tree = ast.parse(source)
+        names = {
+            node.id for node in ast.walk(tree) if isinstance(node, ast.Name)
+        } | {
+            node.attr for node in ast.walk(tree) if isinstance(node, ast.Attribute)
+        }
+        for banned in ("threshold", "rheobase", "v_thresh", "spike_threshold",
+                       "gf_threshold"):
+            assert banned not in names, banned
+        assigned = {
+            target.id
+            for node in ast.walk(tree) if isinstance(node, ast.Assign)
+            for target in node.targets
+            if isinstance(target, ast.Name)
+        }
+        for banned in ("THRESHOLD", "VTHRESH", "RHEOBASE", "SPIKE_THRESHOLD"):
+            assert banned not in assigned, banned
+        # And the module says so explicitly, in the negative.
+        assert "NO GF spike threshold" in source
+        assert "No threshold voltage, no rheobase" in source
+
+    # --- 6: timestep and method convergence ----------------------------------
+
+    def test_18_the_timestep_policy_is_reused_and_never_widened(self):
+        """7R's bounds are reused; dt above the max is refused, not accepted."""
+        from biological_brain.dynamics.gf_active import (
+            GFActiveNumericalError, GFActiveNumericalPolicy,
+            GF_ACTIVE_NUMERICAL_POLICY,
+        )
+        from biological_brain.dynamics.passive_cable import (
+            PASSIVE_CABLE_NUMERICAL_POLICY,
+        )
+
+        assert PASSIVE_CABLE_NUMERICAL_POLICY.default_timestep_ms == 0.01
+        assert PASSIVE_CABLE_NUMERICAL_POLICY.max_timestep_ms == 0.01
+        assert GF_ACTIVE_NUMERICAL_POLICY.max_timestep_ms == (
+            PASSIVE_CABLE_NUMERICAL_POLICY.max_timestep_ms
+        )
+        assert GF_ACTIVE_NUMERICAL_POLICY.default_timestep_ms == (
+            PASSIVE_CABLE_NUMERICAL_POLICY.default_timestep_ms
+        )
+        assert GF_ACTIVE_NUMERICAL_POLICY.reuses_passive_bounds is True
+        # The engine's 1 ms default is still rejected here, exactly as 7R
+        # rejects it. 8A does not raise dt to make its own life easier.
+        with pytest.raises(GFActiveNumericalError):
+            _eight_a_model(timestep_ms=1.0)
+        with pytest.raises(GFActiveNumericalError):
+            _eight_a_model(timestep_ms=0.02)
+        with pytest.raises(GFActiveNumericalError):
+            _eight_a_model(timestep_ms=0.0)
+        with pytest.raises(GFActiveNumericalError):
+            _eight_a_model(timestep_ms=-0.01)
+        # The policy object itself is unchanged by this layer.
+        assert PASSIVE_CABLE_NUMERICAL_POLICY.max_timestep_ms == 0.01
+
+    def test_19_the_ap_peak_converges_under_timestep_refinement(self):
+        """Halving dt moves the peak only slightly and stays finite throughout."""
+        from biological_brain.dynamics.gf_active import (
+            MODELDB_GF_STIMULUS_AMPLITUDE_A, MODELDB_GF_STIMULUS_DURATION_MS,
+            GF_ACTIVE_NUMERICAL_CONVERGENCE_TOLERANCE,
+        )
+
+        model = _eight_a_model()
+        network = model.prepare(_eight_a_gf(), segment_count=5)
+        report = model.convergence_report(
+            network, network.segment_ids[0], (0.01, 0.005, 0.002), 2.0,
+            amplitude_A=MODELDB_GF_STIMULUS_AMPLITUDE_A,
+            amplitude_duration_ms=MODELDB_GF_STIMULUS_DURATION_MS,
+        )
+        assert len(report.points) == 3
+        assert report.tolerance_label == GF_ACTIVE_NUMERICAL_CONVERGENCE_TOLERANCE
+        assert "NOT A BIOLOGICAL TOLERANCE" in report.tolerance_label
+        assert "NUMERICAL" in report.note
+        assert all(point.all_finite for point in report.points)
+        # The peak is within a NUMERICAL tolerance of itself under refinement.
+        # This is a discretisation statement, not a biological accuracy claim.
+        assert report.peak_change_mV < 1.0
+        assert report.peak_time_change_ms < 0.5
+        peaks = [point.peak_voltage_mV for point in report.points]
+        assert peaks[0] != pytest.approx(peaks[-1], abs=1e-9), (
+            "the linearised implicit step is only first-order in the "
+            "gating/voltage coupling, so an exactly identical peak would mean "
+            "the claimed limitation is not real"
+        )
+        assert peaks[-1] > peaks[0]
+
+    def test_20_the_scheme_is_labelled_semi_implicit_not_fully_implicit(self):
+        """The approximation is stated, not papered over."""
+        from biological_brain.dynamics.gf_active import (
+            GFActiveAxonModel, GFActiveNumericalPolicy,
+            GF_ACTIVE_NUMERICAL_LIMITATION, GF_ACTIVE_NUMERICAL_POLICY,
+        )
+
+        assert GFActiveAxonModel().is_fully_implicit is False
+        assert GFActiveAxonModel().is_default is False
+        assert GF_ACTIVE_NUMERICAL_POLICY.is_fully_implicit is False
+        assert GF_ACTIVE_NUMERICAL_POLICY.gating_method == (
+            "exact_linear_ode_solution_cnexp"
+        )
+        assert GF_ACTIVE_NUMERICAL_POLICY.integration_method == (
+            "linearised_implicit_backward_euler"
+        )
+        limitation = " ".join(GF_ACTIVE_NUMERICAL_LIMITATION.split())
+        assert "SEMI-IMPLICIT, NOT FULLY IMPLICIT" in limitation
+        assert "first-order" in limitation
+        assert "Newton" in limitation
+        # The declared numerical resolution is a documented contract.
+        resolution = GFActiveAxonModel.numerical_resolution
+        assert resolution.timestep_ms == 0.01
+        assert "NUMERICAL" in resolution.resolution_note
+
+    def test_21_the_explicit_path_would_be_unstable_at_this_timestep(self):
+        """Why the scheme is implicit is a numerical fact, and it is a fact."""
+        from biological_brain.dynamics.gf_active import _STABILITY_NOTE
+
+        capacitance = 1.0e-6   # F/cm2, from the 7F passive profile
+        g_nat = 300.0e-3        # S/cm2, from the 7S authorized profile
+        tau_us = (capacitance / g_nat) * 1e6
+        assert tau_us == pytest.approx(3.333, rel=1e-3)
+        # The step is ~3 membrane time constants long, so an explicit
+        # membrane update at this density is not stable. Getting this
+        # arithmetic wrong by 1000x would be a real error, not a rounding.
+        assert tau_us < 0.01 * 1e3
+        note = " ".join(_STABILITY_NOTE.split())
+        assert "3.3 us" in note
+        assert "3.3 ms" not in note
+        assert "cannot be used" in note
+        # The still faster kinetics are in the gates, and those are exact.
+        assert _eight_a_model().nat_rates.mtau_floor == 1e-7
+        assert _eight_a_model().nat_rates.mtau_ms(1e4) > 0.0
+
+    # --- 7: subdivision behaviour -------------------------------------------
+
+    def test_22_subdivision_is_a_numerical_discretization(self):
+        """N=1, 2, 5, 11, 51 all prepare, and the count is labelled numerical."""
+        from biological_brain.dynamics.gf_active import (
+            MODELDB_GF_STIMULUS_AMPLITUDE_A, MODELDB_GF_STIMULUS_DURATION_MS,
+        )
+
+        model = _eight_a_model()
+        gf = _eight_a_gf()
+        for count in (1, 2, 5, 11, 51):
+            network = model.prepare(gf, segment_count=count)
+            assert network.segment_count == count
+            assert len(network.network.connections) == count - 1
+            assert "NUMERICAL discretization" in network.preparation_note
+            segment = network.segment_ids[0]
+            trace = model.trace(
+                network, segment, 2.0,
+                amplitude_A=MODELDB_GF_STIMULUS_AMPLITUDE_A,
+                amplitude_duration_ms=MODELDB_GF_STIMULUS_DURATION_MS,
+            )
+            assert all(v == v for v in trace)
+        with pytest.raises(Exception):
+            model.prepare(gf, segment_count=0)
+
+    def test_23_a_fine_subdivision_spikes_and_a_coarse_one_does_not(self):
+        """Coarse discretisation fails to spike; that is reported, not hidden.
+
+        A fixed 120 nA injected into ONE compartment is a fixed current
+        DENSITY only at a fixed compartment area, so at N=1 and N=2 the
+        stimulus spreads over a much larger membrane and no longer reaches
+        spike. This is a genuine property of a point stimulus on a coarsely
+        discretised cable, and 8A states it rather than rescaling the stimulus
+        to force agreement.
+        """
+        from biological_brain.dynamics.gf_active import (
+            MODELDB_GF_STIMULUS_AMPLITUDE_A, MODELDB_GF_STIMULUS_DURATION_MS,
+        )
+
+        model = _eight_a_model()
+        gf = _eight_a_gf()
+        observed = {}
+        for count in (1, 2, 5, 11, 51):
+            network = model.prepare(gf, segment_count=count)
+            segment = network.segment_ids[0]
+            trace = model.trace(
+                network, segment, 2.0,
+                amplitude_A=MODELDB_GF_STIMULUS_AMPLITUDE_A,
+                amplitude_duration_ms=MODELDB_GF_STIMULUS_DURATION_MS,
+            )
+            observed[count] = model.ap_diagnostic(
+                tuple(trace), 0.01, segment, observation_floor_mV=40.0,
+            ).observed
+        assert observed[1] is False
+        assert observed[2] is False
+        assert observed[5] is True
+        assert observed[11] is True
+        assert observed[51] is True
+
+    def test_24_the_peak_is_insensitive_to_further_subdivision(self):
+        """Once the cable is resolved, refining it barely moves the peak."""
+        from biological_brain.dynamics.gf_active import (
+            MODELDB_GF_STIMULUS_AMPLITUDE_A, MODELDB_GF_STIMULUS_DURATION_MS,
+        )
+
+        model = _eight_a_model()
+        gf = _eight_a_gf()
+        peaks = {}
+        for count in (5, 11, 51):
+            network = model.prepare(gf, segment_count=count)
+            segment = network.segment_ids[0]
+            trace = model.trace(
+                network, segment, 2.0,
+                amplitude_A=MODELDB_GF_STIMULUS_AMPLITUDE_A,
+                amplitude_duration_ms=MODELDB_GF_STIMULUS_DURATION_MS,
+            )
+            peaks[count] = model.ap_diagnostic(
+                tuple(trace), 0.01, segment, observation_floor_mV=40.0,
+            ).peak_voltage_mV
+        assert max(peaks.values()) - min(peaks.values()) < 1.0
+
+    # --- 8: passive / active separation -------------------------------------
+
+    def test_25_zeroing_the_active_conductances_reproduces_the_passive_cable(self):
+        """The active layer is an addition, not a rewrite of 7G."""
+        import dataclasses
+
+        from biological_brain.dynamics.gf_active import (
+            AppliedActiveParameter, GFActiveNetwork,
+        )
+        from biological_brain.dynamics.passive_cable import PassiveCableModel
+
+        model = _eight_a_model()
+        gf = _eight_a_gf()
+        network = model.prepare(gf, segment_count=11)
+
+        passive = PassiveCableModel(
+            profile_name=PROFILE_AUGUSTIN_2019_GFS_PASSIVE,
+            numerical_method="backward_euler",
+        )
+        passive_network = passive.prepare(gf, _eight_a_plan(11))
+        passive_state = passive.initial_state(gf)
+        for compartment in passive_network.compartments:
+            passive_state.voltages_mV[compartment.compartment_id] = -85.0
+
+        silenced = GFActiveNetwork(
+            **{
+                **{
+                    field.name: getattr(network, field.name)
+                    for field in dataclasses.fields(network)
+                },
+                "applied_parameters": tuple(
+                    dataclasses.replace(record, value=0.0)
+                    for record in network.applied_parameters
+                ),
+            }
+        )
+        active_state = model.initial_state(silenced)
+        stim = {"GF_axon#seg0": 120.0e-9}
+        for step in range(100):
+            passive.step(
+                passive_network, passive_state,
+                injected_currents_A=stim if step < 3 else {},
+                timestep_ms=0.01,
+            )
+            model.step(
+                silenced, active_state,
+                injected_currents_A=stim if step < 3 else {},
+                timestep_ms=0.01,
+            )
+        for segment_id in network.segment_ids:
+            assert active_state[segment_id].voltage_mV == pytest.approx(
+                passive_state.voltages_mV[segment_id], rel=1e-12, abs=1e-9
+            )
+
+    def test_26_the_active_layer_does_not_perturb_any_passive_quantity(self):
+        """Capacitance, leak, geometry and axial resistance are all read-only."""
+        model = _eight_a_model()
+        gf = _eight_a_gf()
+        network = model.prepare(gf, segment_count=11)
+        for compartment in network.network.compartments:
+            assert compartment.capacitance_F > 0.0
+            assert compartment.leak_conductance_S > 0.0
+            assert compartment.leak_reversal_mV == -85.0
+            assert compartment.membrane_area_cm2 > 0.0
+        for connection in network.network.connections:
+            assert connection.resistance_ohm > 0.0
+        # The GF axon geometry is unchanged: 8 um by 400 um.
+        axon = gf.compartments["GF_axon"]
+        assert axon.geometry.diameter_um == 8.0
+        assert axon.geometry.length_um == 400.0
+        assert "READ from the existing 3.0D-7G" in network.preparation_note
+
+    def test_27_the_active_conductances_are_recorded_per_step(self):
+        """The applied densities are visible for inspection, in mS/cm2."""
+        model = _eight_a_model()
+        network = model.prepare(_eight_a_gf(), segment_count=2)
+        state = model.initial_state(network)
+        model.step(network, state)
+        segment = state[network.segment_ids[0]]
+        conductances = segment.last_conductances_mS_per_cm2
+        assert set(conductances) == {"nat", "nap", "k", "leak"}
+        assert conductances["nat"] <= 300.0 + 1e-9
+        assert conductances["nap"] <= 0.11 + 1e-9
+        assert conductances["k"] <= 10.0 + 1e-9
+        assert conductances["leak"] == pytest.approx(0.03, rel=1e-6)
+        assert set(segment.last_currents_mA_per_cm2) == {"nat", "nap", "k"}
+        # The sodium current is outward at rest, because V < E_Na.
+        assert segment.last_currents_mA_per_cm2["nat"] < 0.0
+
+    # --- 9: scope notes and boundary claims ---------------------------------
+
+    def test_28_the_scope_note_states_every_exclusion(self):
+        """Each exclusion is stated, not merely absent."""
+        from biological_brain.dynamics.gf_active import active_network_scope_note
+
+        note = " ".join(active_network_scope_note().split())
+        assert "MODEL REPRODUCTION, NOT MEASUREMENT" in note
+        assert "NOT THE FULL EXPERIMENTALLY KNOWN GF ION-CHANNEL COMPLEMENT" in note
+        assert "DmCa1D" in note
+        assert "Slowpoke" in note
+        assert "NO SYNAPSE AND NO SENSORY INPUT" in note
+        assert "7U" in note
+        assert "NO TEMPERATURE DEPENDENCE" in note
+        assert "Q10" in note
+        assert "SEMI-IMPLICIT, NOT FULLY IMPLICIT" in note
+        assert "STABILITY IS NOT ACCURACY" in note
+        assert "MODEL-REPRODUCTION TEST FIXTURE" in note
+
+    def test_29_the_module_does_not_import_the_sensory_or_motor_layers(self):
+        """8A is an AST-checked membrane layer, not a whole-brain integration."""
+        import ast
+        import inspect
+
+        from biological_brain.dynamics import gf_active
+
+        tree = ast.parse(inspect.getsource(gf_active))
+        imported = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom):
+                if node.module:
+                    imported.add(node.module)
+                    imported.update(
+                        f"{node.module}.{alias.name}" for alias in node.names
+                    )
+            elif isinstance(node, ast.Import):
+                imported.update(alias.name for alias in node.names)
+        joined = " ".join(sorted(imported))
+        for banned in ("synaptic_abstraction", "motor_output_abstraction",
+                       "looming_abstraction", "sensorimotor_integration",
+                       "synaptic_mechanism_registry", "source_reconciliation",
+                       "exp2syn", "Exp2Syn"):
+            assert banned not in joined, banned
+        # The sensory and behavioural layers are not reachable from 8A at all.
+        for banned in ("LC4", "LPLC2", "TTMn", "DLMn", "PSI", "behavio",
+                       "looming", "escape", "probab"):
+            assert not hasattr(gf_active, banned), banned
+
+    def test_30_the_circuit_configuration_and_engine_defaults_are_untouched(self):
+        """Adding a live dynamics layer changes no engine default."""
+        import ast
+        import inspect
+
+        from biological_brain.dynamics import gf_active
+
+        assert BIOLOGICAL_CIRCUITS["escape"] is False
+        assert MODEL_NAME_LIF_VOLTAGE
+        from biological_brain.dynamics.gf_active import GFActiveAxonModel
+
+        assert GFActiveAxonModel().is_default is False
+        source = inspect.getsource(gf_active)
+        tree = ast.parse(source)
+        identifiers = {
+            node.id for node in ast.walk(tree) if isinstance(node, ast.Name)
+        } | {
+            node.attr for node in ast.walk(tree) if isinstance(node, ast.Attribute)
+        }
+        for banned in ("BIOLOGICAL_CIRCUITS", "BiologicalBrain", "NeuralEngine",
+                       "Circuit", "Neuron"):
+            assert banned not in identifiers, banned
+        # 8A is not wired into the engine yet; it is opt-in and reachable only
+        # by explicit construction.
+        from biological_brain import GFActiveAxonModel as Exported
+
+        assert Exported is gf_active.GFActiveAxonModel
+
+    def test_31_the_rest_voltage_is_read_from_the_passive_profile(self):
+        """-85 mV is a resolved 7F value, not a literal in 8A."""
+        from biological_brain.dynamics.gf_active import GFActiveAxonModel
+
+        model = _eight_a_model()
+        assert model.rest_voltage_mV == pytest.approx(
+            model._passive.resolve_parameter("leak_reversal_potential")
+        )
+        source = __import__("inspect").getsource(GFActiveAxonModel)
+        assert 'return -85.0' not in source
+
+    def test_32_an_invalid_stimulus_window_is_refused(self):
+        """A negative or overlong stimulus window is a numerical error."""
+        from biological_brain.dynamics.gf_active import GFActiveNumericalError
+
+        model = _eight_a_model()
+        network = model.prepare(_eight_a_gf(), segment_count=1)
+        segment = network.segment_ids[0]
+        with pytest.raises(GFActiveNumericalError):
+            model.trace(network, segment, 1.0, amplitude_A=1e-9,
+                        amplitude_duration_ms=-0.1)
+        with pytest.raises(GFActiveNumericalError):
+            model.trace(network, segment, 1.0, amplitude_A=1e-9,
+                        amplitude_duration_ms=2.0)
+        with pytest.raises(KeyError):
+            model.trace(network, "GF_axon#not_a_segment", 1.0)
+
+    def test_33_the_scope_of_the_checkpoint_is_the_gf_axon_only(self):
+        """The published model inserts the same mechanisms elsewhere; 8A does not."""
+        model = _eight_a_model()
+        network = model.prepare(_eight_a_gf(), segment_count=1)
+        assert {c.source_section_id for c in network.network.compartments} == {
+            "GF_axon"
+        }
+        assert model.name == "gf_active_v0"
+        assert model.profile_name == PROFILE_AUGUSTIN_2019_ACTIVE_MODEL
+        assert model.passive_profile_name == PROFILE_AUGUSTIN_2019_GFS_PASSIVE
+        assert model.timestep_ms == 0.01
+        report = model.verify_against_7s_7t_7f_and_report()
+        assert report["fully_implicit"] is False
+        assert report["timestep_ms"] == 0.01
+        assert report["active_parameters"]["g_Na"] == (pytest.approx(0.3), "S/cm2")
+        assert report["mechanisms"] == ["nat", "nap", "k"]
+
+    def test_34_exponential_arguments_are_clamped_only_outside_the_range(self):
+        """The overflow guard is a numerical guard and changes no real value."""
+        from biological_brain.dynamics.gf_active import _exp_clamped
+
+        import math
+
+        for x in (-10.0, -1.0, 0.0, 1.0, 10.0, 100.0, 699.0):
+            assert _exp_clamped(x) == math.exp(x)
+        assert _exp_clamped(1e9) == math.exp(700.0)
+        assert _exp_clamped(-1e9) == math.exp(-700.0)
+        # A very negative voltage must not raise, and must stay bounded.
+        model = _eight_a_model()
+        for v in (-1000.0, -10000.0):
+            assert 0.0 <= model.nat_rates.minf(v) <= 1.0
+            assert model.nat_rates.mtau_ms(v) > 0.0
+            assert model.nat_rates.htau_ms(v) > 0.0
+
+
+def _eight_a_plan(count):
+    return SubdivisionPlan(
+        sections=(SectionSubdivision("GF_axon", count),)
+    )
+
+
+# --- 3.0D-8B: numerical validation of the completed 8A active membrane -----
+
+
+def _eight_b_validator():
+    from biological_brain.dynamics.gf_equilibrium import GFActiveStateValidator
+
+    return GFActiveStateValidator()
+
+
+def _eight_b_gf():
+    """The existing 3.0D-7G GF compartment model on the 7F passive profile."""
+    from biological_brain.morphology_builder import build_gfs_compartment_models
+
+    model = build_gfs_compartment_models()["GF"]
+    model.passive_profile_name = PROFILE_AUGUSTIN_2019_GFS_PASSIVE
+    return model
+
+
+@pytest.fixture(scope="module")
+def eight_b_equilibrium_long():
+    """The headline unstimulated measurement: N=11, 200 ms, dt=0.01.
+
+    Module-scoped because it is the most expensive single run and every test
+    that needs the equilibrium reuses exactly this one, so the reported value
+    is guaranteed identical across all of them.
+    """
+    return _eight_b_validator().equilibrium_report(
+        _eight_b_gf(), segment_count=11, duration_ms=200.0,
+    )
+
+
+@pytest.fixture(scope="module")
+def eight_b_timestep_sweep():
+    """Unstimulated equilibrium at dt = 0.01, 0.005 and 0.002 ms."""
+    return _eight_b_validator().compare_equilibrium_voltage_across_timesteps(
+        _eight_b_gf(), timesteps_ms=(0.01, 0.005, 0.002), duration_ms=60.0,
+    )
+
+
+@pytest.fixture(scope="module")
+def eight_b_subdivision_sweep():
+    """Unstimulated equilibrium at N = 5, 11 and 51."""
+    return _eight_b_validator().compare_equilibrium_voltage_across_subdivisions(
+        _eight_b_gf(), segment_counts=(5, 11, 51), duration_ms=60.0,
+    )
+
+
+@pytest.fixture(scope="module")
+def eight_b_stimulus_sweep():
+    """Stimulated peak and peak time across dt = 0.01, 0.005 and 0.002 ms."""
+    return _eight_b_validator().compare_stimulus_peak_across_timesteps(
+        _eight_b_gf(), timesteps_ms=(0.01, 0.005, 0.002), segment_count=11,
+    )
+
+
+@pytest.fixture(scope="module")
+def eight_b_propagation():
+    """The stimulated response at N=51, with distal peak-time delays."""
+    return _eight_b_validator().stimulus_response_report(
+        _eight_b_gf(), segment_count=51, duration_ms=3.0,
+        propagation_indices=(0, 10, 25, 40, 50),
+    )
+
+
+class TestGFActiveStateValidation:
+    """3.0D-8B: numerical validation of the completed 8A active membrane.
+
+    8A BUILT the live GF membrane; 8B asks whether that membrane is
+    NUMERICALLY WELL BEHAVED, before any electrical or chemical circuit
+    coupling is added on top of it. 8B adds no mechanism, no equation, no
+    parameter and no threshold, and modifies nothing in the 8A module.
+
+    The central thing this checkpoint is careful about is the difference
+    between an INITIAL CONDITION and an EQUILIBRIUM. 8A initialises V to
+    E_leak = -85 mV because that is the leak reversal potential and the
+    project's declared resting convention. It is not a claim that the complete
+    active membrane equilibrates there, and 8B measures where the membrane
+    actually comes to rest rather than forcing it back.
+
+    The second thing this checkpoint is careful about is tolerance language.
+    Every tolerance in 8B is NUMERICAL: it describes how a computed quantity
+    moves under discretisation refinement. None of them is a biological
+    acceptance threshold, and passing one says nothing about a real fly.
+    """
+
+    # --- 1: the equilibrium is measured, not assumed -----------------------
+
+    def test_01_the_equilibrium_is_not_the_declared_initial_voltage(self, eight_b_equilibrium_long):
+        """The unstimulated membrane moves AWAY from -85 mV and stops there.
+
+        This is the headline finding. 8A starts at E_leak = -85 mV and the
+        complete leak + nat + nap + k system settles near -74.67 mV, a
+        10.3 mV displacement. 8B does not force it back, does not add a
+        resting offset and does not rescale a conductance to move it.
+        """
+        report = eight_b_equilibrium_long
+        assert report.declared_initial_voltage_mV == -85.0
+        assert report.all_finite is True
+        # It genuinely moved, and the move is large enough to be a real
+        # displacement rather than numerical noise.
+        displacement = report.mean_voltage_mV - report.declared_initial_voltage_mV
+        assert displacement == pytest.approx(10.33, abs=0.05)
+        assert displacement > 1.0
+        # And it is not clamped back to the declared value anywhere.
+        assert all(
+            v != report.declared_initial_voltage_mV
+            for v in report.final_voltages_mV
+        )
+        # The module states this as a measured fact, and names the reason.
+        from biological_brain.dynamics.gf_equilibrium import (
+            MEASURED_GF_EQUILIBRIUM_SUMMARY,
+        )
+        assert "-74.67" in MEASURED_GF_EQUILIBRIUM_SUMMARY
+        assert "NOT the leak reversal potential" in MEASURED_GF_EQUILIBRIUM_SUMMARY
+        assert "does not force it there" in MEASURED_GF_EQUILIBRIUM_SUMMARY
+
+    def test_02_the_equilibrium_is_a_genuine_current_balance(self, eight_b_equilibrium_long):
+        """Leak is cancelled by K plus the two Na currents, to ~1e-10 mA/cm2.
+
+        This is the check that the fixed point is a real current balance
+        rather than a stalled integration. If the residual were large, the
+        system would still be charging and "settled" would be meaningless.
+        """
+        report = eight_b_equilibrium_long
+        state = report.states[0]
+        balance = state.balance
+        # The leak is OUTWARD at -74.67 mV, because V is above E_leak = -85.
+        assert balance.leak_mA_per_cm2 > 0.0
+        # All three active currents are INWARD at that voltage: K because
+        # -74.67 is just below E_K = -74, and both Na because it is far below
+        # E_Na = +65.
+        assert balance.nat_mA_per_cm2 < 0.0
+        assert balance.nap_mA_per_cm2 < 0.0
+        assert balance.k_mA_per_cm2 < 0.0
+        # The dominant inward term is K, which is what pulls the membrane up
+        # off E_leak in the first place.
+        assert abs(balance.k_mA_per_cm2) > abs(balance.nat_mA_per_cm2)
+        assert abs(balance.k_mA_per_cm2) > abs(balance.nap_mA_per_cm2)
+        # Magnitudes are in the right physical range for this density set.
+        assert balance.leak_mA_per_cm2 == pytest.approx(3.1e-4, rel=0.02)
+        assert balance.k_mA_per_cm2 == pytest.approx(-2.87e-4, rel=0.02)
+        # And the sum closes.
+        assert report.max_abs_net_current_mA_per_cm2 < 1e-8
+        assert balance.net_mA_per_cm2 == pytest.approx(0.0, abs=1e-8)
+        assert balance.all_finite() is True
+
+    def test_03_the_axial_current_vanishes_at_a_uniform_equilibrium(self, eight_b_equilibrium_long):
+        """A uniform resting voltage means zero axial current.
+
+        This is an independent check of the axial sign convention and of the
+        mV/ohm = 1 mA unit identity the balance relies on. A sign error here
+        would show up as a large residual on the end segments even at a flat
+        voltage.
+        """
+        report = eight_b_equilibrium_long
+        # The voltage really is spatially uniform.
+        assert report.voltage_spread_mV < 1e-9
+        for state in report.states:
+            assert abs(state.balance.axial_mA_per_cm2) < 1e-9
+        # Every segment reports the same voltage, not just the first.
+        assert max(report.final_voltages_mV) == pytest.approx(
+            min(report.final_voltages_mV), abs=1e-9
+        )
+
+    def test_04_the_gate_values_at_equilibrium_are_physically_ordered(self, eight_b_equilibrium_long):
+        """The gates sit where their own rate expressions put them."""
+        report = eight_b_equilibrium_long
+        state = report.states[0]
+        model = _eight_b_validator().model
+        voltage = report.mean_voltage_mV
+
+        # Transient sodium: barely activated, barely inactivated.
+        assert 0.0 < state.nat_m < 0.02
+        assert 0.99 < state.nat_h < 1.0
+        # Persistent sodium and delayed rectifier: both small at rest.
+        assert 0.0 < state.nap_m < 0.005
+        assert 0.01 < state.k_m < 0.1
+        assert state.gates_in_unit_interval() is True
+
+        # The gates are near, but not exactly at, their steady state at this
+        # voltage: they are still relaxing toward it, which is the whole
+        # reason the run needs hundreds of milliseconds.
+        from biological_brain.dynamics.gf_equilibrium import _gate_steady_state
+
+        for gate, value in state.gating_items():
+            steady = _gate_steady_state(model, gate, voltage)
+            assert abs(value - steady) < 0.05, gate
+
+        # The conductances follow the gates through the .mod powers exactly.
+        assert state.nat_mS_per_cm2 == pytest.approx(
+            300.0 * state.nat_m ** 3 * state.nat_h, rel=1e-9
+        )
+        assert state.nap_mS_per_cm2 == pytest.approx(
+            0.11 * state.nap_m, rel=1e-9
+        )
+        assert state.k_mS_per_cm2 == pytest.approx(10.0 * state.k_m, rel=1e-9)
+        # The leak is the unchanged 7F value, not something 8B introduced.
+        assert state.leak_mS_per_cm2 == pytest.approx(0.03, rel=1e-6)
+
+    def test_05_the_slowest_relaxation_mode_is_named_and_correct(self, eight_b_equilibrium_long):
+        """nat_h's ~174 ms time constant is what sets the convergence rate.
+
+        A reader who ran a short simulation and saw the residual still
+        falling would otherwise have no way to tell slow convergence from
+        non-convergence. 8B reports the governing time constant so that
+        distinction is checkable.
+        """
+        report = eight_b_equilibrium_long
+        model = _eight_b_validator().model
+        assert report.slowest_gate_name == "nat_h"
+        expected = model.nat_rates.htau_ms(report.mean_voltage_mV)
+        assert report.slowest_gate_tau_ms == pytest.approx(expected, rel=1e-9)
+        # It really is the slowest of the four.
+        voltage = report.mean_voltage_mV
+        assert report.slowest_gate_tau_ms > model.nat_rates.mtau_ms(voltage)
+        assert report.slowest_gate_tau_ms > model.nap_rates.tau_ms(voltage)
+        assert report.slowest_gate_tau_ms > model.k_rates.tau_ms(voltage)
+        # It is genuinely long, which is why 200 ms is not overkill.
+        assert report.slowest_gate_tau_ms > 100.0
+        assert "174 ms" in report.slowest_mode_note
+        assert "numerical quantity" in report.slowest_mode_note
+
+    # --- 2: the diagnostic is complete and deterministic --------------------
+
+    def test_06_the_report_carries_every_required_measurement(self, eight_b_equilibrium_long):
+        """Voltage, gates, currents, distance, timestep and method, all there."""
+        report = eight_b_equilibrium_long
+        # The five things the checkpoint requires, each present and populated.
+        assert len(report.final_voltages_mV) == report.segment_count
+        for state in report.states:
+            assert isinstance(state.voltage_mV, float)
+            assert state.gating_items()
+            assert state.balance.all_finite()
+        # The ionic currents are individually broken out, not just summed.
+        balance = report.states[0].balance
+        assert balance.leak_mA_per_cm2 != balance.k_mA_per_cm2
+        assert balance.nat_mA_per_cm2 != 0.0
+        assert balance.nap_mA_per_cm2 != 0.0
+        assert balance.k_mA_per_cm2 != 0.0
+        # Distance from equilibrium, and the timestep/method that produced it.
+        assert report.distance_from_equilibrium < 1e-6
+        assert "numerical fixed-point detection criterion" in (
+            report.distance_label
+        )
+        assert report.timestep_ms == 0.01
+        assert report.integration_method == (
+            "linearised_implicit_backward_euler"
+        )
+        assert report.gating_method == "exact_linear_ode_solution_cnexp"
+        assert report.is_fully_implicit is False
+        assert report.steps == 20000
+        assert report.duration_ms == pytest.approx(200.0)
+        assert "mA/cm2" in report.units_note
+
+    def test_07_the_report_is_deterministic(self):
+        """Two identical runs produce bit-identical reports.
+
+        There is no randomness, no tolerance-based early exit and no
+        wall-clock dependence, so the diagnostic is reproducible.
+        """
+        first = _eight_b_validator().equilibrium_report(
+            _eight_b_gf(), segment_count=5, duration_ms=40.0,
+        )
+        second = _eight_b_validator().equilibrium_report(
+            _eight_b_gf(), segment_count=5, duration_ms=40.0,
+        )
+        assert first.final_voltages_mV == second.final_voltages_mV
+        assert first.distance_from_equilibrium == second.distance_from_equilibrium
+        assert first.max_abs_net_current_mA_per_cm2 == (
+            second.max_abs_net_current_mA_per_cm2
+        )
+        for a, b in zip(first.states, second.states):
+            assert a.voltage_mV == b.voltage_mV
+            assert a.balance.net_mA_per_cm2 == b.balance.net_mA_per_cm2
+
+    def test_08_no_current_is_injected_by_default(self, eight_b_equilibrium_long):
+        """The default diagnostic is UNSTIMULATED, and says so in its note."""
+        report = eight_b_equilibrium_long
+        assert "UNSTIMULATED (no injected current)." in (
+            report.equilibrium_note
+        )
+        assert "Declared initial voltage -85.0 mV" in (
+            report.equilibrium_note
+        )
+        # And a deliberately stimulated run is labelled as such, so the two
+        # are never confused.
+        stimulated = _eight_b_validator().equilibrium_report(
+            _eight_b_gf(), segment_count=5, duration_ms=40.0,
+            injected_currents_A={"GF_axon#seg0": 1.0e-9},
+        )
+        assert "This run was STIMULATED." in stimulated.equilibrium_note
+
+    def test_09_no_early_exit_means_duration_controls_convergence(self):
+        """A longer run converges further, monotonically.
+
+        The diagnostic runs for a fixed number of steps rather than stopping
+        on a tolerance, so the caller controls convergence and can see the
+        residual fall.
+        """
+        validator = _eight_b_validator()
+        distances = []
+        for duration in (20.0, 40.0, 80.0):
+            report = validator.equilibrium_report(
+                _eight_b_gf(), segment_count=5, duration_ms=duration,
+            )
+            distances.append(report.distance_from_equilibrium)
+        assert distances[0] > distances[1] > distances[2]
+        assert distances[-1] < 1e-6
+
+    # --- 3: timestep sensitivity of the unstimulated equilibrium ------------
+
+    def test_10_the_equilibrium_is_insensitive_to_timestep(self, eight_b_timestep_sweep):
+        """Refining dt from 0.01 to 0.002 ms barely moves the resting voltage.
+
+        The reported difference is NUMERICAL. A small difference means the
+        fixed point is well resolved; it does NOT mean the value is
+        biologically correct.
+        """
+        comparison = eight_b_timestep_sweep
+        assert comparison.axis == "timestep"
+        assert len(comparison.per_setting) == 3
+        assert [dt for dt, _v in comparison.per_setting] == [
+            0.01, 0.005, 0.002
+        ]
+        for _dt, voltage in comparison.per_setting:
+            assert voltage == pytest.approx(-74.6696, abs=0.001)
+        # All three land on the same fixed point to well under a microvolt.
+        assert comparison.absolute_difference < 1e-6
+        assert comparison.units == "mV"
+        assert "NUMERICAL" in comparison.tolerance_label
+        assert "does NOT mean the voltage is biologically correct" in (
+            comparison.note
+        )
+
+    def test_11_the_equilibrium_current_balance_holds_at_every_timestep(self):
+        """Each timestep's own run is balanced, not just the coarsest."""
+        reports = _eight_b_validator().timestep_equilibrium_comparison(
+            _eight_b_gf(), timesteps_ms=(0.01, 0.005), duration_ms=40.0,
+        )
+        assert len(reports) == 2
+        for report in reports:
+            assert report.all_finite is True
+            assert report.max_abs_net_current_mA_per_cm2 < 1e-7
+            assert report.distance_from_equilibrium < 1e-5
+            # Same mechanism, same declared start, every time.
+            assert report.declared_initial_voltage_mV == -85.0
+            assert report.integration_method == (
+                "linearised_implicit_backward_euler"
+            )
+
+    def test_12_a_single_timestep_cannot_be_compared_against_itself(self):
+        """A comparison needs at least two settings, and says so."""
+        from biological_brain.dynamics.gf_equilibrium import (
+            GFActiveStateValidationError, GFActiveStateValidator,
+        )
+
+        validator = GFActiveStateValidator()
+        with pytest.raises(GFActiveStateValidationError) as excinfo:
+            validator.compare_equilibrium_voltage_across_timesteps(
+                _eight_b_gf(), timesteps_ms=(0.01,),
+            )
+        assert "At least two timesteps" in str(excinfo.value)
+        with pytest.raises(GFActiveStateValidationError):
+            validator.compare_equilibrium_voltage_across_subdivisions(
+                _eight_b_gf(), segment_counts=(11,),
+            )
+
+    def test_13_the_timestep_policy_is_still_not_widened(self):
+        """8B needs small timesteps but must not raise the policy ceiling."""
+        from biological_brain.dynamics.gf_active import GFActiveNumericalError
+        from biological_brain.dynamics.passive_cable import (
+            PASSIVE_CABLE_NUMERICAL_POLICY,
+        )
+
+        assert PASSIVE_CABLE_NUMERICAL_POLICY.max_timestep_ms == 0.01
+        assert PASSIVE_CABLE_NUMERICAL_POLICY.default_timestep_ms == 0.01
+        # A coarser timestep is still refused, at 8B exactly as at 8A.
+        with pytest.raises(GFActiveNumericalError):
+            _eight_b_validator().equilibrium_report(
+                _eight_b_gf(), timestep_ms=0.02,
+            )
+        with pytest.raises(GFActiveNumericalError):
+            _eight_b_validator().stimulus_response_report(
+                _eight_b_gf(), timestep_ms=1.0,
+            )
+
+    # --- 4: spatial subdivision sensitivity of the equilibrium --------------
+
+    def test_14_the_equilibrium_is_insensitive_to_subdivision(self, eight_b_subdivision_sweep):
+        """N = 5, 11 and 51 all reach the same resting voltage.
+
+        Only the EQUILIBRIUM is compared. Transient waveforms are explicitly
+        not expected to be invariant, because a point stimulus injected into
+        ONE compartment has a current density that depends on that
+        compartment's area.
+        """
+        comparison = eight_b_subdivision_sweep
+        assert comparison.axis == "subdivision"
+        assert [int(n) for n, _v in comparison.per_setting] == [5, 11, 51]
+        for _n, voltage in comparison.per_setting:
+            assert voltage == pytest.approx(-74.6696, abs=0.001)
+        # Subdivision independence is tighter than timestep independence,
+        # because refinement here changes no current and no density.
+        assert comparison.absolute_difference < 1e-8
+        assert "transient waveform is deliberately NOT" in comparison.note
+        assert "does not rescale the stimulus" in comparison.note
+
+    def test_15_each_subdivision_stays_finite_and_converges(self):
+        """Every subdivision is finite, uniform and balanced on its own."""
+        validator = _eight_b_validator()
+        for count in (5, 11, 51):
+            report = validator.equilibrium_report(
+                _eight_b_gf(), segment_count=count, duration_ms=40.0,
+            )
+            assert report.segment_count == count
+            assert report.all_finite is True
+            assert report.voltage_spread_mV < 1e-9
+            assert report.max_abs_net_current_mA_per_cm2 < 1e-7
+            assert report.distance_from_equilibrium < 1e-5
+            for state in report.states:
+                assert state.gates_in_unit_interval() is True
+                assert -100.0 < state.voltage_mV < 0.0
+
+    def test_16_refining_the_mesh_does_not_change_the_equilibrium(self):
+        """The resting voltage is a property of the membrane, not the mesh.
+
+        This is the physically meaningful statement behind goal 4: the
+        equilibrium is set by leak + nat + nap + k, so it must not move when
+        the discretization is refined.
+        """
+        voltages = {
+            count: _eight_b_validator().equilibrium_report(
+                _eight_b_gf(), segment_count=count, duration_ms=40.0,
+            ).mean_voltage_mV
+            for count in (5, 11, 51)
+        }
+        spread = max(voltages.values()) - min(voltages.values())
+        assert spread < 1e-8
+        assert len(set(voltages.values())) == len(voltages)
+
+    # --- 5: the model-reproduction stimulus fixture -------------------------
+
+    def test_17_the_stimulus_fixture_stays_a_model_fixture(self, eight_b_propagation):
+        """120 nA / 0.03 ms at x=0 is not reinterpreted as a sensory input."""
+        report = eight_b_propagation
+        assert report.amplitude_A == pytest.approx(120.0e-9)
+        assert report.amplitude_duration_ms == 0.03
+        assert report.onset_ms == 0.0
+        assert report.stimulus_location == 0.0
+        assert "NOT A BIOLOGICAL STIMULUS" in report.stimulus_source
+        assert "MODEL-REPRODUCTION FIXTURE" in report.fixture_note
+        assert "NOT A SENSORY OR SYNAPTIC STIMULUS" in report.fixture_note
+        # The words that would mark a reinterpretation are absent.
+        for banned in ("phototaxis", "looming", "escape behaviour triggered"):
+            assert banned not in report.fixture_note
+        assert "not compared against any experiment" in report.fixture_note
+        assert "quantised by the timestep" in report.fixture_note
+
+    def test_18_the_fixture_produces_a_finite_stimulus_evoked_response(self, eight_b_propagation):
+        """Peak, peak time, finiteness and the waveform observation."""
+        report = eight_b_propagation
+        assert report.all_finite is True
+        assert report.segment_id == "GF_axon#seg0"
+        assert report.observed_by_waveform_criterion is True
+        # The peak is below the Na reversal potential: the published density
+        # does not reach +65 mV here, and nothing clamps or fakes one.
+        assert 0.0 < report.peak_voltage_mV < 65.0
+        assert report.peak_time_ms > 0.0
+        assert report.peak_time_ms < report.duration_ms
+        assert report.depolarization_mV == pytest.approx(
+            report.peak_voltage_mV + 85.0, rel=1e-9
+        )
+        assert report.depolarization_mV > 100.0
+        # The trace both rises and falls, and stays bounded throughout.
+        assert report.min_voltage_mV > -100.0
+        assert report.max_voltage_mV == pytest.approx(report.peak_voltage_mV)
+        assert report.end_voltage_mV < report.peak_voltage_mV
+        assert report.end_voltage_mV > -85.0
+        assert "NUMERICAL" in report.tolerance_label
+
+    def test_19_propagation_to_the_distal_end_is_measurable(self, eight_b_propagation):
+        """Peak time increases with distance along the axon.
+
+        This is a measured delay between segments of THIS implementation. It
+        is not a conduction velocity, not a comparison with any published
+        latency, and not a claim about the giant fiber's real conduction.
+        """
+        report = eight_b_propagation
+        delays = report.propagation_delays_ms
+        assert len(delays) == 5
+        # The stimulus is at seg0, so its delay is exactly zero by definition.
+        assert delays[0][0] == "GF_axon#seg0"
+        assert delays[0][1] == 0.0
+        # Delay is non-negative and grows toward the distal end.
+        for _segment_id, delay in delays:
+            assert delay >= 0.0
+        values = [delay for _segment_id, delay in delays]
+        assert values == sorted(values)
+        # The whole 400 um axon is crossed in tens of microseconds at this
+        # timestep, which is a discretization statement, not a physiological
+        # one. The step at 0.01 ms means 10 us is the resolution limit.
+        assert 0.0 < values[-1] < 0.2
+        assert all(
+            abs(value / 0.01 - round(value / 0.01)) < 1e-9 for value in values
+        ), "delays must be quantised by the timestep"
+        assert "NOT a conduction velocity" in report.fixture_note
+
+    def test_20_the_stimulated_response_is_not_flat_in_space(self, eight_b_propagation):
+        """Different segments peak at different times, so 'the peak' needs a
+        segment named.
+
+        This is why StimulusResponseReport carries segment_id: the response
+        is not spatially uniform during the spike, and a peak quoted without
+        its location would be ambiguous.
+        """
+        report = eight_b_propagation
+        delays = dict(report.propagation_delays_ms)
+        proximal = delays["GF_axon#seg0"]
+        distal = delays["GF_axon#seg50"]
+        assert distal > proximal
+        # The distal delay is a small, non-zero fraction of one timestep at
+        # this coarse discretization, which is exactly the resolution limit
+        # the report is honest about.
+        assert 0.0 < distal <= 0.04 + 1e-9
+
+    def test_21_a_stimulus_out_of_range_is_refused(self):
+        """A segment index that does not exist is a validation error."""
+        from biological_brain.dynamics.gf_equilibrium import (
+            GFActiveStateValidationError, GFActiveStateValidator,
+        )
+
+        validator = GFActiveStateValidator()
+        with pytest.raises(GFActiveStateValidationError):
+            validator.stimulus_response_report(
+                _eight_b_gf(), segment_count=5, observe_segment_index=5,
+            )
+        with pytest.raises(GFActiveStateValidationError):
+            validator.stimulus_response_report(
+                _eight_b_gf(), segment_count=5, propagation_indices=(0, 9),
+            )
+
+    # --- 6: convergence of the stimulated response -------------------------
+
+    def test_22_the_stimulated_peak_converges_under_refinement(self, eight_b_stimulus_sweep):
+        """Peak and peak time move only slightly as dt is refined.
+
+        The scheme is linearised implicit and only first-order in the
+        gating/voltage coupling, so a non-zero difference under refinement is
+        the EXPECTED signature of that approximation. It is reported rather
+        than removed, and it is not evidence of biological inaccuracy.
+        """
+        peak, timing = eight_b_stimulus_sweep
+        assert peak.axis == "timestep"
+        assert timing.axis == "timestep"
+        assert len(peak.per_setting) == 3
+        assert len(timing.per_setting) == 3
+        # The peak moves by a fraction of a millivolt out of ~61 mV.
+        assert peak.absolute_difference < 0.5
+        assert peak.units == "mV"
+        # The peak time moves by well under a tenth of a millisecond.
+        assert timing.absolute_difference < 0.2
+        assert timing.units == "ms"
+        # Both label the tolerance numerical and name the first-order cause.
+        for comparison in (peak, timing):
+            assert "NUMERICAL" in comparison.tolerance_label
+        assert "FIRST-ORDER" in peak.note
+        assert "reported rather than removed" in peak.note
+        assert "NOT evidence of biological inaccuracy" in peak.note
+        # The peak is NOT invariant, which is the honest signature of a
+        # first-order scheme. If it were exactly constant, the stated
+        # limitation would not be real.
+        assert peak.absolute_difference > 0.0
+
+    def test_23_the_stimulated_peak_moves_consistently_under_refinement(self, eight_b_stimulus_sweep):
+        """Refinement moves the peak in a direction, not at random."""
+        peak, _timing = eight_b_stimulus_sweep
+        values = [value for _dt, value in peak.per_setting]
+        # Monotone: each halving of dt moves the peak the same way.
+        assert values[0] < values[1] < values[2]
+        # And the increments shrink, which is the convergence signature.
+        coarse = values[1] - values[0]
+        fine = values[2] - values[1]
+        assert fine < coarse
+
+    def test_24_the_stimulated_response_stays_finite_at_every_timestep(self):
+        """No timestep in the sweep produces a non-finite or runaway trace."""
+        validator = _eight_b_validator()
+        for dt in (0.01, 0.005):
+            report = validator.stimulus_response_report(
+                _eight_b_gf(), segment_count=5, duration_ms=2.0, timestep_ms=dt,
+            )
+            assert report.all_finite is True
+            assert -100.0 < report.min_voltage_mV < 65.0
+            assert 0.0 < report.peak_voltage_mV < 65.0
+            assert report.observed_by_waveform_criterion is True
+
+    # --- 7: 8A remains isolated --------------------------------------------
+
+    def test_25_eight_b_has_no_runtime_dependency_on_the_downstream_layers(self):
+        """7W, 7X, 7Y and 7Z are not imported, and that is measured not claimed.
+
+        The check reads 8B's own AST import list rather than trusting a
+        comment, so adding a later import would break it.
+        """
+        validator = _eight_b_validator()
+        imported = validator.imported_module_names()
+        joined = " ".join(imported)
+        for banned in (
+            "synaptic_abstraction", "motor_output_abstraction",
+            "looming_abstraction", "sensorimotor_integration",
+            "synaptic_mechanism_registry", "Exp2Syn", "exp2syn",
+        ):
+            assert banned not in joined, banned
+        assert validator.is_isolated_from_downstream_layers() is True
+        # 8B imports the 8A module it validates, and nothing else biological.
+        assert "gf_active" in imported
+        assert "morphology" in imported
+
+    def test_26_eight_b_imports_nothing_but_8a_and_the_morphology_type(self):
+        """The dependency set is minimal and explicit."""
+        imported = _eight_b_validator().imported_module_names()
+        stdlib = {"ast", "sys", "inspect", "typing", "dataclasses",
+                  "math", "functools", "itertools", "collections",
+                  "dataclasses.dataclass"}
+        relative = [
+            name for name in imported if "." not in name and name not in stdlib
+        ]
+        assert set(relative) == {"morphology", "gf_active"}
+        # No registry, no profile, no synapse layer is reached directly.
+        for banned in ("active_profiles", "active_mechanism_registry",
+                       "passive_cable", "electrical_representation"):
+            assert not any(banned in name for name in relative), banned
+
+    def test_27_eight_b_adds_no_mechanism_and_no_threshold(self):
+        """No new biology, and still no threshold of any kind."""
+        import ast
+        import inspect
+
+        from biological_brain.dynamics import gf_equilibrium, gf_active
+
+        source = inspect.getsource(gf_equilibrium)
+        tree = ast.parse(source)
+        names = {
+            node.id for node in ast.walk(tree) if isinstance(node, ast.Name)
+        } | {
+            node.attr for node in ast.walk(tree) if isinstance(node, ast.Attribute)
+        }
+        for banned in ("threshold", "rheobase", "v_thresh", "rest_offset",
+                       "offset_mV", "V_offset"):
+            assert banned not in names, banned
+        assigned = {
+            target.id
+            for node in ast.walk(tree) if isinstance(node, ast.Assign)
+            for target in node.targets
+            if isinstance(target, ast.Name)
+        }
+        for banned in ("THRESHOLD", "VTHRESH", "REST_OFFSET", "OFFSET_MV"):
+            assert banned not in assigned, banned
+        # The only .mod mechanisms 8B names are the three 8A already has.
+        for banned in ("gap2", "DmCa1D", "Slowpoke", "ShakB", "Shaker", "Para"):
+            assert banned not in {
+                record.mechanism_name
+                for record in _eight_b_validator().model.mechanism_records()
+            }
+        # And 8A's own no-threshold claim is still intact.
+        assert "NO GF spike threshold" in inspect.getsource(gf_active)
+
+    def test_28_eight_b_does_not_modify_the_eight_a_module(self):
+        """8A's equations and file are untouched by 8B.
+
+        The integration order, the gate update and the applied conductances are
+        read from the 8A model object rather than reimplemented, so a change
+        in 8A propagates to 8B instead of being shadowed by a copy.
+        """
+        from biological_brain.dynamics.gf_active import GFActiveAxonModel
+
+        validator = _eight_b_validator()
+        assert validator.model.__class__ is GFActiveAxonModel
+        # The 8A integration method string is the one actually used.
+        assert validator.model.numerical_policy.integration_method == (
+            "linearised_implicit_backward_euler"
+        )
+        assert validator.model.is_fully_implicit is False
+        # 8A's applied parameters are unchanged and un-copied.
+        network = validator.model.prepare(_eight_b_gf(), segment_count=1)
+        applied = {p.name: p.value for p in network.applied_parameters}
+        assert applied["g_Na"] == pytest.approx(0.3)
+        assert applied["E_Na"] == pytest.approx(65.0)
+        assert applied["E_K"] == pytest.approx(-74.0)
+
+    def test_29_the_scope_note_states_every_exclusion(self):
+        """Each exclusion is stated explicitly, not merely absent."""
+        note = _eight_b_validator().scope_note()
+        flat = " ".join(note.split())
+        assert "ADDS NO BIOLOGY" in flat
+        assert "not forced to the -85 mV leak reversal potential" in flat
+        assert "model-reproduction fixture" in flat
+        assert "is not a sensory input" in flat
+        assert "7U" in flat
+        for banned in ("DmCa1D", "Slowpoke", "ShakB", "Shaker", "Para"):
+            assert banned in flat, banned
+        assert "7W, 7X, 7Y" in flat
+        assert "NUMERICAL" in flat
+
+    # --- 8: 8A's own findings are preserved --------------------------------
+
+    def test_30_the_n1_n2_no_spike_observation_is_preserved(self):
+        """8A's finding that N=1 and N=2 do not spike is unchanged by 8B.
+
+        It is a genuine property of a point current injected into ONE
+        compartment of a coarsely discretised cable: the same 120 nA spread
+        over a larger membrane area is a smaller current density. 8B does NOT
+        rescale the stimulus to make them agree.
+        """
+        validator = _eight_b_validator()
+        observed = {}
+        for count in (1, 2, 5, 11, 51):
+            report = validator.stimulus_response_report(
+                _eight_b_gf(), segment_count=count, duration_ms=2.0,
+            )
+            observed[count] = report.observed_by_waveform_criterion
+        assert observed[1] is False
+        assert observed[2] is False
+        assert observed[5] is True
+        assert observed[11] is True
+        assert observed[51] is True
+        # And the stimulus was not touched to achieve that.
+        report = validator.stimulus_response_report(
+            _eight_b_gf(), segment_count=1, duration_ms=2.0,
+        )
+        assert report.amplitude_A == pytest.approx(120.0e-9)
+        assert report.amplitude_duration_ms == 0.03
+
+    def test_31_the_equilibrium_offset_is_reported_not_corrected(self, eight_b_equilibrium_long):
+        """The 10.3 mV displacement from E_leak is stated as a measurement.
+
+        A future change that moves the equilibrium would show up here as a
+        changed recorded value, which is the point of recording it.
+        """
+        from biological_brain.dynamics.gf_equilibrium import (
+            MEASURED_GF_EQUILIBRIUM_SUMMARY,
+        )
+        flat = " ".join(MEASURED_GF_EQUILIBRIUM_SUMMARY.split())
+        assert "-74.67" in flat
+        assert "does not force it there" in flat
+        assert "is a numerical fixed point of this implementation" in flat
+        assert "NOT claimed to be the giant fiber's biological" in flat
+        # The measured value matches what the diagnostic actually computes.
+        assert eight_b_equilibrium_long.mean_voltage_mV == pytest.approx(
+            -74.67, abs=0.01
+        )
+
+    def test_32_the_convenience_builder_uses_the_documented_defaults(self):
+        """build_validation_report agrees with the explicit call."""
+        from biological_brain.dynamics.gf_equilibrium import (
+            build_validation_report,
+        )
+
+        report = build_validation_report(
+            _eight_b_gf(), segment_count=5, duration_ms=40.0,
+        )
+        explicit = _eight_b_validator().equilibrium_report(
+            _eight_b_gf(), segment_count=5, duration_ms=40.0,
+        )
+        assert report.final_voltages_mV == explicit.final_voltages_mV
+        assert report.segment_count == 5
+        assert report.duration_ms == pytest.approx(40.0)
+
+
+# --- 3.0D-8C: electrical GFS coupling ---------------------------------------
+
+#: The numerical mechanism fixture used throughout these tests. It is NOT a
+#: biological GFS parameter: the project g_gap value is an unresolved 3.0D-7U
+#: unit conflict, so these tests validate the MECHANISM on numbers chosen to be
+#: easy to check by hand, and assert nothing about the biology.
+FIXTURE_G_NS = 1.0
+FIXTURE_V_PRESYNAPTIC_MV = -60.0
+FIXTURE_V_POSTSYNAPTIC_MV = -70.0
+FIXTURE_PROVENANCE = (
+    "NUMERICAL MECHANISM FIXTURE, NOT A BIOLOGICAL GFS PARAMETER. Chosen for "
+    "hand-checkability only. The real GFS gap-junction conductance is the "
+    "unresolved 3.0D-7U value and is never used as a live parameter here."
+)
+
+
+def _eight_c_junction(value=FIXTURE_G_NS, unit="nS"):
+    from biological_brain.dynamics.electrical_coupling import (
+        LinearGapJunction, explicit_conductance,
+    )
+
+    return LinearGapJunction(
+        explicit_conductance(value, unit, FIXTURE_PROVENANCE)
+    )
+
+
+class TestGFSElectricalCoupling:
+    """3.0D-8C: the live ModelDB gap2 electrical coupling.
+
+    THE THING THAT IS EASY TO GET WRONG HERE IS CONFLATION. There are three
+    distinct facts in play, and collapsing any two of them would assert
+    something no source supports:
+
+    A. the real GFS electrical synapse is a heterotypic ShakB junction that
+       RECTIFIES (Phelan et al. 2008) -- experimentally established, and
+       recorded here as provenance ONLY;
+    B. the published Augustin's ModelDB model implements a LINEAR OHMIC gap2 --
+       the published model mechanism, and the only thing 8C implements;
+    C. the numerical g_gap conductance is an UNRESOLVED 1000-fold unit conflict
+       at 3.0D-7U, with both sides preserved and neither preferred.
+
+    The second thing that is easy to get wrong is quietly picking a side of C.
+    8C supplies no default GFS conductance at all, and asking for the project
+    value raises instead of returning 135 uS, 0.135 uS or anything else.
+    """
+
+    # --- 1: the exact ModelDB gap2 equation --------------------------------
+
+    def test_01_the_equation_is_the_vendored_gap2_line_verbatim(self):
+        """i = (v - vgap)*g*(0.001), read from the vendored file itself."""
+        import os
+
+        import biological_brain
+        from biological_brain.dynamics.electrical_coupling import (
+            MECHANISM_GAP2, SOURCE_GAP2,
+        )
+
+        path = os.path.join(
+            os.path.dirname(biological_brain.__file__), "data",
+            "modeldb_245415", "channels", "gap2.mod",
+        )
+        with open(path, encoding="utf-8") as handle:
+            source = " ".join(handle.read().split())
+        assert "POINT_PROCESS gap2" in source
+        assert "NONSPECIFIC_CURRENT i" in source
+        assert "POINTER vgap" in source
+        assert "g = 0 (nanosiemens)" in source
+        assert "i (nanoamp)" in source
+        assert "i = (v - vgap)*g*(0.001)" in source
+        # 8C reproduces that line exactly, character for character.
+        assert _eight_c_junction().source_equation() == (
+            "i = (v - vgap)*g*(0.001)"
+        )
+        assert _eight_c_junction().mechanism_name == MECHANISM_GAP2
+        assert MECHANISM_GAP2 == "gap2"
+        assert SOURCE_GAP2
+
+    def test_02_the_numerical_fixture_reproduces_the_exact_current(self):
+        """g = 1 nS, V_pre = -60, V_post = -70 gives exactly -0.01 nA at the
+        gap2 attachment site.
+
+        By hand: (v - vgap) * g * 0.001 = (-70 - (-60)) * 1 * 0.001 = -0.01 nA.
+        1 mV * 1 nS is 1 picoamp, and 10 pA is 0.01 nA.
+        """
+        junction = _eight_c_junction()
+        result = junction.current(
+            FIXTURE_V_PRESYNAPTIC_MV, FIXTURE_V_POSTSYNAPTIC_MV
+        )
+        assert result.conductance_nS == 1.0
+        assert result.voltage_difference_mV == 10.0
+        assert result.gap2_i_at_postsynaptic_site_nA == pytest.approx(
+            -0.01, rel=1e-15
+        )
+        # Recomputed here independently of the stored field, so this checks the
+        # implementation rather than agreeing with itself.
+        assert result.matches_source_expression() is True
+        expected = (
+            (FIXTURE_V_POSTSYNAPTIC_MV - FIXTURE_V_PRESYNAPTIC_MV)
+            * 1.0 * 0.001
+        )
+        assert result.gap2_i_at_postsynaptic_site_nA == pytest.approx(
+            expected, rel=1e-15
+        )
+
+    def test_03_the_fixture_is_labelled_numerical_not_biological(self):
+        """The fixture says what it is, so it cannot be mistaken for a value."""
+        conductance = _eight_c_junction().conductance
+        assert "NUMERICAL MECHANISM FIXTURE" in conductance.provenance
+        assert "NOT A BIOLOGICAL GFS PARAMETER" in conductance.provenance
+        assert conductance.is_default is False
+        description = conductance.describe_conversion()
+        assert "NOT a default" in description
+        assert "NOT a resolution of the 3.0D-7U conflict" in description
+
+    # --- 2: explicit unit conversion ---------------------------------------
+
+    def test_04_nanoconversion_to_the_declared_unit_is_exact(self):
+        """nS, uS, pS and S all convert, and only ever once."""
+        from biological_brain.dynamics.electrical_coupling import (
+            CONDUCTANCE_UNITS_TO_NS,
+        )
+
+        # gap2.mod declares nanoSiemens, so that is the canonical unit.
+        assert CONDUCTANCE_UNITS_TO_NS == {
+            "nS": 1.0, "uS": 1.0e3, "pS": 1.0e-3, "S": 1.0e9,
+        }
+        assert _eight_c_junction(1.0, "nS").conductance.nanoSiemens == 1.0
+        assert _eight_c_junction(1.0, "uS").conductance.nanoSiemens == 1.0e3
+        assert _eight_c_junction(1000.0, "pS").conductance.nanoSiemens == 1.0
+        assert _eight_c_junction(1.0, "S").conductance.nanoSiemens == 1.0e9
+        # And the amperes, for the existing passive backend's convention.
+        assert _eight_c_junction(1.0, "nS").conductance.siemens == 1.0e-9
+        assert _eight_c_junction(
+            1.0, "nS"
+        ).conductance.amps_per_volt == 1.0e-9
+
+    def test_05_a_bare_number_without_a_unit_is_refused(self):
+        """The unit is never defaulted, because 7U is a UNIT disagreement."""
+        from biological_brain.dynamics.electrical_coupling import (
+            ElectricalCouplingUnitError, GapJunctionConductance,
+        )
+
+        with pytest.raises(ElectricalCouplingUnitError) as excinfo:
+            GapJunctionConductance(
+                value=1.0, unit="", provenance="x", is_default=False,
+            )
+        assert "1000-fold UNIT disagreement" in str(excinfo.value)
+        for bad in ("ns", "NS", "mS", "siemens", "1nS", None):
+            with pytest.raises(ElectricalCouplingUnitError):
+                GapJunctionConductance(
+                    value=1.0, unit=bad, provenance="x", is_default=False,
+                )
+
+    def test_06_ambiguous_conductance_values_are_refused(self):
+        """Non-finite, negative and non-numeric conductances all raise."""
+        from biological_brain.dynamics.electrical_coupling import (
+            ElectricalCouplingConductanceError, GapJunctionConductance,
+        )
+
+        for bad in (float("nan"), float("inf"), float("-inf")):
+            with pytest.raises(ElectricalCouplingConductanceError):
+                GapJunctionConductance(
+                    value=bad, unit="nS", provenance="x", is_default=False,
+                )
+        with pytest.raises(ElectricalCouplingConductanceError):
+            GapJunctionConductance(
+                value=-1.0, unit="nS", provenance="x", is_default=False,
+            )
+        with pytest.raises(ElectricalCouplingConductanceError):
+            GapJunctionConductance(
+                value="1.0", unit="nS", provenance="x", is_default=False,
+            )
+        # Zero is allowed: a junction with no conductance is a valid state.
+        assert GapJunctionConductance(
+            value=0.0, unit="nS", provenance="x", is_default=False,
+        ).nanoSiemens == 0.0
+
+    # --- 3/4/5: conservation, zero difference, sign, scaling ---------------
+
+    def test_07_current_is_conserved_across_the_junction(self):
+        """I_A + I_B == 0 exactly, for a spread of voltages and conductances."""
+        for g_value, g_unit in ((1.0, "nS"), (135.0, "nS"), (1.0, "uS")):
+            junction = _eight_c_junction(g_value, g_unit)
+            for v_pre in (-85.0, -70.0, -60.0, 0.0, 40.0, 65.0):
+                for v_post in (-85.0, -70.0, -60.0, 0.0, 40.0, 65.0):
+                    result = junction.current(v_pre, v_post)
+                    assert result.is_conserved is True
+                    assert (
+                        result.current_from_presynaptic_nA
+                        + result.current_from_postsynaptic_nA
+                    ) == 0.0
+                    assert result.current_from_presynaptic_nA == (
+                        pytest.approx(-result.current_from_postsynaptic_nA)
+                    )
+
+    def test_08_zero_current_when_the_terminals_are_equipotential(self):
+        """VA == VB gives exactly zero, and the result is still conserved."""
+        junction = _eight_c_junction()
+        for voltage in (-85.0, -74.66960677886935, -60.0, 0.0, 65.0):
+            result = junction.current(voltage, voltage)
+            assert result.current_from_presynaptic_nA == 0.0
+            assert result.current_from_postsynaptic_nA == 0.0
+            assert result.gap2_i_at_postsynaptic_site_nA == 0.0
+            assert result.voltage_difference_mV == 0.0
+            assert result.is_conserved is True
+            assert result.is_finite is True
+
+    def test_09_a_higher_presynaptic_voltage_drives_current_toward_the_postside(self):
+        """If VA > VB the current leaves A and enters B."""
+        junction = _eight_c_junction()
+        result = junction.current(
+            FIXTURE_V_PRESYNAPTIC_MV, FIXTURE_V_POSTSYNAPTIC_MV
+        )
+        assert FIXTURE_V_PRESYNAPTIC_MV > FIXTURE_V_POSTSYNAPTIC_MV
+        assert result.current_from_presynaptic_nA > 0.0
+        assert result.current_from_postsynaptic_nA < 0.0
+        # The current magnitude is 0.01 nA, i.e. 10 pA.
+        assert result.current_from_presynaptic_nA == pytest.approx(0.01)
+        assert result.current_from_presynaptic_A == pytest.approx(1.0e-11)
+        # Reversed polarity flips the sign but not the magnitude.
+        reversed_result = junction.current(
+            FIXTURE_V_POSTSYNAPTIC_MV, FIXTURE_V_PRESYNAPTIC_MV
+        )
+        assert reversed_result.current_from_presynaptic_nA == pytest.approx(
+            -0.01
+        )
+        assert abs(reversed_result.current_from_presynaptic_nA) == (
+            pytest.approx(abs(result.current_from_presynaptic_nA))
+        )
+
+    def test_10_the_current_is_linear_in_the_conductance(self):
+        """Doubling an explicit g doubles the current, exactly."""
+        base = _eight_c_junction(1.0, "nS").current(-60.0, -70.0)
+        double = _eight_c_junction(2.0, "nS").current(-60.0, -70.0)
+        assert double.current_from_presynaptic_nA == pytest.approx(
+            2.0 * base.current_from_presynaptic_nA, rel=1e-15
+        )
+        assert base.current_from_presynaptic_nA == pytest.approx(0.01)
+        assert double.current_from_presynaptic_nA == pytest.approx(0.02)
+        # And it is linear in the voltage difference too, not just the slope.
+        wide = _eight_c_junction(1.0, "nS").current(-50.0, -70.0)
+        assert wide.current_from_presynaptic_nA == pytest.approx(
+            2.0 * base.current_from_presynaptic_nA, rel=1e-15
+        )
+        # 0.5 uS is 500 nS, so the same 10 mV drives 500x the current of 1 nS.
+        # This is the unit path agreeing with the scaling, not a second law.
+        assert _eight_c_junction(
+            0.5, "uS"
+        ).current(-60.0, -70.0).current_from_presynaptic_nA == (
+            pytest.approx(500.0 * base.current_from_presynaptic_nA, rel=1e-15)
+        )
+        assert _eight_c_junction(
+            0.5, "uS"
+        ).current(-60.0, -70.0).current_from_presynaptic_nA == (
+            pytest.approx(5.0)
+        )
+        # And 500 pS is the same junction as 0.5 nS, reached from below.
+        assert _eight_c_junction(
+            500.0, "pS"
+        ).current(-60.0, -70.0).current_from_presynaptic_nA == (
+            pytest.approx(0.5 * base.current_from_presynaptic_nA, rel=1e-15)
+        )
+
+    # --- 7/8: no hidden default, and the unresolved value is refused -------
+
+    def test_11_there_is_no_hidden_default_gfs_conductance(self):
+        """No class or module constant can hand out a GFS conductance."""
+        import inspect
+
+        from biological_brain.dynamics import electrical_coupling as ec
+
+        # Constructing a junction without a conductance is impossible.
+        with pytest.raises(ec.ElectricalCouplingConductanceError):
+            ec.LinearGapJunction(None)
+        with pytest.raises(ec.ElectricalCouplingConductanceError):
+            ec.LinearGapJunction(135.0)
+        with pytest.raises(ec.ElectricalCouplingConductanceError):
+            ec.GFSCouplingNetwork(None)
+        # A conductance that claims to be a default is refused outright.
+        with pytest.raises(ec.ElectricalCouplingConductanceError) as excinfo:
+            ec.GapJunctionConductance(
+                value=135.0, unit="uS", provenance="x", is_default=True,
+            )
+        assert "NO DEFAULT GFS conductance" in str(excinfo.value)
+        # And no module-level numeric constant holds a GFS conductance.
+        numbers = {
+            name: value
+            for name, value in vars(ec).items()
+            if isinstance(value, (int, float)) and not isinstance(value, bool)
+        }
+        assert set(numbers) == {"GAP2_NANOAMP_FACTOR"}
+        assert ec.GAP2_NANOAMP_FACTOR == 0.001
+        for value in list(numbers.values()) + list(
+            ec.CONDUCTANCE_UNITS_TO_NS.values()
+        ):
+            assert value not in (135.0, 34.5, 0.135, 0.0345)
+
+    def test_12_the_unresolved_7u_value_is_refused_not_supplied(self):
+        """Asking for the project g_gap raises, with the conflict explained."""
+        from biological_brain.dynamics.electrical_coupling import (
+            GapsUnresolvedValue, from_unresolved_project_conductance,
+        )
+
+        with pytest.raises(
+            ec_unresolved_error()
+        ) as excinfo:
+            from_unresolved_project_conductance()
+        message = str(excinfo.value)
+        assert "REFUSING TO SUPPLY THE PROJECT g_gap VALUE" in message
+        assert "UNRESOLVED" in message
+        assert "135.0 uS" in message
+        assert "0.135 uS" in message
+        assert "does not choose between them" in message
+        assert "does not produce a corrected value" in message
+        # The refusal is also reachable as an object, and describes itself.
+        unresolved = GapsUnresolvedValue()
+        assert unresolved.status() == "UNRESOLVED"
+        assert len(unresolved.conflicts) == 2
+        described = unresolved.describe()
+        assert "UNRESOLVED" in described
+        assert "factor of 1000.0" in described
+        assert "supplies no default GFS conductance" in described
+        with pytest.raises(Exception):
+            unresolved.as_conductance()
+
+    def test_13_a_gfs_junction_cannot_be_built_without_an_explicit_value(self):
+        """The only way in is an explicit value WITH a unit."""
+        from biological_brain.dynamics.electrical_coupling import (
+            GFSCouplingNetwork, explicit_conductance,
+        )
+
+        network = GFSCouplingNetwork(
+            explicit_conductance(1.0, "nS", FIXTURE_PROVENANCE)
+        )
+        assert network.conductance.value == 1.0
+        assert network.conductance.unit == "nS"
+        assert network.conductance.is_default is False
+        # Building the GFS pair is possible, and only that.
+        with pytest.raises(TypeError):
+            GFSCouplingNetwork()
+
+    # --- 9/10: endpoints resolve through the existing registries ------------
+
+    def test_14_the_gf_to_ttm_endpoint_resolves_through_7v_and_7w(self):
+        """GF(1.0) -> TTMn medial dendrite(0.2), read from 7V, not restated."""
+        from biological_brain.dynamics.electrical_coupling import (
+            GFSCouplingTopology,
+        )
+        from biological_brain.synaptic_mechanism_registry import (
+            get_synaptic_mechanism_registry,
+        )
+
+        pair = GFSCouplingTopology().endpoints("GF_TTMn")
+        assert pair.coupling_id == "GF_TTMn"
+        assert pair.presynaptic.location == 1.0
+        assert pair.postsynaptic.location == 0.2
+        assert pair.presynaptic.section_id == "GF_axon"
+        assert pair.postsynaptic.section_id == "TTMn_medial_dendrite"
+        # The values come from the existing 7V records, with their line numbers.
+        registry = get_synaptic_mechanism_registry()
+        expected = {
+            record.name: record
+            for record in registry.quantities
+            if record.synapse_id == "GF_TTMn" and "location" in record.name
+        }
+        assert pair.presynaptic.location == expected[
+            "pre_location"
+        ].source_value
+        assert pair.postsynaptic.location == expected[
+            "post_location"
+        ].source_value
+        assert pair.presynaptic.source_line == expected["pre_location"].source_line
+        assert pair.postsynaptic.source_line == expected[
+            "post_location"
+        ].source_line
+        assert "3.0D-7V" in pair.presynaptic.registry_reference
+        assert "gfpn.py" in pair.presynaptic.source_file
+        # And the source's own verbatim text is carried, not retyped.
+        assert "1.0" in pair.presynaptic.source_value_text
+        assert "0.2" in pair.postsynaptic.source_value_text
+
+    def test_15_the_gf_to_psi_endpoint_resolves_through_7v_and_7w(self):
+        """GF(0.9) -> PSI(0.5), read from 7V, not restated."""
+        from biological_brain.dynamics.electrical_coupling import (
+            GFSCouplingTopology,
+        )
+        from biological_brain.synaptic_mechanism_registry import (
+            get_synaptic_mechanism_registry,
+        )
+
+        pair = GFSCouplingTopology().endpoints("GF_PSI")
+        assert pair.coupling_id == "GF_PSI"
+        assert pair.presynaptic.location == 0.9
+        assert pair.postsynaptic.location == 0.5
+        assert pair.presynaptic.section_id == "GF_axon"
+        assert pair.postsynaptic.section_id == "PSI_axon"
+        registry = get_synaptic_mechanism_registry()
+        expected = {
+            record.name: record
+            for record in registry.quantities
+            if record.synapse_id == "GF_PSI" and "location" in record.name
+        }
+        assert pair.presynaptic.location == expected["pre_location"].source_value
+        assert pair.postsynaptic.location == expected[
+            "post_location"
+        ].source_value
+        assert "0.9" in pair.presynaptic.source_value_text
+        assert "0.5" in pair.postsynaptic.source_value_text
+
+    def test_16_the_electrical_endpoint_reuses_the_source_parameter_names(self):
+        """gfpn.py POINTERs the gap at the same two locations as the synapse.
+
+        This is why reading the electrical endpoint from the 7V record is a
+        correctness point rather than a shortcut: the source wires gap2's vgap
+        with the same syn_pre_loc / syn_post_loc parameters the chemical
+        component uses, so there is one pair of locations, not two.
+        """
+        import os
+
+        import biological_brain
+
+        path = os.path.join(
+            os.path.dirname(biological_brain.__file__), "data",
+            "modeldb_245415", "gfpn.py",
+        )
+        with open(path, encoding="utf-8") as handle:
+            lines = handle.read().splitlines()
+        joined = " ".join(" ".join(line.split()) for line in lines)
+        assert (
+            "self.GF_TTMn_gap = neuron.h.gap2(self.TTMn_med("
+            "params['TTMn_syn_post_loc']))" in joined
+        )
+        assert (
+            "setpointer(self.GF(params['TTMn_syn_pre_loc'])._ref_v, 'vgap', "
+            "self.GF_TTMn_gap)" in joined
+        )
+        assert (
+            "self.GF_PSI_gap = neuron.h.gap2(self.PSI("
+            "params['PSI_syn_post_loc']))" in joined
+        )
+        # The 7V values are the ones those parameter names carry.
+        assert "'TTMn_syn_pre_loc': 1.0" in joined
+        assert "'TTMn_syn_post_loc': 0.2" in joined
+        assert "'PSI_syn_pre_loc': 0.9" in joined
+        assert "'PSI_syn_post_loc': 0.5" in joined
+
+    def test_17_only_the_two_electrical_couplings_exist(self):
+        """PSI -> DLMn is chemical with no electrical component, so it is out."""
+        from biological_brain.dynamics.electrical_coupling import (
+            ElectricalCouplingScopeError, GFSCouplingTopology,
+        )
+
+        topology = GFSCouplingTopology()
+        assert topology.coupling_ids == ("GF_TTMn", "GF_PSI")
+        assert len(topology.all_endpoints()) == 2
+        for bad in ("PSI_DLMn", "GF_TTMn_DLMn", ""):
+            with pytest.raises(ElectricalCouplingScopeError) as excinfo:
+                topology.endpoints(bad)
+            assert "CHEMICAL in the source" in str(excinfo.value)
+
+    # --- 11/12/13: no chemistry, no rectification, no Boltzmann ------------
+
+    def test_18_the_three_evidence_records_are_distinct(self):
+        """A is evidence, B is what is implemented, C is unresolved."""
+        from biological_brain.dynamics.electrical_coupling import (
+            GapJunctionEvidenceStatus, evidence_records,
+        )
+
+        records = {r.evidence_id: r for r in evidence_records()}
+        assert set(records) == {
+            "shakb_heterotypic_rectifying_junction",
+            "modeldb_gap2_linear_ohmic",
+            "g_gap_conductance_7u",
+        }
+        shakb = records["shakb_heterotypic_rectifying_junction"]
+        gap2 = records["modeldb_gap2_linear_ohmic"]
+        conductance = records["g_gap_conductance_7u"]
+        # A: experimentally established, and NOT implemented.
+        assert shakb.status == GapJunctionEvidenceStatus.EXPERIMENTALLY_ESTABLISHED
+        assert shakb.is_implemented_live is False
+        assert "Phelan" in shakb.source
+        assert "rectif" in shakb.description.lower()
+        # B: published model mechanism, and the ONLY live one.
+        assert gap2.status == GapJunctionEvidenceStatus.PUBLISHED_MODEL_MECHANISM
+        assert gap2.is_implemented_live is True
+        assert "245415" in gap2.source
+        # C: unresolved, and not a value.
+        assert conductance.status == (
+            GapJunctionEvidenceStatus.UNRESOLVED_UNIT_CONFLICT
+        )
+        assert conductance.is_implemented_live is False
+        # Three different statuses: the three things are not collapsed.
+        assert len({r.status for r in records.values()}) == 3
+
+    def test_19_the_shakb_evidence_record_can_never_be_marked_live(self):
+        """Marking the biological evidence as implemented is refused."""
+        import dataclasses
+
+        from biological_brain.dynamics.electrical_coupling import (
+            GapJunctionEvidenceStatus, EvidenceRecord, evidence_records,
+        )
+
+        shakb = {
+            r.evidence_id: r
+            for r in evidence_records()
+        }["shakb_heterotypic_rectifying_junction"]
+        with pytest.raises(ValueError) as excinfo:
+            dataclasses.replace(
+                shakb,
+                kind=GapJunctionEvidenceStatus.EXPERIMENTALLY_ESTABLISHED,
+                is_implemented_live=True,
+            )
+        assert "EVIDENCE ONLY" in str(excinfo.value)
+        assert "linear gap2 mechanism" in str(excinfo.value)
+
+    def test_20_no_shakb_rectification_is_implemented(self):
+        """The mechanism is linear, ohmic, and says it is not rectifying."""
+        junction = _eight_c_junction()
+        assert junction.is_rectifying is False
+        limitations = junction.limitations()
+        assert "LINEAR OHMIC COUPLING" in limitations
+        assert "PUBLISHED MODEL MECHANISM" in limitations
+        assert "not a model of the biological rectifying junction" in limitations
+        assert "NEITHER that rectification" in limitations
+        # A rectifying junction would give a different current in each
+        # direction's reverse; a linear one is exactly antisymmetric.
+        forward = junction.current(-60.0, -70.0)
+        backward = junction.current(-70.0, -60.0)
+        assert forward.current_from_presynaptic_nA == (
+            pytest.approx(-backward.current_from_presynaptic_nA, rel=1e-15)
+        )
+        # The conductance does not depend on the voltage across it.
+        conductances = {
+            junction.current(v_pre, v_post).conductance_nS
+            for v_pre in (-85.0, -60.0, 0.0, 65.0)
+            for v_post in (-85.0, -60.0, 0.0, 65.0)
+        }
+        assert len(conductances) == 1
+
+    def test_21_no_xenopus_or_oocyte_boltzmann_coefficient_is_a_parameter(self):
+        """No expression-system constant appears as a live value."""
+        import ast
+        import inspect
+
+        from biological_brain.dynamics import electrical_coupling as ec
+
+        source = inspect.getsource(ec)
+        tree = ast.parse(source)
+        names = {
+            node.id for node in ast.walk(tree) if isinstance(node, ast.Name)
+        } | {
+            node.attr for node in ast.walk(tree) if isinstance(node, ast.Attribute)
+        }
+        for banned in ("boltzmann", "vhalf", "v_half", "q_temp", "slope",
+                       "oocyte", "xenopus", "egna", "shift"):
+            assert banned not in names, banned
+        assigned = {
+            target.id
+            for node in ast.walk(tree) if isinstance(node, ast.Assign)
+            for target in node.targets
+            if isinstance(target, ast.Name)
+        }
+        for banned in ("BOLTZMANN", "VHALF", "EGNA", "Q_TEMP", "SLOPE"):
+            assert banned not in assigned, banned
+        # The only numerics are the unit-conversion factors.
+        assert ec.GAP2_NANOAMP_FACTOR == 0.001
+        assert set(ec.CONDUCTANCE_UNITS_TO_NS) == {"nS", "uS", "pS", "S"}
+        # The oocyte evidence is named only to say it is not used.
+        assert "oocyte" in source
+        assert "are NOT imported here" in source
+
+    def test_22_no_chemical_synapse_behaviour_is_added(self):
+        """8C implements the electrical half of the mixed synapses only."""
+        import ast
+        import inspect
+
+        from biological_brain.dynamics import electrical_coupling as ec
+        from biological_brain.synaptic_abstraction import (
+            get_synaptic_abstraction,
+        )
+
+        source = inspect.getsource(ec)
+        tree = ast.parse(source)
+        calls = {
+            node.func.id
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+        }
+        for banned in ("Exp2Syn", "exp2syn", "synaptic_current", "synapse"):
+            assert banned not in calls, banned
+        # 7W still records both mixed connections as specification only.
+        abstraction = get_synaptic_abstraction()
+        for coupling_id in ("GF_TTMn", "GF_PSI"):
+            connection = [
+                c for c in abstraction.connections
+                if c.synapse_id == coupling_id
+            ][0]
+            assert connection.live_solver_eligible is False
+            assert connection.chemical_mechanism == "Exp2Syn"
+            assert connection.electrical_mechanism == "gap2"
+        # And 8C says so on the network it builds.
+        from biological_brain.dynamics.electrical_coupling import (
+            GFSCouplingNetwork, explicit_conductance,
+        )
+
+        network = GFSCouplingNetwork(
+            explicit_conductance(1.0, "nS", FIXTURE_PROVENANCE)
+        )
+        limitations = network.limitations()
+        assert "implements no chemical synapse" in limitations
+        assert "live_solver_eligible False" in limitations
+        assert "Exp2Syn" in limitations
+        # 8C produces only an electrical current for either connection, and the
+        # result object carries nothing else.
+        currents = network.currents_from_active_gf(
+            -60.0, {"GF_TTMn": -70.0, "GF_PSI": -70.0}
+        )
+        for result in currents.values():
+            for attribute in ("chemical_current_nA", "chemical_current_A",
+                              "reversal_potential_mV", "decay_time_constant_ms",
+                              "conductance_peak_pS", "releases"):
+                assert not hasattr(result, attribute), attribute
+
+    # --- 14: 7U is untouched ------------------------------------------------
+
+    def test_23_seven_u_remains_unchanged_and_unresolved(self):
+        """Both sides preserved, no preferred side, no corrected value."""
+        from biological_brain.source_reconciliation import (
+            ResolutionStatus, get_source_reconciliation_registry,
+        )
+
+        registry = get_source_reconciliation_registry()
+        unresolved = [registry.get(c) for c in registry.unresolved()]
+        assert len(unresolved) == 2
+        for conflict in unresolved:
+            assert conflict.resolution_status == ResolutionStatus.UNRESOLVED
+            assert conflict.preferred_side is None
+            assert conflict.both_sides_preserved is True
+            assert conflict.discrepancy_factor == 1000.0
+            assert conflict.paper_side.unit == "uS"
+            assert conflict.modeldb_side.unit == "nS"
+        young = registry.get("g_gap_young_unit_conflict")
+        old = registry.get("g_gap_old_unit_conflict")
+        assert young.paper_side.value == 135.0
+        assert young.modeldb_side.value == 135.0
+        assert old.paper_side.value == 34.5
+        assert old.modeldb_side.value == 34.5
+        # 8C names both ids when it refuses, so the refusal points at 7U.
+        from biological_brain.dynamics.electrical_coupling import (
+            GapsUnresolvedValue,
+        )
+
+        assert set(GapsUnresolvedValue.conflict_ids) == set(
+            registry.unresolved()
+        )
+
+    def test_24_8c_never_states_a_preferred_side_or_a_corrected_value(self):
+        """No constant, note or exception text in 8C picks a side."""
+        import inspect
+
+        from biological_brain.dynamics import electrical_coupling as ec
+
+        source = inspect.getsource(ec)
+        # 8C may quote both numbers to explain the conflict, but must not say
+        # which one it believes.
+        for banned in ("preferred side is", "correct value is",
+                       "resolved value", "the true conductance is",
+                       "we conclude", "therefore g_gap is"):
+            assert banned not in source, banned
+        note = " ".join(ec.scope_note().split())
+        assert "does not choose 135 uS" in note
+        assert "does not choose 0.135 uS" in note
+        assert "does not create a corrected value" in note
+        assert "NO DEFAULT GFS CONDUCTANCE" in note
+
+    # --- 15: 8A voltage as the presynaptic source -------------------------
+
+    def test_25_the_8a_gf_voltage_feeds_the_junction(self):
+        """A live 8A segment voltage is usable directly as the presynaptic v.
+
+        8A is not modified, wrapped or subclassed; the voltage is simply read
+        from its state and handed to the same algebraic law.
+        """
+        from biological_brain.dynamics.electrical_coupling import (
+            GFSCouplingNetwork, explicit_conductance,
+        )
+        from biological_brain.dynamics.gf_active import (
+            GFActiveAxonModel, MODELDB_GF_STIMULUS_AMPLITUDE_A,
+            MODELDB_GF_STIMULUS_DURATION_MS,
+        )
+        from biological_brain.morphology_builder import (
+            build_gfs_compartment_models,
+        )
+
+        model = build_gfs_compartment_models()["GF"]
+        model.passive_profile_name = PROFILE_AUGUSTIN_2019_GFS_PASSIVE
+        active = GFActiveAxonModel()
+        network = active.prepare(model, segment_count=11)
+        state = active.initial_state(network)
+        for step in range(120):
+            active.step(
+                network, state,
+                injected_currents_A=(
+                    {network.segment_ids[0]: MODELDB_GF_STIMULUS_AMPLITUDE_A}
+                    if step < 3 else {}
+                ),
+                timestep_ms=0.01,
+            )
+        observed = network.segment_ids[5]
+        gf_voltage = state[observed].voltage_mV
+        assert gf_voltage != 0.0
+        assert gf_voltage > -85.0
+
+        coupling = GFSCouplingNetwork(
+            explicit_conductance(1.0, "nS", FIXTURE_PROVENANCE)
+        )
+        currents = coupling.currents_from_active_gf(
+            gf_voltage, {"GF_TTMn": -70.0, "GF_PSI": -70.0}
+        )
+        assert set(currents) == {"GF_TTMn", "GF_PSI"}
+        for result in currents.values():
+            assert result.is_conserved is True
+            assert result.is_finite is True
+            assert result.presynaptic_voltage_mV == gf_voltage
+            # The junction is linear, so the current follows the 8A voltage
+            # exactly: (gf_voltage - (-70)) * 1 nS * 0.001.
+            expected = (gf_voltage + 70.0) * 1.0 * 0.001
+            assert result.current_from_presynaptic_nA == pytest.approx(
+                expected, rel=1e-12
+            )
+        # And the direct method is the same law, with nothing added.
+        junction = _eight_c_junction()
+        direct = junction.current_from_active_membrane(gf_voltage, -70.0)
+        assert direct.current_from_presynaptic_nA == pytest.approx(
+            currents["GF_TTMn"].current_from_presynaptic_nA, rel=1e-15
+        )
+
+    def test_26_8a_is_not_modified_by_8c(self):
+        """8C adds no behaviour to 8A and 8A keeps its own contract."""
+        from biological_brain.dynamics.gf_active import GFActiveAxonModel
+        from biological_brain.dynamics.electrical_coupling import (
+            GFSCouplingNetwork, explicit_conductance,
+        )
+
+        assert not hasattr(GFActiveAxonModel, "gap_junction")
+        assert not hasattr(GFActiveAxonModel, "electrical_coupling")
+        model = GFActiveAxonModel()
+        assert model.is_fully_implicit is False
+        assert model.name == "gf_active_v0"
+        # 8C's network carries no reference back into 8A's state.
+        network = GFSCouplingNetwork(
+            explicit_conductance(1.0, "nS", FIXTURE_PROVENANCE)
+        )
+        for junction in network.junctions:
+            assert junction.is_rectifying is False
+
+    # --- 16: no downstream active mechanisms -------------------------------
+
+    def test_27_ttm_psi_and_dlmn_have_no_active_dynamics(self):
+        """8C gives the downstream neurons no membrane, active or otherwise."""
+        from biological_brain.dynamics.electrical_coupling import (
+            GFSCouplingNetwork, explicit_conductance,
+        )
+
+        network = GFSCouplingNetwork(
+            explicit_conductance(1.0, "nS", FIXTURE_PROVENANCE)
+        )
+        for junction in network.junctions:
+            for attribute in (
+                "nat_rates", "nap_rates", "k_rates", "g_nat", "g_k",
+                "initial_state", "step",
+            ):
+                assert not hasattr(junction, attribute), attribute
+        # A postsynaptic voltage must be supplied, because there is no TTMn or
+        # PSI membrane for 8C to produce one from.
+        with pytest.raises(Exception) as excinfo:
+            network.currents_from_active_gf(-60.0)
+        assert "not live active neurons" in str(excinfo.value)
+        assert "the caller must supply the postsynaptic voltage" in str(
+            excinfo.value
+        )
+        # And the refusal says so rather than inventing a neuron.
+        assert "gives TTMn, PSI and DLMn no active membrane dynamics" in (
+            network.limitations()
+        )
+
+    def test_28_no_8c_import_reaches_a_downstream_active_mechanism(self):
+        """AST check: 8C imports 8A at most, and no active-mechanism layer."""
+        import ast
+        import inspect
+
+        from biological_brain.dynamics import electrical_coupling as ec
+
+        tree = ast.parse(inspect.getsource(ec))
+        imported = []
+        gf_active_names = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom):
+                if node.module:
+                    imported.append(node.module)
+                    if node.module == "gf_active":
+                        gf_active_names.extend(
+                            alias.name for alias in node.names
+                        )
+            elif isinstance(node, ast.Import):
+                imported.extend(a.name for a in node.names)
+        joined = " ".join(imported)
+        # 8C must not reach a downstream active-mechanism layer, so it never
+        # imports 8B or any abstraction layer, and it never imports the
+        # dynamics package wholesale.
+        for banned in (
+            "gf_equilibrium", "dynamics", "looming_abstraction",
+            "sensorimotor_integration", "motor_output_abstraction",
+        ):
+            assert banned not in joined, banned
+        # 8C does import gf_active, and deliberately so: MECHANISM_GAP2 has
+        # exactly one source of truth, the 8A module that first names the
+        # vendored mechanism. That import must stay a NAME-ONLY import. If 8C
+        # ever starts pulling in an 8A model, network or state class it could
+        # reach a neuron it has no business driving, so assert the imported
+        # names rather than just the module.
+        assert "gf_active" in joined
+        assert gf_active_names == ["MECHANISM_GAP2"]
+        for banned_name in (
+            "GFActiveAxonModel", "GFActiveNetwork", "GFActiveSegmentState",
+            "GFActiveStateValidator", "apply_step",
+        ):
+            assert banned_name not in gf_active_names, banned_name
+        # It reads provenance and synapse topology, which is all it needs.
+        for required in (
+            "provenance", "source_reconciliation", "synaptic_mechanism_registry",
+            "synaptic_abstraction",
+        ):
+            assert required in joined, required
+
+    def test_29_no_sensory_input_or_behaviour_is_connected(self):
+        """8C is a membrane mechanism, not a pathway or a decision rule."""
+        import ast
+        import inspect
+
+        from biological_brain.dynamics import electrical_coupling as ec
+
+        source = inspect.getsource(ec)
+        tree = ast.parse(source)
+        assigned = {
+            target.id
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Assign)
+            for target in node.targets
+            if isinstance(target, ast.Name)
+        }
+        for banned in (
+            "threshold", "rheobase", "behaviour", "behavior", "escape_state",
+            "sensory_current", "looming", "motor_command", "LIGHT_LEVEL",
+        ):
+            assert banned not in assigned, banned
+        assert "no sensory input and no behavior is implemented" in (
+            ec.scope_note()
+        )
+
+    def test_30_the_reported_slowest_gate_is_the_argmax_of_the_rates(self):
+        """The reported name and tau come from one argmax, not a constant.
+
+        8B used to report a hardcoded "nat_h" next to a separately computed
+        maximum, so the name and the value could disagree. Both must now come
+        from the same argmax over the live rate expressions, which is what makes
+        the name track the source instead of restating it.
+        """
+        import inspect
+
+        import biological_brain.dynamics.gf_equilibrium as ge
+        from biological_brain.dynamics.gf_active import GFActiveAxonModel
+
+        model = GFActiveAxonModel()
+        report = _eight_b_validator().equilibrium_report(
+            _eight_b_gf(), segment_count=5, duration_ms=400.0,
+        )
+        # The module no longer carries a hardcoded winner.
+        assert not hasattr(ge, "_SLOWEST_GATE_NAME")
+
+        # At the equilibrium the report itself settles on, recomputing the
+        # argmax by hand must reproduce BOTH reported fields.
+        voltage = report.final_voltages_mV[0]
+        candidates = {
+            "nat_m": model.nat_rates.mtau_ms(voltage),
+            "nat_h": model.nat_rates.htau_ms(voltage),
+            "nap_m": model.nap_rates.tau_ms(voltage),
+            "k_m": model.k_rates.tau_ms(voltage),
+        }
+        expected_name = max(candidates, key=candidates.get)
+        expected_tau = candidates[expected_name]
+        assert report.slowest_gate_name == expected_name
+        assert report.slowest_gate_tau_ms == pytest.approx(expected_tau)
+        # And the helper returns them as one pair.
+        name, tau = ge._slowest_gate_tau(model, voltage)
+        assert (name, tau) == (expected_name, expected_tau)
+        # The name is a real gate key, and it is genuinely the slowest here.
+        assert expected_name in candidates
+        assert expected_tau == max(candidates.values())
+
+    def test_31_the_convergence_label_matches_what_is_computed(self):
+        """The label must describe the final step, not an uncomputed window.
+
+        8B stored only the last per-step change while the label claimed a max
+        over a trailing window. No window is computed, so the label must not
+        claim one.
+        """
+        import math
+
+        from biological_brain import STATE_STEP_CHANGE_LABEL
+
+        label = STATE_STEP_CHANGE_LABEL
+        assert "FINAL PER-STEP" in label
+        assert "LAST TIMESTEP ONLY" in label
+        assert "OVER THE TRAILING WINDOW," not in label
+        assert "NOT a maximum over a trailing window" in label
+        # It is still declared a numerical criterion, not a biological one.
+        assert "numerical fixed-point detection criterion" in label
+        assert "nothing about a real neuron's resting state" in label
+        # And the value it labels is finite and reported.
+        report = _eight_b_validator().equilibrium_report(
+            _eight_b_gf(), segment_count=5, duration_ms=400.0,
+        )
+        assert report.distance_label == STATE_STEP_CHANGE_LABEL
+        assert math.isfinite(report.distance_from_equilibrium)
+        assert report.distance_from_equilibrium >= 0.0
+
+    def test_32_the_observation_floor_is_a_documented_diagnostic_level(self):
+        """The 40 mV level is a numerical criterion, not a spike threshold.
+
+        Fix 4 required this to stop looking like an undocumented biological
+        threshold. It must now carry a named constant and an explicit note
+        saying it is a diagnostic level, and the value itself is unchanged.
+        """
+        import inspect
+
+        import biological_brain.dynamics.gf_equilibrium as ge
+
+        assert ge.WAVEFORM_OBSERVATION_FLOOR_MV == 40.0
+        note = ge.WAVEFORM_OBSERVATION_FLOOR_NOTE
+        assert "NUMERICAL DIAGNOSTIC CRITERION" in note
+        assert "NOT A BIOLOGICAL THRESHOLD" in note
+        assert "not a GF spike threshold" in note
+        assert "not a rheobase" in note
+        # The default parameter is that constant, not a bare literal, and the
+        # caller can still override it.
+        default = inspect.signature(
+            ge.GFActiveStateValidator.stimulus_response_report
+        ).parameters["observation_floor_mV"].default
+        assert default == ge.WAVEFORM_OBSERVATION_FLOOR_MV
+        # The report that consumes it is still labelled as a numerical fixture,
+        # and the boolean it produces is a diagnostic observation, not a claim.
+        report = _eight_b_validator().stimulus_response_report(
+            _eight_b_gf(), segment_count=5, duration_ms=2.0,
+        )
+        assert isinstance(report.observed_by_waveform_criterion, bool)
+        assert "NUMERICAL" in report.tolerance_label
+        assert "FIXTURE" in report.fixture_note
+        # Overriding the floor is allowed and changes the criterion's wording.
+        overridden = _eight_b_validator().stimulus_response_report(
+            _eight_b_gf(), segment_count=5, duration_ms=2.0,
+            observation_floor_mV=1.0,
+        )
+        assert isinstance(overridden.observed_by_waveform_criterion, bool)
+
+
+def ec_unresolved_error():
+    """The refusal type 8C raises for the unresolved 3.0D-7U value."""
+    from biological_brain.dynamics.electrical_coupling import (
+        ElectricalCouplingUnresolvedValueError,
+    )
+
+    return ElectricalCouplingUnresolvedValueError
+
+
+# --- 3.0D-8D: the live TTMn active neuron -----------------------------------
+
+#: 3.0D-8D's own direct-stimulation amplitude. This is a NUMERICAL
+#: MODEL-REPRODUCTION FIXTURE chosen by 3.0D-8D. It is NOT a biological TTMn
+#: stimulus, NOT a TTMn rheobase and NOT a TTMn threshold. The 120 nA / 0.03 ms
+#: value belongs to the paper's GF circuit simulation and is deliberately NOT
+#: reused for TTMn: gfpn.py injects that stimulus into the GF, and no
+#: vendored source states a TTMn direct-stimulation amplitude.
+FIXTURE_TTMN_AMPLITUDE_A = 50.0e-9
+FIXTURE_TTMN_DURATION_MS = 0.03
+
+
+def _eight_d_model(**overrides):
+    from biological_brain.dynamics.ttmn_active import TTMActiveAxonModel
+
+    return TTMActiveAxonModel(**overrides)
+
+
+def _eight_d_ttmn():
+    """The existing 3.0D-7B TTMn compartment model on the 3.0D-7F profile."""
+    from biological_brain.morphology_builder import build_gfs_compartment_models
+
+    model = build_gfs_compartment_models()["TTMn"]
+    model.passive_profile_name = PROFILE_AUGUSTIN_2019_GFS_PASSIVE
+    return model
+
+
+def _eight_d_network(segment_count=11):
+    return _eight_d_model().prepare_ttmn(
+        _eight_d_ttmn(), segment_count=segment_count
+    )
+
+
+class TestTTMnActiveNeuron:
+    """3.0D-8D: the live TTMn active neuron.
+
+    THE POINT OF THIS CHECKPOINT IS REUSE. The TTMn axon is made live by the
+    SAME nat/nap/k engine 3.0D-8A built and validated, configured for a
+    different neuron and a different section. It is not a second copy of the
+    mechanism, and it is not a special-case GF. So the tests below spend most
+    of their effort proving two negative facts that are easy to get wrong:
+    that the equations are shared rather than duplicated, and that the TTMn
+    dendrites are genuinely passive rather than merely labelled passive.
+
+    The other thing easy to get wrong is provenance. Every parameter here is a
+    PUBLISHED COMPUTATIONAL-MODEL parameter, not a TTMn measurement, and the
+    direct-stimulation amplitude is a solver fixture rather than a biological
+    input. Augustin et al. 2019's GF circuit stimulus is 120 nA / 0.03 ms and
+    is not a TTMn stimulus, so borrowing it would be an invented claim.
+    """
+
+    # --- 1: morphology resolves ------------------------------------------
+
+    def test_01_the_ttmn_morphology_resolves_from_the_existing_builder(self):
+        """TTMn comes from the 3.0D-7B builder; 8D defines no geometry."""
+        model = _eight_d_ttmn()
+        assert model.neuron_id == "TTMn"
+        assert set(model.compartments) == {
+            "TTMn_soma",
+            "TTMn_axon",
+            "TTMn_medial_dendrite",
+            "TTMn_lateral_dendrite",
+        }
+        # Every length and diameter that EXISTS carries a source-backed
+        # provenance, and 8D does not add any compartment of its own. The
+        # soma has no length, so its length provenance is correctly UNKNOWN.
+        for compartment in model.compartments.values():
+            for field in ("length_um", "diameter_um"):
+                record = getattr(compartment.provenance, field)
+                if getattr(compartment.geometry, field) is None:
+                    assert record.category.value == "UNKNOWN"
+                    assert record.source == ""
+                    continue
+                assert "Augustin" in record.source, (compartment.compartment_id, field)
+                assert record.category.value == "PUBLISHED_MODEL_PARAMETER"
+        # The soma carries diameter but no cable length, as 3.0D-7C records.
+        assert model.compartments["TTMn_soma"].geometry.length_um is None
+        assert model.is_electrically_excluded("TTMn_soma")
+
+    # --- 2, 3, 4: the three section geometries ---------------------------
+
+    def test_02_the_active_axon_is_fifty_by_six(self):
+        """TTMn axon: length 50 um, diameter 6 um."""
+        from biological_brain import TTMN_ACTIVE_SECTION_ID
+
+        assert TTMN_ACTIVE_SECTION_ID == "TTMn_axon"
+        geometry = _eight_d_ttmn().compartments["TTMn_axon"].geometry
+        assert geometry.length_um == 50.0
+        assert geometry.diameter_um == 6.0
+
+    def test_03_the_medial_dendrite_is_sixty_by_six(self):
+        """TTMn medial dendrite: length 60 um, diameter 6 um."""
+        geometry = _eight_d_ttmn().compartments[
+            "TTMn_medial_dendrite"
+        ].geometry
+        assert geometry.length_um == 60.0
+        assert geometry.diameter_um == 6.0
+
+    def test_04_the_lateral_dendrite_is_thirty_by_six(self):
+        """TTMn lateral dendrite: length 30 um, diameter 6 um."""
+        geometry = _eight_d_ttmn().compartments[
+            "TTMn_lateral_dendrite"
+        ].geometry
+        assert geometry.length_um == 30.0
+        assert geometry.diameter_um == 6.0
+
+    # --- 5: the computational topology ------------------------------------
+
+    def test_05_the_topology_connects_both_dendrites_to_the_axon(self):
+        """medial -> axon and lateral -> axon, read from the existing 7X."""
+        from biological_brain.computational_topology import (
+            get_computational_topology,
+        )
+
+        topology = get_computational_topology(_eight_d_ttmn())
+        assert topology is not None
+        pairs = {
+            (c.child_section_id, c.parent_section_id)
+            for c in topology.connections
+            if c.child_section_id.startswith("TTMn")
+        }
+        assert pairs == {
+            ("TTMn_medial_dendrite", "TTMn_axon"),
+            ("TTMn_lateral_dendrite", "TTMn_axon"),
+        }
+        # The connections carry the gfpn.py provenance, and 8D invents none.
+        for connection in topology.connections:
+            if connection.child_section_id.startswith("TTMn"):
+                assert connection.source_file == "gfpn.py"
+                assert connection.source_line
+                assert "connect" in connection.source_statement
+        # And they are real in the prepared network: both dendrites reach the
+        # proximal axon segment through the topology, not by being wired here.
+        network = _eight_d_network()
+        parents = {
+            c.parent_id for c in network.network.connections
+            if c.child_id in {
+                "TTMn_medial_dendrite", "TTMn_lateral_dendrite",
+            }
+        }
+        assert parents == {"TTMn_axon#seg0"}
+        assert all(
+            c.resistance_ohm > 0.0 for c in network.network.connections
+        )
+
+    # --- 6, 7: only the axon is active, the dendrites are passive ---------
+
+    def test_06_only_the_axon_is_active(self):
+        """Exactly one active section, and it is TTMn_axon."""
+        from biological_brain import TTMN_PASSIVE_SECTION_IDS
+
+        network = _eight_d_network()
+        roles = _eight_d_model().section_roles(network)
+        assert roles.active_section_ids == ("TTMn_axon",)
+        assert set(roles.passive_section_ids) == set(TTMN_PASSIVE_SECTION_IDS)
+        assert roles.is_active_section("TTMn_axon")
+        assert not roles.is_active_section("TTMn_medial_dendrite")
+        assert not roles.is_active_section("TTMn_lateral_dendrite")
+        # The role report is read back off the network, and it says so.
+        assert "read back off the prepared network" in roles.basis
+        # Every active compartment derives from the axon and nothing else.
+        sources = {
+            c.source_section_id for c in network.network.compartments
+            if network.is_active(c.compartment_id)
+        }
+        assert sources == {"TTMn_axon"}
+        assert network.active_compartment_ids == tuple(
+            f"TTMn_axon#seg{i}" for i in range(11)
+        )
+
+    def test_07_both_dendrites_remain_genuinely_passive(self):
+        """Passive means ZERO active conductance, not just a passive label."""
+
+        import math
+        """Passive means ZERO active conductance, not just a passive label."""
+        model = _eight_d_model()
+        network = model.prepare_ttmn(_eight_d_ttmn(), segment_count=11)
+        state = model.initial_state(network)
+        for _ in range(50):
+            model.step(network, state, timestep_ms=0.01)
+
+        # After stepping, the dendrites have recorded a leak conductance and
+        # explicit ZERO for all three active channels. That is what "passive"
+        # has to mean numerically.
+        for segment_id in network.passive_compartment_ids:
+            segment = state[segment_id]
+            conductances = segment.last_conductances_mS_per_cm2
+            assert conductances["leak"] > 0.0
+            for mechanism in ("nat", "nap", "k"):
+                assert mechanism in conductances
+                assert conductances[mechanism] == 0.0
+                assert segment.last_currents_mA_per_cm2[mechanism] == 0.0
+        assert model.passive_are_inert(network, state) is True
+        # The dendrite voltage is finite and close to the axon, as a passive
+        # cable electrically loading the active axon should be.
+        voltages = model.voltages_mV(network, state)
+        for segment_id in network.passive_compartment_ids:
+            assert math.isfinite(voltages[segment_id])
+        assert abs(
+            voltages["TTMn_medial_dendrite"] - voltages["TTMn_axon#seg0"]
+        ) < 5.0
+
+    # --- 8, 9: the same mechanism, no duplicate equations -----------------
+
+    def test_08_ttmn_uses_exactly_the_same_mechanisms_as_8a(self):
+        """Same nat/nap/k, same rate objects, same equations, same object."""
+        from biological_brain.dynamics.gf_active import (
+            GFActiveAxonModel, GF_ACTIVE_MECHANISMS,
+        )
+
+        ttmn = _eight_d_model()
+        gf = GFActiveAxonModel()
+        # The mechanism set is the same tuple of names.
+        assert {r.mechanism_name for r in ttmn.mechanism_records()} == {
+            r.mechanism_name for r in gf.mechanism_records()
+        }
+        assert [r.mechanism_name for r in ttmn.mechanism_records()] == list(
+            GF_ACTIVE_MECHANISMS
+        )
+        # The rate objects carry identical values, and they are the SAME TYPE
+        # built by the SAME function on the SAME shared engine. Identity of the
+        # builder is the real proof of a single source: there is one
+        # _build_nat_rates in the project, and both configurations call it.
+        assert ttmn.nat_rates == gf.nat_rates
+        assert ttmn.nap_rates == gf.nap_rates
+        assert ttmn.k_rates == gf.k_rates
+        assert type(ttmn.nat_rates) is type(gf.nat_rates)
+        for builder in ("_build_nat_rates", "_build_nap_rates", "_build_k_rates"):
+            assert getattr(ttmn, builder).__func__ is getattr(
+                gf, builder
+            ).__func__
+        # 8D's class adds no rate-building method of its own, so it cannot be
+        # constructing a second mechanism.
+        from biological_brain.dynamics.ttmn_active import TTMActiveAxonModel
+
+        own_builders = {
+            name for name in vars(TTMActiveAxonModel)
+            if not name.startswith("__")
+            and ("rate" in name.lower() or "_mod" in name.lower())
+        }
+        assert own_builders == set()
+        # The recorded .mod equations are the same strings from the same files.
+        for ttmn_record, gf_record in zip(
+            ttmn.mechanism_records(), gf.mechanism_records()
+        ):
+            assert ttmn_record.equations == gf_record.equations
+            assert ttmn_record.source_file == gf_record.source_file
+            assert ttmn_record.solve_method == gf_record.solve_method
+            assert "cnexp" in ttmn_record.solve_method
+
+    def test_09_no_duplicate_channel_equations_exist(self):
+        """8D defines no nat/nap/k equation of its own, by AST inspection."""
+        import ast
+        import inspect
+
+        from biological_brain.dynamics import ttmn_active
+
+        source = inspect.getsource(ttmn_active)
+        tree = ast.parse(source)
+        assigned = {
+            target.id
+            for node in ast.walk(tree) if isinstance(node, ast.Assign)
+            for target in node.targets if isinstance(target, ast.Name)
+        }
+        # No rate expression, no gate equation and no vhalf/slope is written
+        # out in 8D. The only numbers it defines are its own fixtures.
+        for banned in (
+            "V1_2M", "KM", "V1_2H", "KH", "minf", "mtau", "hinf", "htau",
+            "gna", "gnap", "gk", "alpha", "beta", "vhalf", "slope",
+        ):
+            assert banned not in assigned, banned
+        functions = {
+            node.name for node in tree.body
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        }
+        assert "minf" not in functions
+        assert "mtau" not in functions
+        assert "hinf" not in functions
+        assert "htau" not in functions
+        # The mechanism constants are IMPORTED from the single engine, never
+        # redefined, and 8D adds no new mechanism name at all.
+        for banned in (
+            "nat", "nap", "k", "gap2", "ShakB", "DmCa1D", "Slowpoke",
+            "Shaker", "Para", "Exp2Syn",
+        ):
+            assert not any(
+                node.value == banned
+                for node in tree.body
+                if isinstance(node, ast.Assign)
+                for target in node.targets
+                if isinstance(target, ast.Name)
+                and isinstance(node.value, ast.Constant)
+            ), banned
+        # And it inherits rather than reimplements: the solve lives upstream.
+        assert ttmn_active.TTMActiveAxonModel.__module__.endswith("ttmn_active")
+        assert not hasattr(ttmn_active, "step")
+        assert not hasattr(ttmn_active, "NatRates")
+        assert not hasattr(ttmn_active, "SingleGateRates")
+
+    # --- 10, 11: the authorized profiles ----------------------------------
+
+    def test_10_the_active_parameters_equal_the_augustin_profile(self):
+        """g_Nat 300, g_Nap 0.11, g_K 10 mS/cm2; E_Na +65, E_K -74 mV."""
+        from biological_brain.active_profiles import (
+            PROFILE_AUGUSTIN_2019_ACTIVE_MODEL,
+            get_active_parameter_profile,
+        )
+
+        network = _eight_d_network()
+        applied = {p.name: p for p in network.applied_parameters}
+        assert set(applied) == {"g_Na", "g_Nap", "g_K", "E_Na", "E_K"}
+        # The profile is the SAME authorized 7S profile 8A uses, and it is
+        # applied in S/cm2 after exactly one mS/cm2 conversion.
+        assert applied["g_Na"].value == pytest.approx(0.3)
+        assert applied["g_Nap"].value == pytest.approx(0.00011)
+        assert applied["g_K"].value == pytest.approx(0.01)
+        assert applied["E_Na"].value == pytest.approx(65.0)
+        assert applied["E_K"].value == pytest.approx(-74.0)
+        profile = get_active_parameter_profile(PROFILE_AUGUSTIN_2019_ACTIVE_MODEL)
+        for name, expected in (
+            ("g_Na", 300.0), ("g_Nap", 0.11), ("g_K", 10.0),
+        ):
+            assert profile.get(name).value == expected
+            assert profile.get(name).unit == "mS/cm2"
+        assert profile.get("E_Na").value == 65.0
+        assert profile.get("E_K").value == -74.0
+        # These are model-reproduction parameters, NOT TTMn measurements.
+        for parameter in network.applied_parameters:
+            assert parameter.is_model_reproduction_parameter is True
+            assert parameter.is_experimental_gf_measurement is False
+            assert parameter.profile_name == PROFILE_AUGUSTIN_2019_ACTIVE_MODEL
+            assert "Augustin" in parameter.source
+
+    def test_11_the_passive_parameters_equal_the_authorized_profile(self):
+        """Cm 1 uF/cm2, Ra 35.4 ohm*cm, leak 0.03 mS/cm2, E_leak -85 mV."""
+        from biological_brain.passive_profiles import (
+            get_passive_parameter_profile,
+        )
+
+        model = _eight_d_model()
+        assert model.rest_voltage_mV == -85.0
+        profile = get_passive_parameter_profile(PROFILE_AUGUSTIN_2019_GFS_PASSIVE)
+        assert profile.get("specific_membrane_capacitance").value == 1.0
+        assert profile.get("specific_axial_resistance").value == 35.4
+        assert profile.get("leak_conductance_density").value == 0.03
+        assert profile.get("leak_reversal_potential").value == -85.0
+        # The prepared network derives capacitance and leak from that profile
+        # and the published geometry, not from any value 8D supplied.
+        network = _eight_d_network()
+        for compartment in network.network.compartments:
+            assert compartment.leak_reversal_mV == pytest.approx(-85.0)
+            # C = Cm * area, with Cm = 1 uF/cm2.
+            assert compartment.capacitance_F == pytest.approx(
+                compartment.membrane_area_cm2 * 1.0e-6, rel=1e-9
+            )
+            # g_leak = 0.03 mS/cm2 * area.
+            assert compartment.leak_conductance_S == pytest.approx(
+                compartment.membrane_area_cm2 * 0.03 * 1e-3, rel=1e-9
+            )
+
+    # --- 12, 13: equilibrium and gating bounds ----------------------------
+
+    def test_12_the_equilibrium_is_finite_and_deterministic(self):
+        """TTMn finds its own numerical fixed point, reproducibly."""
+
+        import math
+        """TTMn finds its own numerical fixed point, reproducibly."""
+        first = _eight_d_model().equilibrium_report(
+            _eight_d_ttmn(), segment_count=11, duration_ms=200.0,
+        )
+        second = _eight_d_model().equilibrium_report(
+            _eight_d_ttmn(), segment_count=11, duration_ms=200.0,
+        )
+        assert first.axon_voltage_mV == second.axon_voltage_mV
+        assert first.passive_voltages_mV == second.passive_voltages_mV
+        assert first.all_finite is True
+        assert math.isfinite(first.axon_voltage_mV)
+        for voltage in first.passive_voltages_mV.values():
+            assert math.isfinite(voltage)
+        # It is a genuine fixed point: far from the declared initial voltage
+        # and clearly hyperpolarized relative to a spike.
+        assert first.axon_voltage_mV != -85.0
+        assert -85.0 < first.axon_voltage_mV < -60.0
+        # The axon and its dendrites are electrically coupled and therefore
+        # settle close together, which a broken coupling would break.
+        for voltage in first.passive_voltages_mV.values():
+            assert abs(voltage - first.axon_voltage_mV) < 1.0
+        # It is reported as a numerical fixed point, not a measurement.
+        assert "NOT A MEASURED TTMn RESTING POTENTIAL" in first.note
+        assert first.steps == 20000
+        assert first.timestep_ms == 0.01
+
+    def test_13_the_gating_variables_stay_finite_and_in_bounds(self):
+        """All four gates stay in [0, 1] through equilibrium and a spike."""
+
+        import math
+        """All four gates stay in [0, 1] through equilibrium and a spike."""
+        model = _eight_d_model()
+        report = model.equilibrium_report(
+            _eight_d_ttmn(), segment_count=11, duration_ms=200.0,
+        )
+        gates = report.axon_gates
+        assert gates.gates_in_bounds is True
+        assert gates.all_finite is True
+        assert 0.0 <= gates.nat_m <= 1.0
+        assert 0.0 <= gates.nat_h <= 1.0
+        assert 0.0 <= gates.nap_m <= 1.0
+        assert 0.0 <= gates.k_m <= 1.0
+        # At the unstimulated fixed point the gates are physically sensible:
+        # sodium activation nearly closed, sodium inactivation nearly open.
+        assert gates.nat_m < 0.02
+        assert gates.nat_h > 0.99
+        # The conductance densities follow the .mod equations exactly.
+        assert gates.conductances_mS_per_cm2["nat"] == pytest.approx(
+            300.0 * gates.nat_m ** 3 * gates.nat_h, rel=1e-9
+        )
+        assert gates.conductances_mS_per_cm2["nap"] == pytest.approx(
+            0.11 * gates.nap_m, rel=1e-9
+        )
+        assert gates.conductances_mS_per_cm2["k"] == pytest.approx(
+            10.0 * gates.k_m, rel=1e-9
+        )
+        # And they stay bounded through a full action potential too.
+        network = model.prepare_ttmn(_eight_d_ttmn(), segment_count=11)
+        state = model.initial_state(network)
+        target = network.active_compartment_ids[0]
+        for index in range(300):
+            model.step(
+                network, state,
+                injected_currents_A=(
+                    {target: FIXTURE_TTMN_AMPLITUDE_A} if index < 3 else {}
+                ),
+                timestep_ms=0.01,
+            )
+            segment = state[target]
+            for gate in (segment.nat_m, segment.nat_h, segment.nap_m, segment.k_m):
+                assert 0.0 <= gate <= 1.0
+                assert math.isfinite(gate)
+
+    # --- 14: the action potential ----------------------------------------
+
+    def test_14_the_axon_generates_an_ap_under_the_labelled_fixture(self):
+        """A full spike: depolarise, peak below E_Na, then repolarise."""
+
+        import math
+        """A full spike: depolarise, peak below E_Na, then repolarise."""
+        trace, diagnostic, network = _eight_d_model().stimulus_response(
+            _eight_d_ttmn(), segment_count=11, duration_ms=3.0,
+        )
+        assert diagnostic.all_finite is True
+        assert diagnostic.observed is True
+        # The stimulus is 8D's own fixture, and is not the GF's 120 nA.
+        assert FIXTURE_TTMN_AMPLITUDE_A != 120.0e-9
+        # A genuine spike: a large depolarisation from the rest reference, a
+        # peak that approaches but does not pass E_Na = +65 mV, and a fall
+        # back well below the peak, i.e. a real repolarising spike.
+        assert diagnostic.depolarization_mV > 100.0
+        assert 0.0 < diagnostic.peak_voltage_mV < 65.0
+        assert 0.0 < diagnostic.peak_time_ms < 3.0
+        assert diagnostic.end_voltage_mV < diagnostic.peak_voltage_mV - 50.0
+        # It is on the axon, which is the only active section.
+        assert diagnostic.segment_id == "TTMn_axon#seg0"
+        assert network.is_active(diagnostic.segment_id)
+        # Every sampled voltage in the trace is finite.
+        assert all(math.isfinite(value) for value in trace)
+        # The criterion is a numerical waveform rule, not a TTMn threshold.
+        assert "NOT A BIOLOGICAL GF THRESHOLD" in (
+            diagnostic.observation_criterion
+        )
+
+    def test_15_the_stimulus_fixture_is_labelled_and_not_a_threshold(self):
+        """The amplitude is a solver fixture, never a biological claim."""
+        from biological_brain import (
+            TTMN_DIRECT_STIMULUS_AMPLITUDE_A, TTMN_DIRECT_STIMULUS_DURATION_MS,
+            TTMN_DIRECT_STIMULUS_PROVENANCE, ttmn_scope_note,
+        )
+
+        assert TTMN_DIRECT_STIMULUS_AMPLITUDE_A == FIXTURE_TTMN_AMPLITUDE_A
+        assert TTMN_DIRECT_STIMULUS_DURATION_MS == FIXTURE_TTMN_DURATION_MS
+        provenance = TTMN_DIRECT_STIMULUS_PROVENANCE
+        assert "NUMERICAL MODEL-REPRODUCTION FIXTURE" in provenance
+        assert "NOT A BIOLOGICAL TTMn STIMULUS" in provenance
+        assert "NOT a TTMn rheobase" in provenance
+        assert "NOT a measurement" in provenance
+        # It says why the paper's 120 nA is not used, and that it is not
+        # borrowed.
+        assert "120 nA" in provenance
+        assert "not borrowed" in provenance
+        # The paper's direct-stimulation timing is explicitly NOT reproduced.
+        assert "0.3 ms" in provenance
+        assert "NOT reproduced here" in provenance
+        note = ttmn_scope_note()
+        assert "NUMERICAL MODEL-REPRODUCTION FIXTURE" in note
+        assert "NOT a biological TTMn stimulus" in note
+        assert "NOT a rheobase" in note
+
+    # --- 15: passive equivalence -----------------------------------------
+
+    def test_16_removing_the_active_conductances_returns_passive_behaviour(self):
+        """Zeroing g_Nat/g_Nap/g_K reproduces the 3.0D-7G passive solve.
+
+        This is the control that proves the active channels are what changes
+        the answer. With the three conductances zeroed and the reversals
+        untouched, the TTMn membrane equation IS the passive one, so the axon
+        must trace the 3.0D-7G passive backend exactly.
+        """
+        from biological_brain.dynamics.passive_cable import (
+            PassiveCableModel, PassiveNetworkState, PassiveNumericalMethod,
+        )
+        from biological_brain.subdivision import (
+            SubdivisionPlan, SectionSubdivision,
+        )
+
+        model = _eight_d_model()
+        network = model.prepare_ttmn(_eight_d_ttmn(), segment_count=11)
+        zeroed = model.with_active_conductances_removed(network)
+        conductances = {
+            p.name: p.value for p in zeroed.applied_parameters
+        }
+        assert conductances["g_Na"] == 0.0
+        assert conductances["g_Nap"] == 0.0
+        assert conductances["g_K"] == 0.0
+        # Only the conductances changed; the reversals are untouched.
+        assert conductances["E_Na"] == pytest.approx(65.0)
+        assert conductances["E_K"] == pytest.approx(-74.0)
+        assert zeroed.applied_parameters != network.applied_parameters
+
+        state = model.initial_state(zeroed)
+        for index in range(200):
+            model.step(
+                zeroed, state,
+                injected_currents_A=(
+                    {zeroed.active_compartment_ids[0]: FIXTURE_TTMN_AMPLITUDE_A}
+                    if index < 3 else {}
+                ),
+                timestep_ms=0.01,
+            )
+        got = model.voltages_mV(zeroed, state)
+
+        # The 3.0D-7G passive backend, same geometry, same plan, same policy.
+        plan = SubdivisionPlan(sections=(
+            SectionSubdivision("TTMn_axon", 11),
+            SectionSubdivision("TTMn_medial_dendrite", 1),
+            SectionSubdivision("TTMn_lateral_dendrite", 1),
+        ))
+        passive_model = _eight_d_ttmn()
+        # The active model integrates with a LINEARISED IMPLICIT membrane
+        # solve, so the comparison backend must use the same scheme. The
+        # passive default is forward Euler, which is a DIFFERENT integrator
+        # and would not match; the comparison is only meaningful against
+        # backward Euler, which is the 3.0D-7G implicit path the active solve
+        # is built on.
+        backend = PassiveCableModel(
+            profile_name=PROFILE_AUGUSTIN_2019_GFS_PASSIVE,
+            numerical_method=PassiveNumericalMethod.BACKWARD_EULER,
+        )
+        passive_network = backend.prepare(passive_model, plan)
+        # The passive state is keyed by the PREPARED segment ids, and starts
+        # at the same declared rest voltage the active model starts from, so
+        # the only difference between the two runs is the active channels.
+        segment_ids = [c.compartment_id for c in passive_network.compartments]
+        passive_state = PassiveNetworkState(
+            voltages_mV={
+                segment_id: -85.0 for segment_id in segment_ids
+            }
+        )
+        axon_first = next(
+            c.compartment_id
+            for c in passive_network.compartments
+            if c.source_section_id == "TTMn_axon"
+        )
+        for index in range(200):
+            backend.step(
+                passive_network, passive_state,
+                injected_currents_A=(
+                    {axon_first: FIXTURE_TTMN_AMPLITUDE_A}
+                    if index < 3 else {}
+                ),
+                timestep_ms=0.01,
+            )
+        passive_voltages = dict(passive_state.voltages_mV)
+        assert len(passive_voltages) == len(got)
+        for segment_id, voltage in passive_voltages.items():
+            assert got[segment_id] == pytest.approx(voltage, abs=1e-9), (
+                f"{segment_id} diverged from the passive backend"
+            )
+        # And with no active channel the axon cannot spike.
+        assert max(got.values()) < 0.0
+
+    # --- 16: subdivision counts ------------------------------------------
+
+    def test_17_the_required_segment_counts_are_all_finite(self):
+        """N = 1, 2, 5, 11, 51 all run with no non-finite state."""
+
+        import math
+        """N = 1, 2, 5, 11, 51 all run with no non-finite state."""
+        for count in (1, 2, 5, 11, 51):
+            model = _eight_d_model()
+            network = model.prepare_ttmn(
+                _eight_d_ttmn(), segment_count=count
+            )
+            state = model.initial_state(network)
+            assert len(network.active_compartment_ids) == count
+            for _ in range(200):
+                model.step(network, state, timestep_ms=0.01)
+            voltages = model.voltages_mV(network, state)
+            assert len(voltages) == count + 2
+            for segment_id, voltage in voltages.items():
+                assert math.isfinite(voltage), (count, segment_id)
+            for segment in state.values():
+                assert segment.all_finite() is True
+                for gate in (
+                    segment.nat_m, segment.nat_h, segment.nap_m, segment.k_m,
+                ):
+                    assert 0.0 <= gate <= 1.0
+                    assert math.isfinite(gate)
+            # The dendrites stay passive at every subdivision.
+            assert model.passive_are_inert(network, state) is True
+            # A non-positive count is refused, not silently clamped.
+            if count == 1:
+                with pytest.raises(Exception):
+                    model.prepare_ttmn(_eight_d_ttmn(), segment_count=0)
+
+    # --- 17: numerical stability under the timestep policy ---------------
+
+    def test_18_the_axon_is_stable_across_timesteps_and_subdivisions(self):
+        """The spike converges under the EXISTING policy, which 8D reuses.
+
+        3.0D-8D does not define, widen or change the timestep policy. It reuses
+        the 3.0D-7R/8A policy and checks the TTMn result under it.
+        """
+
+        import math
+        """The spike converges under the EXISTING policy, which 8D reuses.
+
+        3.0D-8D does not define, widen or change the timestep policy. It reuses
+        the 3.0D-7R/8A policy and checks the TTMn result under it.
+        """
+        from biological_brain.dynamics.gf_active import (
+            GF_ACTIVE_NUMERICAL_POLICY, GFActiveNumericalError,
+        )
+
+        model = _eight_d_model()
+        peaks = {}
+        for timestep in (0.01, 0.005, 0.002):
+            trace, diagnostic, _ = model.stimulus_response(
+                _eight_d_ttmn(), segment_count=11, duration_ms=3.0,
+                timestep_ms=timestep,
+            )
+            assert diagnostic.all_finite is True
+            assert diagnostic.observed is True
+            peaks[timestep] = diagnostic.peak_voltage_mV
+            # Every value stays finite and the gates stay bounded.
+            assert all(math.isfinite(value) for value in trace)
+        # Refining the timestep moves the peak very little, and the finer
+        # result is the one that is slightly higher, as a resolved spike is.
+        assert peaks[0.01] == pytest.approx(peaks[0.002], abs=0.5)
+        assert peaks[0.002] > peaks[0.01]
+        # The policy is the existing one and 8D cannot widen it.
+        assert model._timestep_ms == (
+            GF_ACTIVE_NUMERICAL_POLICY.default_timestep_ms
+        )
+        for too_large in (1.0, 2.0, 100.0):
+            with pytest.raises(GFActiveNumericalError):
+                _eight_d_model(timestep_ms=too_large)
+        for invalid in (0.0, -0.01):
+            with pytest.raises(GFActiveNumericalError):
+                _eight_d_model(timestep_ms=invalid)
+
+    # --- 18: 8A is unchanged ---------------------------------------------
+
+    def test_19_the_8a_gf_configuration_is_unchanged_by_8d(self):
+        """8A still behaves exactly as it did, through the shared engine."""
+        from biological_brain.dynamics.gf_active import (
+            ActiveAxonModel, GFActiveAxonModel, GF_ACTIVE_SECTION_ID,
+        )
+
+        gf = GFActiveAxonModel()
+        # The 8A public API is intact and still GF-scoped.
+        assert gf.neuron_id == "GF"
+        assert gf.active_section_id == GF_ACTIVE_SECTION_ID
+        assert gf.name == "gf_active_v0"
+        assert isinstance(gf, ActiveAxonModel)
+        # The 8A adapter configures the engine and overrides nothing else.
+        assert set(GFActiveAxonModel.__dict__) - {
+            "__doc__", "__module__", "__init__",
+        } == set()
+        # 8A still prepares its axon, and only its axon, as before.
+        network = gf.prepare(_eight_a_gf(), segment_count=11)
+        assert network.active_compartment_ids == tuple(
+            f"GF_axon#seg{i}" for i in range(11)
+        )
+        assert network.passive_compartment_ids == ()
+        # And 8A still produces the 8B-validated equilibrium, unchanged.
+        state = gf.initial_state(network)
+        for _ in range(20000):
+            gf.step(network, state, timestep_ms=0.01)
+        equilibrium = state["GF_axon#seg0"].voltage_mV
+        assert equilibrium == pytest.approx(-74.6696, abs=0.001)
+        # 8A's 120 nA fixture is untouched by 8D and is still the GF's.
+        from biological_brain import MODELDB_GF_STIMULUS_AMPLITUDE_A
+
+        assert MODELDB_GF_STIMULUS_AMPLITUDE_A == 120.0e-9
+
+    # --- 19, 20: no forbidden dependency, no new mechanism --------------
+
+    def test_20_ttmn_has_no_dependency_on_the_excluded_layers(self):
+        """No 7W synapse, no 8C coupling, no 7Y, 7Z, PSI or DLMn."""
+        import ast
+        import inspect
+
+        from biological_brain.dynamics import ttmn_active
+
+        tree = ast.parse(inspect.getsource(ttmn_active))
+        imported = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom):
+                if node.module:
+                    imported.append(node.module)
+            elif isinstance(node, ast.Import):
+                imported.extend(a.name for a in node.names)
+        joined = " ".join(imported)
+        for banned in (
+            "synaptic_abstraction", "synaptic_mechanism_registry",
+            "electrical_coupling", "looming_abstraction",
+            "sensorimotor_integration", "motor_output_abstraction",
+            "source_reconciliation", "gf_equilibrium",
+        ):
+            assert banned not in joined, banned
+        # It reaches only the one shared engine, and only the mechanism names.
+        assert "gf_active" in joined
+        names = [
+            alias.name
+            for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)
+            and node.module == "gf_active"
+            for alias in node.names
+        ]
+        # No neuron model, network, state or equilibrium machinery is imported.
+        for banned in (
+            "GFActiveAxonModel", "GFActiveStateValidator",
+            "MODELDB_GF_STIMULUS_AMPLITUDE_A",
+            "GF_ACTIVE_SECTION_ID", "NEURON_GF",
+            "GFActiveNumericalPolicy", "GFActiveAuthorizationError",
+        ):
+            assert banned not in names, banned
+        # It names no other neuron anywhere in its source.
+        source = inspect.getsource(ttmn_active)
+        for banned in ("PSI", "DLMn", '"DLM"', "muscle", "NMJ"):
+            assert f'"{banned}"' not in source, banned
+        # The prepared network is the TTMn only.
+        network = _eight_d_network()
+        assert network.model_id == "TTMn"
+        assert all(
+            segment_id.startswith("TTMn_")
+            for segment_id in network.segment_ids
+        )
+
+    def test_21_no_new_or_unsupported_mechanism_is_introduced(self):
+        """No ShakB, Ca, Slowpoke, Shaker or Para; refusals still work."""
+        from biological_brain.dynamics.gf_active import (
+            GFActiveScopeError, GF_ACTIVE_MECHANISMS, MECHANISM_GAP2,
+        )
+
+        model = _eight_d_model()
+        # Exactly the three vendored density channels, and nothing else.
+        assert tuple(GF_ACTIVE_MECHANISMS) == ("nat", "nap", "k")
+        assert {r.mechanism_name for r in model.mechanism_records()} == {
+            "nat", "nap", "k"
+        }
+        # Every unsupported mechanism is still refused, by name, with a reason.
+        for banned in (
+            "ShakB", "DmCa1D", "Slowpoke", "Shaker", "Para", "Exp2Syn",
+            MECHANISM_GAP2, "ca", "Ca", "BK", "muscle",
+        ):
+            with pytest.raises(GFActiveScopeError) as excinfo:
+                model.reject_unsupported_mechanism(banned)
+            assert "OUT OF SCOPE" in str(excinfo.value)
+        # And a mechanism that IS implemented cannot be called unsupported.
+        for supported in GF_ACTIVE_MECHANISMS:
+            with pytest.raises(GFActiveScopeError) as excinfo:
+                model.reject_unsupported_mechanism(supported)
+            assert "IS implemented" in str(excinfo.value)
+        # The 7U gap-junction unit conflict is untouched by 8D.
+        from biological_brain.source_reconciliation import (
+            ResolutionStatus, get_source_reconciliation_registry,
+        )
+
+        registry = get_source_reconciliation_registry()
+        assert len(registry.unresolved()) == 2
+        for conflict_id in registry.unresolved():
+            conflict = registry.get(conflict_id)
+            assert conflict.resolution_status == ResolutionStatus.UNRESOLVED
+            assert conflict.preferred_side is None
+            assert conflict.discrepancy_factor == 1000.0
+
+
+# =============================================================================
+# 3.0D-8E: the LIVE PSI ACTIVE NEURON
+# =============================================================================
+#
+# The PSI direct-stimulation fixture. This is a NUMERICAL SOLVER FIXTURE chosen
+# by 3.0D-8E, NOT a biological PSI stimulus. The paper's 120 nA / 0.03 ms value
+# belongs to its GF circuit simulation and is deliberately not borrowed, exactly
+# as 3.0D-8D declined to borrow it for the TTMn.
+FIXTURE_PSI_AMPLITUDE_A = 50.0e-9
+FIXTURE_PSI_DURATION_MS = 0.03
+
+
+def _eight_e_model(**overrides):
+    from biological_brain.dynamics.psi_active import PSIActiveAxonModel
+
+    return PSIActiveAxonModel(**overrides)
+
+
+def _eight_e_psi():
+    """The existing 3.0D-7B PSI compartment model on the 3.0D-7F profile."""
+    from biological_brain.morphology_builder import build_gfs_compartment_models
+
+    model = build_gfs_compartment_models()["PSI"]
+    model.passive_profile_name = PROFILE_AUGUSTIN_2019_GFS_PASSIVE
+    return model
+
+
+def _eight_e_network(segment_count=11):
+    return _eight_e_model().prepare_psi(
+        _eight_e_psi(), segment_count=segment_count
+    )
+
+
+class TestPSIActiveNeuron:
+    """3.0D-8E: the live PSI active neuron.
+
+    THE POINT OF THIS CHECKPOINT IS REUSE, TWICE OVER. First, the PSI axon is
+    made live by the SAME nat/nap/k engine 3.0D-8A built and 3.0D-8D reused, so
+    the tests below spend real effort proving the rate equations are shared by
+    identity rather than merely equal in value. Second, and new in 8E, 8D had
+    left ``equilibrium_report()`` and ``stimulus_response()`` sitting on the TTMn
+    ADAPTER, which meant they were written for one neuron and PSI would have
+    needed its own copy. 8E lifted them onto the generic engine, so the tests
+    assert that PSI does not define them either, and that doing so did not move
+    a single validated GF or TTMn number.
+
+    The provenance facts that are easiest to get quietly wrong are asserted
+    explicitly here: the 170 um dendrite length is ESTIMATED in the source and
+    must not be promoted to a measurement, the 4.5 um diameter is a published
+    MODEL parameter and not a PSI measurement, and the stimulation amplitude is
+    a solver fixture and not a physiological input.
+    """
+
+    # --- 1: the model constructs from the existing morphology --------------
+
+    def test_01_the_psi_model_constructs_from_the_existing_builder(self):
+        """PSI comes from the 3.0D-7B builder; 8E defines no geometry."""
+        model = _eight_e_psi()
+        assert model.neuron_id == "PSI"
+        assert set(model.compartments) == {
+            "PSI_soma", "PSI_axon", "PSI_dendrite",
+        }
+        # 8E adds no compartment of its own, and the soma stays excluded for
+        # insufficient source geometry exactly as 3.0D-7C recorded.
+        assert model.is_electrically_excluded("PSI_soma") is True
+        assert model.compartments["PSI_soma"].geometry.length_um is None
+        # Every geometry value that EXISTS carries a source-backed provenance.
+        for compartment in model.compartments.values():
+            for field in ("length_um", "diameter_um"):
+                record = getattr(compartment.provenance, field)
+                if getattr(compartment.geometry, field) is None:
+                    assert record.category.value == "UNKNOWN"
+                    assert record.source == ""
+                    continue
+                assert "Augustin" in record.source, (compartment.compartment_id, field)
+
+    # --- 9: geometry against the source-backed morphology -------------------
+
+    def test_02_the_axon_and_dendrite_geometry_are_source_backed(self):
+        """PSI axon 90 um x 4.5 um; dendrite 170 um x 4.5 um."""
+        model = _eight_e_psi()
+        axon = model.compartments["PSI_axon"].geometry
+        assert axon.length_um == 90.0
+        assert axon.diameter_um == 4.5
+        dendrite = model.compartments["PSI_dendrite"].geometry
+        assert dendrite.length_um == 170.0
+        assert dendrite.diameter_um == 4.5
+
+    def test_03_the_170_um_dendrite_length_remains_estimated(self):
+        """The ESTIMATED marker must NOT be silently promoted to measured.
+
+        This is the single most important provenance fact about PSI: the paper
+        states the dendrite length was estimated. 8E consumes the existing
+        builder rather than creating a second morphology system, so the marker
+        is whatever 7B recorded, and 8E must not upgrade it.
+        """
+        from biological_brain.gfs_morphology import get_gfs_morphology
+
+        model = _eight_e_psi()
+        dendrite = model.compartments["PSI_dendrite"]
+        assert dendrite.provenance.length_um.category.value == "ESTIMATED"
+        # The 4.5 um diameter is a published MODEL parameter, a DIFFERENT class
+        # of claim, and is not estimated. The distinction is preserved.
+        assert dendrite.provenance.diameter_um.category.value == (
+            "PUBLISHED_MODEL_PARAMETER"
+        )
+        # The axon's own length IS a published model parameter, not estimated.
+        axon = model.compartments["PSI_axon"]
+        assert axon.provenance.length_um.category.value == "PUBLISHED_MODEL_PARAMETER"
+        # And the specification layer still says the same thing.
+        gfs = get_gfs_morphology()
+        assert gfs.neurons["PSI"].compartments[1].length.provenance.category.value == (
+            "ESTIMATED"
+        )
+
+    # --- 10: the intra-neuron dendrite -> axon cable topology ---------------
+
+    def test_04_the_topology_connects_the_dendrite_to_the_axon(self):
+        """PSI_dendrite -> PSI_axon, read from the existing 3.0D-7P record."""
+        from biological_brain.computational_topology import (
+            get_computational_topology,
+        )
+
+        topology = get_computational_topology(_eight_e_psi())
+        assert topology is not None
+        pairs = {
+            (c.child_section_id, c.parent_section_id)
+            for c in topology.connections
+            if c.child_section_id.startswith("PSI")
+        }
+        assert pairs == {("PSI_dendrite", "PSI_axon")}
+        for connection in topology.connections:
+            if connection.child_section_id.startswith("PSI"):
+                assert connection.source_file == "gfpn.py"
+                assert connection.source_line == 105
+                assert "connect" in connection.source_statement
+        # And it is real in the prepared network: the dendrite reaches the
+        # PROXIMAL axon segment through the existing topology, not by being
+        # wired here.
+        network = _eight_e_network()
+        parents = {
+            c.parent_id for c in network.network.connections
+            if c.child_id == "PSI_dendrite"
+        }
+        assert parents == {"PSI_axon#seg0"}
+        assert all(
+            c.resistance_ohm > 0.0 for c in network.network.connections
+        )
+
+    def test_05_the_derived_electrical_values_match_the_geometry(self):
+        """Area, capacitance, leak and axial resistance follow from geometry.
+
+        These are GEOMETRY- AND PARAMETER-DERIVED values, not new biological
+        measurements. They are checked with the tolerances the existing geometry
+        calculations already use, not artificially tightened.
+        """
+        import math
+
+        model = _eight_e_model()
+        network = model.prepare_psi(_eight_e_psi(), segment_count=1)
+        axon = next(
+            c for c in network.network.compartments
+            if c.compartment_id == "PSI_axon"
+        )
+        dendrite = next(
+            c for c in network.network.compartments
+            if c.compartment_id == "PSI_dendrite"
+        )
+        # Lateral area pi*d*L for the uniform sections.
+        assert axon.membrane_area_cm2 == pytest.approx(
+            math.pi * 4.5 * 90.0 * 1e-8, rel=1e-9
+        )
+        assert dendrite.membrane_area_cm2 == pytest.approx(
+            math.pi * 4.5 * 170.0 * 1e-8, rel=1e-9
+        )
+        # C = Cm * area with Cm = 1 uF/cm2, and g_leak = 0.03 mS/cm2 * area.
+        for compartment in (axon, dendrite):
+            assert compartment.capacitance_F == pytest.approx(
+                compartment.membrane_area_cm2 * 1.0e-6, rel=1e-9
+            )
+            assert compartment.leak_conductance_S == pytest.approx(
+                compartment.membrane_area_cm2 * 0.03 * 1e-3, rel=1e-9
+            )
+            assert compartment.leak_reversal_mV == pytest.approx(-85.0)
+        # R_axial = Ra * L / (pi * r^2) for the uniform sections, in ohm. The
+        # dendrite is carried un-subdivided, so its connection resistance IS the
+        # whole-section value. The axon is subdivided into 11 segments, so its
+        # whole-section resistance is the per-segment value times 11, and the 10
+        # inter-segment connections sum to 10/11 of it. Both are checked against
+        # the same source-backed geometry rather than against a hard-coded
+        # convenience total.
+        connection = next(
+            c for c in network.network.connections
+            if c.child_id == "PSI_dendrite"
+        )
+        assert connection.resistance_ohm == pytest.approx(3.783879299e6, rel=1e-6)
+        axon_full = 2.003230217e6
+        per_segment = []
+        for candidate in _eight_e_network(segment_count=11).network.connections:
+            if candidate.parent_id.startswith("PSI_axon#seg") and (
+                candidate.child_id.startswith("PSI_axon#seg")
+            ):
+                per_segment.append(candidate.resistance_ohm)
+        assert len(per_segment) == 10
+        assert per_segment[0] == pytest.approx(axon_full / 11.0, rel=1e-6)
+        assert sum(per_segment) == pytest.approx(axon_full * 10.0 / 11.0, rel=1e-6)
+        # And the leak reversal is the authorized E_leak, never a hard-coded -85.
+        assert _eight_e_model().rest_voltage_mV == -85.0
+
+    # --- 2, 3: exactly one active section ---------------------------------
+
+    def test_06_only_the_axon_is_active(self):
+        """Exactly one active section, and it is PSI_axon."""
+        from biological_brain import PSI_PASSIVE_SECTION_IDS
+
+        network = _eight_e_network()
+        roles = _eight_e_model().section_roles(network)
+        assert roles.active_section_ids == ("PSI_axon",)
+        assert set(roles.passive_section_ids) == set(PSI_PASSIVE_SECTION_IDS)
+        assert roles.is_active_section("PSI_axon")
+        assert not roles.is_active_section("PSI_dendrite")
+        # The role report is read back off the network, and it says so.
+        assert "read back off the prepared network" in roles.basis
+        sources = {
+            c.source_section_id for c in network.network.compartments
+            if network.is_active(c.compartment_id)
+        }
+        assert sources == {"PSI_axon"}
+        assert network.active_compartment_ids == tuple(
+            f"PSI_axon#seg{i}" for i in range(11)
+        )
+
+    # --- 3, 4: the dendrite is numerically passive -------------------------
+
+    def test_07_the_dendrite_receives_no_active_conductance_at_all(self):
+        """Passive means ZERO active conductance AND zero active current.
+
+        This is the check that catches a section that is merely LABELLED passive
+        while still being handed the active channels. The dendrite must record an
+        explicit zero for all three active conductance densities and all three
+        active current densities, while the leak conductance stays present.
+        """
+        model = _eight_e_model()
+        network = model.prepare_psi(_eight_e_psi(), segment_count=11)
+        state = model.initial_state(network)
+        for _ in range(50):
+            model.step(network, state, timestep_ms=0.01)
+
+        assert network.passive_compartment_ids == ("PSI_dendrite",)
+        segment = state["PSI_dendrite"]
+        conductances = segment.last_conductances_mS_per_cm2
+        # The leak is still there: passive is not the same as inert.
+        assert conductances["leak"] > 0.0
+        for mechanism in ("nat", "nap", "k"):
+            assert mechanism in conductances
+            assert conductances[mechanism] == 0.0
+            assert segment.last_currents_mA_per_cm2[mechanism] == 0.0
+        assert model.passive_are_inert(network, state) is True
+
+    def test_08_the_dendrite_still_participates_in_the_cable_solve(self):
+        """A passive dendrite is not a disconnected decoration.
+
+        The dendrite must carry real capacitance, real leak and a real axial
+        connection, and its voltage must be pulled toward the active axon's
+        rather than sitting at its own initial value forever. A dendrite that
+        was accidentally excluded from the matrix would show up here.
+        """
+        import math
+
+        model = _eight_e_model()
+        network = model.prepare_psi(_eight_e_psi(), segment_count=11)
+        dendrite = next(
+            c for c in network.network.compartments
+            if c.compartment_id == "PSI_dendrite"
+        )
+        assert dendrite.capacitance_F > 0.0
+        assert dendrite.leak_conductance_S > 0.0
+        state = model.initial_state(network)
+        for _ in range(200):
+            model.step(network, state, timestep_ms=0.01)
+        voltages = model.voltages_mV(network, state)
+        axon = voltages["PSI_axon#seg0"]
+        dendrite_v = voltages["PSI_dendrite"]
+        assert math.isfinite(dendrite_v)
+        # It has MOVED off its initial -85 mV and sits close to the axon it is
+        # electrically coupled to, which only a real coupling produces.
+        assert dendrite_v != -85.0
+        assert abs(dendrite_v - axon) < 5.0
+
+    # --- 5: the axon carries the three authorized mechanisms ---------------
+
+    def test_09_the_axon_carries_exactly_nat_nap_and_k(self):
+        """Three authorized density channels on the axon, nothing else."""
+        from biological_brain.dynamics.gf_active import GF_ACTIVE_MECHANISMS
+
+        model = _eight_e_model()
+        assert tuple(GF_ACTIVE_MECHANISMS) == ("nat", "nap", "k")
+        assert {r.mechanism_name for r in model.mechanism_records()} == {
+            "nat", "nap", "k"
+        }
+        network = _eight_e_network()
+        state = model.initial_state(network)
+        for _ in range(20):
+            model.step(network, state, timestep_ms=0.01)
+        segment = state["PSI_axon#seg0"]
+        # On the ACTIVE axon the three conductances are recorded by name and are
+        # the .mod expressions of the authorized densities.
+        for mechanism in ("nat", "nap", "k"):
+            assert mechanism in segment.last_conductances_mS_per_cm2
+        gates = model.axon_diagnostic(network, state)
+        assert gates.conductances_mS_per_cm2["nat"] == pytest.approx(
+            300.0 * gates.nat_m ** 3 * gates.nat_h, rel=1e-9
+        )
+        assert gates.conductances_mS_per_cm2["nap"] == pytest.approx(
+            0.11 * gates.nap_m, rel=1e-9
+        )
+        assert gates.conductances_mS_per_cm2["k"] == pytest.approx(
+            10.0 * gates.k_m, rel=1e-9
+        )
+
+    def test_10_the_parameters_are_the_authorized_published_values(self):
+        """g_Na 300, g_Nap 0.11, g_K 10 mS/cm2; E_Na +65, E_K -74 mV.
+
+        These are published MODEL parameters, not PSI measurements, and the
+        applied values carry that distinction explicitly.
+        """
+        from biological_brain import PROFILE_AUGUSTIN_2019_ACTIVE_MODEL
+
+        network = _eight_e_network()
+        applied = {p.name: p for p in network.applied_parameters}
+        assert set(applied) == {"g_Na", "g_Nap", "g_K", "E_Na", "E_K"}
+        assert applied["g_Na"].value == pytest.approx(0.3)
+        assert applied["g_Nap"].value == pytest.approx(0.00011)
+        assert applied["g_K"].value == pytest.approx(0.01)
+        assert applied["E_Na"].value == pytest.approx(65.0)
+        assert applied["E_K"].value == pytest.approx(-74.0)
+        for parameter in network.applied_parameters:
+            assert parameter.is_model_reproduction_parameter is True
+            assert parameter.is_experimental_gf_measurement is False
+            assert parameter.profile_name == PROFILE_AUGUSTIN_2019_ACTIVE_MODEL
+            assert "Augustin" in parameter.source
+
+    # --- 6, 7: no duplicated equations, one shared implementation ----------
+
+    def test_11_no_rate_equations_are_duplicated_in_psi_active(self):
+        """By AST inspection, PSI defines no nat/nap/k equation of its own."""
+        import ast
+        import inspect
+
+        from biological_brain.dynamics import psi_active
+
+        source = inspect.getsource(psi_active)
+        tree = ast.parse(source)
+        assigned = {
+            target.id
+            for node in ast.walk(tree) if isinstance(node, ast.Assign)
+            for target in node.targets if isinstance(target, ast.Name)
+        }
+        # No rate expression, no gate equation and no vhalf/slope is written out.
+        for banned in (
+            "V1_2M", "KM", "V1_2H", "KH", "minf", "mtau", "hinf", "htau",
+            "gna", "gnap", "gk", "alpha", "beta", "vhalf", "slope",
+        ):
+            assert banned not in assigned, banned
+        functions = {
+            node.name for node in ast.walk(tree)
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        }
+        for banned in ("minf", "mtau", "hinf", "htau", "step", "_advance_linear"):
+            assert banned not in functions, banned
+        # It adds no new mechanism name at all.
+        for banned in (
+            "nat", "nap", "k", "gap2", "ShakB", "DmCa1D", "Slowpoke",
+            "Shaker", "Para", "Exp2Syn",
+        ):
+            assert not any(
+                node.value == banned
+                for node in tree.body
+                if isinstance(node, ast.Assign)
+                for target in node.targets
+                if isinstance(target, ast.Name)
+                and isinstance(node.value, ast.Constant)
+            ), banned
+        # It inherits rather than reimplements: the solve lives upstream.
+        assert psi_active.PSIActiveAxonModel.__module__.endswith("psi_active")
+        for absent in ("step", "NatRates", "SingleGateRates", "_active_currents"):
+            assert not hasattr(psi_active, absent), absent
+
+    def test_12_psi_uses_the_exact_same_rate_implementation(self):
+        """Single source, proven by IDENTITY of the rate objects and builders."""
+        from biological_brain.dynamics.gf_active import (
+            GFActiveAxonModel, GF_ACTIVE_MECHANISMS,
+        )
+        from biological_brain.dynamics.ttmn_active import TTMActiveAxonModel
+
+        psi = _eight_e_model()
+        gf = GFActiveAxonModel()
+        ttmn = TTMActiveAxonModel()
+        # Same mechanism names, same recorded .mod equations, same files.
+        for other in (gf, ttmn):
+            assert [r.mechanism_name for r in psi.mechanism_records()] == list(
+                GF_ACTIVE_MECHANISMS
+            )
+            for psi_record, other_record in zip(
+                psi.mechanism_records(), other.mechanism_records()
+            ):
+                assert psi_record.equations == other_record.equations
+                assert psi_record.source_file == other_record.source_file
+                assert psi_record.solve_method == other_record.solve_method
+                assert "cnexp" in psi_record.solve_method
+        # Identity of the rate objects, and of the builders that made them, is
+        # the real proof of a single source: there is one _build_nat_rates in the
+        # project and all three configurations reach it.
+        assert psi.nat_rates == gf.nat_rates == ttmn.nat_rates
+        assert psi.nap_rates == gf.nap_rates == ttmn.nap_rates
+        assert psi.k_rates == gf.k_rates == ttmn.k_rates
+        for builder in ("_build_nat_rates", "_build_nap_rates", "_build_k_rates"):
+            assert getattr(psi, builder).__func__ is getattr(
+                gf, builder
+            ).__func__
+            assert getattr(psi, builder).__func__ is getattr(
+                ttmn, builder
+            ).__func__
+        # 8E's own class adds no rate-building method, so it cannot be
+        # constructing a second mechanism.
+        from biological_brain.dynamics.psi_active import PSIActiveAxonModel
+
+        own_builders = {
+            name for name in vars(PSIActiveAxonModel)
+            if not name.startswith("__")
+            and ("rate" in name.lower() or "_mod" in name.lower())
+        }
+        assert own_builders == set()
+
+    def test_13_the_runs_live_on_the_generic_engine_not_on_psi(self):
+        """The 3.0D-8E abstraction fix: ONE implementation of each run.
+
+        8D left these on the TTMn adapter, which is why they had to be copied
+        per neuron. 8E lifted them onto ActiveAxonModel, so PSI must not define
+        them either, and the TTMn copies must be gone.
+        """
+        from biological_brain.dynamics.gf_active import ActiveAxonModel
+        from biological_brain.dynamics.gf_active import GFActiveAxonModel
+        from biological_brain.dynamics.psi_active import PSIActiveAxonModel
+        from biological_brain.dynamics.ttmn_active import TTMActiveAxonModel
+
+        for name in (
+            "equilibrium_report", "stimulus_response", "voltages_mV",
+            "axon_diagnostic", "passive_are_inert",
+            "with_active_conductances_removed", "prepare_active_axon",
+        ):
+            # Defined ONCE, on the generic engine...
+            assert name in vars(ActiveAxonModel), name
+            # ...and NOT redefined by either per-neuron adapter.
+            assert name not in vars(PSIActiveAxonModel), name
+            assert name not in vars(TTMActiveAxonModel), name
+        # So all three neurons share the identical function object.
+        for name in ("equilibrium_report", "stimulus_response"):
+            function = getattr(ActiveAxonModel, name)
+            for model in (_eight_e_model(), TTMActiveAxonModel(), GFActiveAxonModel()):
+                assert getattr(type(model), name) is function, name
+        # And the per-neuron report dataclasses are now ALIASES of the one
+        # generic type, not parallel definitions.
+        from biological_brain.dynamics.gf_active import (
+            ActiveAxonEquilibriumReport, ActiveSegmentDiagnostic,
+        )
+        from biological_brain.dynamics.ttmn_active import (
+            TTMAxonDiagnostic, TTMnEquilibriumReport,
+        )
+
+        assert TTMAxonDiagnostic is ActiveSegmentDiagnostic
+        assert TTMnEquilibriumReport is ActiveAxonEquilibriumReport
+
+    # --- 11: the unstimulated equilibrium ----------------------------------
+
+    def test_14_the_equilibrium_is_finite_deterministic_and_bounded(self):
+        """PSI finds its own numerical fixed point, reproducibly."""
+        import math
+
+        first = _eight_e_model().equilibrium_report(
+            _eight_e_psi(), segment_count=11, duration_ms=200.0,
+        )
+        second = _eight_e_model().equilibrium_report(
+            _eight_e_psi(), segment_count=11, duration_ms=200.0,
+        )
+        assert first.axon_voltage_mV == second.axon_voltage_mV
+        assert first.passive_voltages_mV == second.passive_voltages_mV
+        assert first.all_finite is True
+        assert math.isfinite(first.axon_voltage_mV)
+        for voltage in first.passive_voltages_mV.values():
+            assert math.isfinite(voltage)
+        # No NaN and no Inf anywhere in the whole network, not just the axon.
+        for voltage in _eight_e_model().voltages_mV(
+            _eight_e_network(), _eight_e_model().initial_state(_eight_e_network())
+        ).values():
+            assert voltage == voltage
+            assert abs(voltage) != float("inf")
+        # It is a genuine fixed point: away from the declared initial voltage
+        # and clearly hyperpolarized relative to a spike.
+        assert first.axon_voltage_mV != -85.0
+        assert -85.0 < first.axon_voltage_mV < -60.0
+        # The dendrite is electrically coupled, so it settles nearby.
+        for voltage in first.passive_voltages_mV.values():
+            assert abs(voltage - first.axon_voltage_mV) < 1.0
+        assert first.steps == 20000
+        assert first.timestep_ms == 0.01
+        # It is reported as a numerical fixed point, not a PSI measurement.
+        assert "NOT A MEASURED PSI RESTING POTENTIAL" in first.note
+
+    def test_15_the_gates_stay_finite_and_in_bounds(self):
+        """All four gates stay in [0, 1] at equilibrium and through a spike."""
+        import math
+
+        model = _eight_e_model()
+        report = model.equilibrium_report(
+            _eight_e_psi(), segment_count=11, duration_ms=200.0,
+        )
+        gates = report.axon_gates
+        assert gates.all_finite is True
+        assert gates.gates_in_bounds is True
+        for gate in (gates.nat_m, gates.nat_h, gates.nap_m, gates.k_m):
+            assert 0.0 <= gate <= 1.0
+            assert math.isfinite(gate)
+        # At the unstimulated fixed point the gates are physically sensible:
+        # sodium activation nearly closed, sodium inactivation nearly open.
+        assert gates.nat_m < 0.02
+        assert gates.nat_h > 0.99
+        # And bounded through a full action potential too.
+        network = model.prepare_psi(_eight_e_psi(), segment_count=11)
+        state = model.initial_state(network)
+        target = network.active_compartment_ids[0]
+        for index in range(300):
+            model.step(
+                network, state,
+                injected_currents_A=(
+                    {target: FIXTURE_PSI_AMPLITUDE_A} if index < 3 else {}
+                ),
+                timestep_ms=0.01,
+            )
+            segment = state[target]
+            for gate in (
+                segment.nat_m, segment.nat_h, segment.nap_m, segment.k_m,
+            ):
+                assert 0.0 <= gate <= 1.0
+                assert math.isfinite(gate)
+
+    # --- 12: the generic stimulus diagnostic -------------------------------
+
+    def test_16_the_generic_stimulus_response_produces_a_finite_spike(self):
+        """The GENERIC run, invoked on PSI, yields a real repolarising spike."""
+        import math
+
+        trace, diagnostic, network = _eight_e_model().stimulus_response(
+            _eight_e_psi(), segment_count=11, duration_ms=3.0,
+        )
+        assert diagnostic.all_finite is True
+        assert diagnostic.observed is True
+        # A genuine spike: large depolarisation, a peak below E_Na = +65 mV,
+        # and a fall well back below the peak.
+        assert diagnostic.depolarization_mV > 100.0
+        assert 0.0 < diagnostic.peak_voltage_mV < 65.0
+        assert 0.0 < diagnostic.peak_time_ms < 3.0
+        assert diagnostic.end_voltage_mV < diagnostic.peak_voltage_mV - 50.0
+        # It is on the axon, which is the only active section.
+        assert diagnostic.segment_id == "PSI_axon#seg0"
+        assert network.is_active(diagnostic.segment_id)
+        assert all(math.isfinite(value) for value in trace)
+        # The criterion is a numerical waveform rule, not a PSI threshold.
+        assert "NOT A BIOLOGICAL GF THRESHOLD" in (
+            diagnostic.observation_criterion
+        )
+
+    def test_17_the_stimulus_fixture_is_labelled_and_not_a_threshold(self):
+        """The amplitude is a solver fixture, never a biological claim."""
+        from biological_brain import (
+            PSI_DIRECT_STIMULUS_AMPLITUDE_A, PSI_DIRECT_STIMULUS_DURATION_MS,
+            PSI_DIRECT_STIMULUS_PROVENANCE, psi_scope_note,
+        )
+
+        assert PSI_DIRECT_STIMULUS_AMPLITUDE_A == FIXTURE_PSI_AMPLITUDE_A
+        assert PSI_DIRECT_STIMULUS_DURATION_MS == FIXTURE_PSI_DURATION_MS
+        provenance = PSI_DIRECT_STIMULUS_PROVENANCE
+        assert "NUMERICAL SOLVER FIXTURE" in provenance
+        assert "NOT A BIOLOGICAL PSI STIMULUS" in provenance
+        assert "NOT a PSI rheobase" in provenance
+        assert "NOT a measurement" in provenance
+        # It says why the paper's 120 nA is not used, and that it is not
+        # borrowed, exactly as 8D declined to borrow it for the TTMn.
+        assert "120 nA" in provenance
+        assert "not borrowed" in provenance
+        note = psi_scope_note()
+        assert "NUMERICAL SOLVER FIXTURE" in note
+        assert "NOT a biological PSI stimulus" in note
+        assert "NOT a rheobase" in note
+
+    def test_18_the_fixture_amplitude_is_not_the_gf_stimulus(self):
+        """PSI must not silently inherit the GF model stimulus.
+
+        What matters is PROVENANCE, not numeric distinctness. The published GF
+        circuit stimulus of 120 nA belongs to the paper's GF simulation and must
+        never be reused as a PSI value. Two independently chosen solver fixtures
+        may legitimately happen to share a number, so this test asserts that PSI
+        DECLARES its own constant and that neither fixture is the borrowed GF
+        one, rather than asserting the two fixtures differ from each other.
+        """
+        from biological_brain import (
+            MODELDB_GF_STIMULUS_AMPLITUDE_A, PSI_DIRECT_STIMULUS_AMPLITUDE_A,
+            TTMN_DIRECT_STIMULUS_AMPLITUDE_A,
+        )
+        from biological_brain.dynamics.gf_active import (
+            ActiveAxonModel, GFActiveAxonModel,
+        )
+        from biological_brain.dynamics.psi_active import PSIActiveAxonModel
+
+        model = _eight_e_model()
+        # PSI reads its OWN declared constant, not an inherited default.
+        assert model.stimulus_fixture_amplitude_A == PSI_DIRECT_STIMULUS_AMPLITUDE_A
+        assert PSI_DIRECT_STIMULUS_AMPLITUDE_A == FIXTURE_PSI_AMPLITUDE_A
+        # The published GF circuit stimulus is explicitly not a PSI stimulus.
+        assert FIXTURE_PSI_AMPLITUDE_A != MODELDB_GF_STIMULUS_AMPLITUDE_A
+        assert TTMN_DIRECT_STIMULUS_AMPLITUDE_A != MODELDB_GF_STIMULUS_AMPLITUDE_A
+        # The base engine's default belongs to the GF adapter, and PSI overrides
+        # it rather than accepting it.
+        assert GFActiveAxonModel().stimulus_fixture_amplitude_A == (
+            MODELDB_GF_STIMULUS_AMPLITUDE_A
+        )
+        assert "stimulus_fixture_amplitude_A" in vars(PSIActiveAxonModel)
+        # Each neuron's fixture provenance names that neuron's own checkpoint,
+        # so a reader can tell which run produced which number.
+        from biological_brain import (
+            PSI_DIRECT_STIMULUS_PROVENANCE, TTMN_DIRECT_STIMULUS_PROVENANCE,
+        )
+
+        assert "3.0D-8E" in PSI_DIRECT_STIMULUS_PROVENANCE
+        assert "3.0D-8D" in TTMN_DIRECT_STIMULUS_PROVENANCE
+        assert "PSI" in PSI_DIRECT_STIMULUS_PROVENANCE
+        assert "TTMn" in TTMN_DIRECT_STIMULUS_PROVENANCE
+
+    # --- 13: timestep convergence under the EXISTING policy -----------------
+
+    def test_19_the_spike_converges_under_the_existing_timestep_policy(self):
+        """dt = 0.01, 0.005, 0.002 ms, with the 8A/8D interpretation.
+
+        8E neither defines, widens nor changes the timestep policy; it reuses
+        the 3.0D-7R/8A policy and checks the PSI result under it. Refinement
+        moves the peak only slightly, and the finer result is slightly higher,
+        as a resolved spike is.
+        """
+        import math
+
+        from biological_brain.dynamics.gf_active import (
+            GF_ACTIVE_NUMERICAL_POLICY, GFActiveNumericalError,
+        )
+
+        model = _eight_e_model()
+        peaks = {}
+        for timestep in (0.01, 0.005, 0.002):
+            trace, diagnostic, _ = model.stimulus_response(
+                _eight_e_psi(), segment_count=11, duration_ms=3.0,
+                timestep_ms=timestep,
+            )
+            assert diagnostic.all_finite is True
+            assert diagnostic.observed is True
+            peaks[timestep] = diagnostic.peak_voltage_mV
+            assert all(math.isfinite(value) for value in trace)
+        assert peaks[0.01] == pytest.approx(peaks[0.002], abs=0.5)
+        assert peaks[0.002] > peaks[0.01]
+        # The policy is the existing one and 8E cannot widen it.
+        assert model._timestep_ms == (
+            GF_ACTIVE_NUMERICAL_POLICY.default_timestep_ms
+        )
+        assert GF_ACTIVE_NUMERICAL_POLICY.max_timestep_ms == 0.01
+        for too_large in (1.0, 2.0, 100.0):
+            with pytest.raises(GFActiveNumericalError):
+                _eight_e_model(timestep_ms=too_large)
+        for invalid in (0.0, -0.01):
+            with pytest.raises(GFActiveNumericalError):
+                _eight_e_model(timestep_ms=invalid)
+
+    def test_20_every_subdivision_count_stays_finite_and_keeps_dendrite_passive(self):
+        """N = 1, 2, 5, 11, 51 all run, with the dendrite passive at each."""
+        import math
+
+        for count in (1, 2, 5, 11, 51):
+            model = _eight_e_model()
+            network = model.prepare_psi(_eight_e_psi(), segment_count=count)
+            state = model.initial_state(network)
+            assert len(network.active_compartment_ids) == count
+            for _ in range(200):
+                model.step(network, state, timestep_ms=0.01)
+            voltages = model.voltages_mV(network, state)
+            assert len(voltages) == count + 1
+            for segment_id, voltage in voltages.items():
+                assert math.isfinite(voltage), (count, segment_id)
+            for segment in state.values():
+                assert segment.all_finite() is True
+                for gate in (
+                    segment.nat_m, segment.nat_h, segment.nap_m, segment.k_m,
+                ):
+                    assert 0.0 <= gate <= 1.0
+                    assert math.isfinite(gate)
+            assert model.passive_are_inert(network, state) is True
+            if count == 1:
+                with pytest.raises(Exception):
+                    model.prepare_psi(_eight_e_psi(), segment_count=0)
+
+    def test_21_removing_the_active_conductances_returns_passive_behaviour(self):
+        """The control that proves the active channels are what changes things."""
+        from biological_brain.dynamics.passive_cable import (
+            PassiveCableModel, PassiveNetworkState, PassiveNumericalMethod,
+        )
+        from biological_brain.passive_profiles import (
+            PROFILE_AUGUSTIN_2019_GFS_PASSIVE,
+        )
+        from biological_brain.subdivision import (
+            SubdivisionPlan, SectionSubdivision,
+        )
+
+        model = _eight_e_model()
+        network = model.prepare_psi(_eight_e_psi(), segment_count=11)
+        zeroed = model.with_active_conductances_removed(network)
+        conductances = {p.name: p.value for p in zeroed.applied_parameters}
+        assert conductances["g_Na"] == 0.0
+        assert conductances["g_Nap"] == 0.0
+        assert conductances["g_K"] == 0.0
+        # Only the conductances changed; the reversals are untouched.
+        assert conductances["E_Na"] == pytest.approx(65.0)
+        assert conductances["E_K"] == pytest.approx(-74.0)
+
+        state = model.initial_state(zeroed)
+        for index in range(200):
+            model.step(
+                zeroed, state,
+                injected_currents_A=(
+                    {zeroed.active_compartment_ids[0]: FIXTURE_PSI_AMPLITUDE_A}
+                    if index < 3 else {}
+                ),
+                timestep_ms=0.01,
+            )
+        got = model.voltages_mV(zeroed, state)
+
+        plan = SubdivisionPlan(sections=(
+            SectionSubdivision("PSI_axon", 11),
+            SectionSubdivision("PSI_dendrite", 1),
+        ))
+        backend = PassiveCableModel(
+            profile_name=PROFILE_AUGUSTIN_2019_GFS_PASSIVE,
+            numerical_method=PassiveNumericalMethod.BACKWARD_EULER,
+        )
+        passive_network = backend.prepare(_eight_e_psi(), plan)
+        segment_ids = [c.compartment_id for c in passive_network.compartments]
+        passive_state = PassiveNetworkState(
+            voltages_mV={segment_id: -85.0 for segment_id in segment_ids}
+        )
+        axon_first = next(
+            c.compartment_id for c in passive_network.compartments
+            if c.source_section_id == "PSI_axon"
+        )
+        for index in range(200):
+            backend.step(
+                passive_network, passive_state,
+                injected_currents_A=(
+                    {axon_first: FIXTURE_PSI_AMPLITUDE_A} if index < 3 else {}
+                ),
+                timestep_ms=0.01,
+            )
+        passive_voltages = dict(passive_state.voltages_mV)
+        assert len(passive_voltages) == len(got)
+        for segment_id, voltage in passive_voltages.items():
+            assert got[segment_id] == pytest.approx(voltage, abs=1e-9), segment_id
+        # And with no active channel the axon cannot spike.
+        assert max(got.values()) < 0.0
+
+    # --- 15: the refactor did not move the validated GF / TTMn numbers -----
+
+    def test_22_the_generic_refactor_preserves_the_validated_8a_8d_results(self):
+        """GF and TTMn numbers are UNCHANGED by lifting the runs to the engine.
+
+        This is the regression test for the 3.0D-8E architectural change. The
+        GF equilibrium is the 8B-validated value and the TTMn results are the
+        8D-validated ones, both now reached through the GENERIC
+        ``equilibrium_report()`` rather than through a TTMn-specific copy.
+        """
+        from biological_brain.dynamics.gf_active import GFActiveAxonModel
+        from biological_brain.dynamics.ttmn_active import TTMActiveAxonModel
+
+        # GF: the 8B-validated unstimulated fixed point, via the generic run.
+        gf = GFActiveAxonModel()
+        gf_report = gf.equilibrium_report(
+            _eight_a_gf(), segment_count=11, duration_ms=200.0,
+        )
+        assert gf_report.axon_voltage_mV == pytest.approx(-74.6696, abs=0.001)
+        assert gf_report.all_finite is True
+        # GF carries no passive section, so there is nothing passive to report.
+        assert gf_report.passive_voltages_mV == {}
+        assert gf.passive_section_ids == ()
+        assert gf_report.axon_gates.gates_in_bounds is True
+
+        # TTMn: the 8D-validated equilibrium shape, via the same generic run.
+        ttmn = TTMActiveAxonModel()
+        from biological_brain.morphology_builder import build_gfs_compartment_models
+
+        ttmn_model = build_gfs_compartment_models()["TTMn"]
+        ttmn_model.passive_profile_name = PROFILE_AUGUSTIN_2019_GFS_PASSIVE
+        ttmn_report = ttmn.equilibrium_report(
+            ttmn_model, segment_count=11, duration_ms=200.0,
+        )
+        assert ttmn_report.all_finite is True
+        assert ttmn_report.axon_voltage_mV != -85.0
+        assert -85.0 < ttmn_report.axon_voltage_mV < -60.0
+        assert len(ttmn_report.passive_voltages_mV) == 2
+        # The 8D note wording is preserved by the neuron-aware generic note.
+        assert "NOT A MEASURED TTMn RESTING POTENTIAL" in ttmn_report.note
+        # And the 8D direct-stimulation fixture is still the TTMn's own.
+        assert ttmn.stimulus_fixture_amplitude_A == FIXTURE_TTMN_AMPLITUDE_A
+        assert ttmn.stimulus_fixture_duration_ms == FIXTURE_TTMN_DURATION_MS
+
+    def test_23_the_8a_and_8d_public_apis_are_intact(self):
+        """The existing adapters still expose the 8A / 8D surface unchanged."""
+        from biological_brain import (
+            TTMN_ACTIVE_SECTION_ID, TTMN_PASSIVE_SECTION_IDS,
+        )
+        from biological_brain.dynamics.gf_active import (
+            ActiveAxonModel, GFActiveAxonModel, GF_ACTIVE_SECTION_ID,
+        )
+        from biological_brain.dynamics.ttmn_active import TTMActiveAxonModel
+
+        gf = GFActiveAxonModel()
+        assert gf.neuron_id == "GF"
+        assert gf.active_section_id == GF_ACTIVE_SECTION_ID
+        assert gf.name == "gf_active_v0"
+        assert isinstance(gf, ActiveAxonModel)
+        # 8A still prepares exactly its axon, and only its axon.
+        network = gf.prepare(_eight_a_gf(), segment_count=11)
+        assert network.active_compartment_ids == tuple(
+            f"GF_axon#seg{i}" for i in range(11)
+        )
+        assert network.passive_compartment_ids == ()
+
+        ttmn = TTMActiveAxonModel()
+        assert ttmn.neuron_id == "TTMn"
+        assert ttmn.active_section_id == TTMN_ACTIVE_SECTION_ID
+        assert ttmn.name == "ttmn_active_v0"
+        assert ttmn.passive_section_ids == TTMN_PASSIVE_SECTION_IDS
+        # The 8D convenience name still resolves to the same network.
+        assert (
+            ttmn.prepare_ttmn(
+                _eight_d_ttmn(), segment_count=11
+            ).segment_ids
+            == ttmn.prepare_active_axon(
+                _eight_d_ttmn(), segment_count=11
+            ).segment_ids
+        )
+        # 8A's own stimulus constant is untouched by 8E.
+        from biological_brain import MODELDB_GF_STIMULUS_AMPLITUDE_A
+
+        assert MODELDB_GF_STIMULUS_AMPLITUDE_A == 120.0e-9
+
+    # --- scope guard -------------------------------------------------------
+
+    def test_24_psi_adds_no_synapse_coupling_or_unsupported_mechanism(self):
+        """8E introduces no synapse, no gap value, no Dalpha7, no kinetics."""
+        import ast
+        import inspect
+
+        from biological_brain.dynamics import psi_active
+        from biological_brain.dynamics.gf_active import (
+            GFActiveScopeError, GF_ACTIVE_MECHANISMS, MECHANISM_GAP2,
+        )
+
+        tree = ast.parse(inspect.getsource(psi_active))
+        imported = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom):
+                if node.module:
+                    imported.append(node.module)
+            elif isinstance(node, ast.Import):
+                imported.extend(a.name for a in node.names)
+        joined = " ".join(imported)
+        # No synapse, coupling, sensory, motor or DLMn layer is reachable.
+        for banned in (
+            "synaptic_abstraction", "synaptic_mechanism_registry",
+            "electrical_coupling", "looming_abstraction",
+            "sensorimotor_integration", "motor_output_abstraction",
+            "source_reconciliation", "gf_equilibrium",
+        ):
+            assert banned not in joined, banned
+        # It reaches only the one shared engine.
+        assert "gf_active" in joined
+        # The prepared network is the PSI only, and carries no gap junction.
+        network = _eight_e_network()
+        assert network.model_id == "PSI"
+        assert all(
+            segment_id.startswith("PSI_")
+            for segment_id in network.segment_ids
+        )
+        # Every unsupported mechanism is still refused, by name, with a reason.
+        model = _eight_e_model()
+        for banned in (
+            "ShakB", "DmCa1D", "Slowpoke", "Shaker", "Para", "Exp2Syn",
+            MECHANISM_GAP2, "ca", "Ca", "BK", "muscle", "Dalpha7", "alpha7",
+        ):
+            with pytest.raises(GFActiveScopeError) as excinfo:
+                model.reject_unsupported_mechanism(banned)
+            assert "OUT OF SCOPE" in str(excinfo.value)
+        for supported in GF_ACTIVE_MECHANISMS:
+            with pytest.raises(GFActiveScopeError) as excinfo:
+                model.reject_unsupported_mechanism(supported)
+            assert "IS implemented" in str(excinfo.value)
+
+    def test_25_the_7u_gap_junction_conflict_is_untouched(self):
+        """7U remains two unresolved conflicts, factor 1000, no preferred side."""
+        from biological_brain.source_reconciliation import (
+            ResolutionStatus, get_source_reconciliation_registry,
+        )
+
+        registry = get_source_reconciliation_registry()
+        assert len(registry.unresolved()) == 2
+        for conflict_id in registry.unresolved():
+            conflict = registry.get(conflict_id)
+            assert conflict.resolution_status == ResolutionStatus.UNRESOLVED
+            assert conflict.preferred_side is None
+            assert conflict.discrepancy_factor == 1000.0
