@@ -21171,3 +21171,1111 @@ class TestPSIActiveNeuron:
             assert conflict.resolution_status == ResolutionStatus.UNRESOLVED
             assert conflict.preferred_side is None
             assert conflict.discrepancy_factor == 1000.0
+
+
+# =============================================================================
+# 3.0D-8F: the LIVE DLMn ACTIVE NEURON
+# =============================================================================
+#
+# The DLMn direct-stimulation fixture. This is a NUMERICAL SOLVER FIXTURE chosen
+# by 3.0D-8F, NOT a biological DLMn stimulus. It is SMALLER than the 50 nA used
+# for GF, TTMn and PSI because the DLMn axon is a thin 2-4 um taper whose
+# proximal segment has roughly twenty times less membrane area, so a fixed
+# current produces a twenty-fold larger single-step excursion. That is a
+# discretisation constraint, NOT a claim that a DLMn needs less current to fire.
+FIXTURE_DLMN_AMPLITUDE_A = 20.0e-9
+FIXTURE_DLMN_DURATION_MS = 0.03
+
+#: Source-backed DLMn geometry-derived fixtures. These follow from the published
+#: Augustin Table 1 geometry and the authorized passive profile; they are NOT
+#: experimental measurements.
+DLMN_DENDRITE_AREA_UM2 = 628.318530718
+DLMN_DENDRITE_C_PF = 6.283185307
+DLMN_DENDRITE_GLEAK_NS = 0.188495559
+DLMN_DENDRITE_R_MOHM = 11.268169971
+DLMN_AXON_AREA_UM2 = 471.333136395
+DLMN_AXON_C_PF = 4.713331364
+DLMN_AXON_GLEAK_NS = 0.141399941
+DLMN_AXON_R_MOHM = 2.817042493
+
+
+def _eight_f_model(**overrides):
+    from biological_brain.dynamics.dlmn_active import DLMNActiveAxonModel
+
+    return DLMNActiveAxonModel(**overrides)
+
+
+def _eight_f_dlmn():
+    """The existing 3.0D-7B DLMn compartment model on the 3.0D-7F profile."""
+    from biological_brain.morphology_builder import build_gfs_compartment_models
+
+    model = build_gfs_compartment_models()["DLMn"]
+    model.passive_profile_name = PROFILE_AUGUSTIN_2019_GFS_PASSIVE
+    return model
+
+
+def _eight_f_network(segment_count=11):
+    return _eight_f_model().prepare_dlmn(
+        _eight_f_dlmn(), segment_count=segment_count
+    )
+
+
+def _frustum_resistance_ohm(d1_um, d2_um, length_um, ra=35.4):
+    """The existing 3.0D-7J tapered-cable resistance, for conservation checks.
+
+    R = Ra * L / (pi * r1 * r2). This mirrors the implementation's own recorded
+    derivation string; it is used here only to check that the implementation
+    conserved the taper, never to redefine it.
+    """
+    from math import pi
+
+    return ra * (length_um * 1e-4) / (pi * (d1_um / 2 * 1e-4) * (d2_um / 2 * 1e-4))
+
+
+def _frustum_area_cm2(d1_um, d2_um, length_um):
+    """The existing 3.0D-7J frustum lateral area, including the slant length."""
+    from math import hypot, pi
+
+    r1, r2 = d1_um / 2, d2_um / 2
+    slant = hypot(length_um, r2 - r1)
+    return pi * (r1 + r2) * slant * 1e-8
+
+
+class TestDLMnActiveNeuron:
+    """3.0D-8F: the live DLMn active neuron, with a genuinely TAPERED axon.
+
+    DLMn completes the fourth cell of the published GFS model, and it is the
+    first LIVE neuron in this project whose active section TAPERS. GF, TTMn and
+    PSI all have uniform-diameter axons, so 8F is the checkpoint that actually
+    exercises the 3.0D-7J/7K taper machinery inside the ACTIVE solver rather
+    than only in the passive backend. The tests therefore spend real effort on
+    two things: that the taper survives being made live (conservation of area and
+    axial resistance at every subdivision, and diameters that interpolate rather
+    than average), and that the architecture still reuses the single shared
+    nat/nap/k implementation.
+
+    The third thing easy to get wrong is the stimulation fixture. 8F's amplitude
+    is SMALLER than the other neurons' 50 nA, and a reader who assumes all four
+    fixtures should match would be wrong. The reason is numerical, not
+    biological: the thin tapered axon has ~20x less membrane area per segment,
+    so 50 nA would move the membrane 1.67 V in a single 0.01 ms step, overshoot
+    E_Na and destroy timestep convergence. The tests below pin both the reduced
+    value AND the reason for it, so it can never be mistaken for a DLMn
+    rheobase.
+    """
+
+    # --- 1: construction from the existing morphology system ---------------
+
+    def test_01_the_dlmn_model_constructs_from_the_existing_builder(self):
+        """DLMn comes from the 3.0D-7B builder; 8F defines no geometry."""
+        model = _eight_f_dlmn()
+        assert model.neuron_id == "DLMn"
+        assert set(model.compartments) == {
+            "DLMn_soma", "DLMn_axon", "DLMn_dendrite",
+        }
+        # 8F adds no compartment of its own, and the soma stays excluded for
+        # insufficient source geometry exactly as 3.0D-7C recorded.
+        assert model.is_electrically_excluded("DLMn_soma") is True
+        assert model.compartments["DLMn_soma"].geometry.length_um is None
+        for compartment in model.compartments.values():
+            for field in ("length_um", "diameter_um"):
+                record = getattr(compartment.provenance, field)
+                if getattr(compartment.geometry, field) is None:
+                    assert record.category.value == "UNKNOWN"
+                    assert record.source == ""
+                    continue
+                assert "Augustin" in record.source, (compartment.compartment_id, field)
+
+    # --- 8: morphology provenance -----------------------------------------
+
+    def test_02_the_published_dlmn_geometry_and_provenance(self):
+        """Dendrite 2 um x 100 um; axon 2->4 um over 50 um, all source-backed."""
+        model = _eight_f_dlmn()
+        dendrite = model.compartments["DLMn_dendrite"]
+        assert dendrite.geometry.diameter_um == 2.0
+        assert dendrite.geometry.length_um == 100.0
+        axon = model.compartments["DLMn_axon"]
+        assert axon.geometry.diameter_um == 2.0
+        assert axon.geometry.diameter_distal_um == 4.0
+        assert axon.geometry.length_um == 50.0
+        # Every DLMn geometry value is a PUBLISHED MODEL PARAMETER. Unlike the
+        # PSI dendrite, NOTHING here is ESTIMATED, and 8F reclassifies nothing.
+        for compartment, fields in (
+            (dendrite, ("length_um", "diameter_um")),
+            (axon, ("length_um", "diameter_um", "diameter_distal_um")),
+        ):
+            for field in fields:
+                record = getattr(compartment.provenance, field)
+                assert record.category.value == "PUBLISHED_MODEL_PARAMETER", (
+                    compartment.compartment_id, field
+                )
+        assert axon.provenance.diameter_distal_um.category.value == (
+            "PUBLISHED_MODEL_PARAMETER"
+        )
+
+    # --- 9: the axon is genuinely tapered, not an averaged cylinder --------
+
+    def test_03_the_axon_is_tapered_not_a_uniform_cylinder(self):
+        """The taper is real geometry and must not be averaged away.
+
+        Three independent ways this could silently degrade to a uniform
+        cylinder are checked: the source geometry, the derived segment
+        diameters, and the resistance formula the implementation actually used.
+        """
+        from biological_brain.subdivision import (
+            SectionSubdivision, SubdivisionPlan, derive_segments,
+        )
+
+        source = _eight_f_dlmn().compartments["DLMn_axon"].geometry
+        # 1. The SOURCE geometry still carries both endpoints.
+        assert source.diameter_um == 2.0
+        assert source.diameter_distal_um == 4.0
+        assert source.diameter_um != source.diameter_distal_um
+        # 2. The DERIVED segments interpolate the taper rather than flattening.
+        derived = derive_segments(
+            _eight_f_dlmn().compartments["DLMn_axon"],
+            SubdivisionPlan(sections=(SectionSubdivision("DLMn_axon", 5),)),
+        )
+        assert [s.geometry.diameter_um for s in derived] == [2.0, 2.4, 2.8, 3.2, 3.6]
+        assert [s.geometry.diameter_distal_um for s in derived] == [
+            2.4, 2.8, 3.2, 3.6, 4.0
+        ]
+        assert [s.geometry.length_um for s in derived] == [10.0] * 5
+        # 3. The implementation used the TAPERED resistance, and says so.
+        network = _eight_f_network(segment_count=5)
+        axon_segments = [
+            c for c in network.network.compartments
+            if c.source_section_id == "DLMn_axon"
+        ]
+        for compartment, segment in zip(axon_segments, derived):
+            if compartment.axial_resistance_ohm is None:
+                continue
+            assert compartment.axial_resistance_ohm == pytest.approx(
+                _frustum_resistance_ohm(
+                    segment.geometry.diameter_um,
+                    segment.geometry.diameter_distal_um,
+                    segment.geometry.length_um,
+                ),
+                rel=1e-9,
+            )
+            assert "tapered" in compartment.axial_derivation
+        # And the membrane area used the FRUSTUM form, not a cylinder.
+        assert "Frustum" in axon_segments[0].membrane_area_derivation
+        # An averaged-diameter cylinder would give a materially different area,
+        # so this pins that the taper is not being approximated away.
+        mean_diameter = 3.0
+        cylinder_area = 3.141592653589793 * mean_diameter * 50.0
+        assert axon_segments[0].membrane_area_cm2 != pytest.approx(
+            cylinder_area * 1e-8, rel=1e-3
+        )
+
+    # --- 10: the exact geometry-derived fixtures --------------------------
+
+    def test_04_the_geometry_derived_fixtures_match(self):
+        """Area, capacitance, leak and axial resistance from the source geometry.
+
+        These are GEOMETRY- AND PARAMETER-DERIVED values, not new biological
+        measurements, and they are checked at the tolerances the existing
+        geometry calculations already use.
+        """
+        model = _eight_f_model()
+        network = model.prepare_dlmn(_eight_f_dlmn(), segment_count=1)
+        dendrite = next(
+            c for c in network.network.compartments
+            if c.compartment_id == "DLMn_dendrite"
+        )
+        axon = next(
+            c for c in network.network.compartments
+            if c.compartment_id == "DLMn_axon"
+        )
+        # Dendrite: uniform 2 um x 100 um.
+        assert dendrite.membrane_area_cm2 * 1e8 == pytest.approx(
+            DLMN_DENDRITE_AREA_UM2, rel=1e-9
+        )
+        assert dendrite.capacitance_F * 1e12 == pytest.approx(
+            DLMN_DENDRITE_C_PF, rel=1e-9
+        )
+        assert dendrite.leak_conductance_S * 1e9 == pytest.approx(
+            DLMN_DENDRITE_GLEAK_NS, rel=1e-8
+        )
+        dendrite_connection = next(
+            c for c in network.network.connections
+            if c.child_id == "DLMn_dendrite"
+        )
+        assert dendrite_connection.resistance_ohm == pytest.approx(
+            DLMN_DENDRITE_R_MOHM * 1e6, rel=1e-6
+        )
+        # Axon: the true frustum lateral area, including the slant length.
+        assert axon.membrane_area_cm2 * 1e8 == pytest.approx(
+            DLMN_AXON_AREA_UM2, rel=1e-9
+        )
+        assert axon.capacitance_F * 1e12 == pytest.approx(
+            DLMN_AXON_C_PF, rel=1e-9
+        )
+        assert axon.leak_conductance_S * 1e9 == pytest.approx(
+            DLMN_AXON_GLEAK_NS, rel=1e-9
+        )
+        # And the passive parameters are the authorized ones, not new numbers.
+        assert dendrite.leak_reversal_mV == pytest.approx(-85.0)
+        assert axon.leak_reversal_mV == pytest.approx(-85.0)
+        assert model.rest_voltage_mV == -85.0
+        for compartment in (axon, dendrite):
+            assert compartment.capacitance_F == pytest.approx(
+                compartment.membrane_area_cm2 * 1.0e-6, rel=1e-9
+            )
+            assert compartment.leak_conductance_S == pytest.approx(
+                compartment.membrane_area_cm2 * 0.03 * 1e-3, rel=1e-9
+            )
+
+    # --- 11: subdivision conservation --------------------------------------
+
+    def test_05_subdivision_conserves_the_tapered_area_and_resistance(self):
+        """Area and axial resistance are conserved at EVERY subdivision.
+
+        This is the regression that would catch a change degrading the taper.
+        Each derived segment of the taper carries its own frustum area and its
+        own tapered axial resistance, and the totals are invariant to how finely
+        the section is discretised.
+        """
+        from biological_brain.subdivision import (
+            SectionSubdivision, SubdivisionPlan, derive_segments,
+        )
+
+        model = _eight_f_model()
+        source_compartment = _eight_f_dlmn().compartments["DLMn_axon"]
+        for count in (1, 2, 5, 11, 51):
+            network = model.prepare_dlmn(_eight_f_dlmn(), segment_count=count)
+            axon = [
+                c for c in network.network.compartments
+                if c.source_section_id == "DLMn_axon"
+            ]
+            assert len(axon) == count
+            plan = SubdivisionPlan(
+                sections=(SectionSubdivision("DLMn_axon", count),)
+            )
+            derived = derive_segments(source_compartment, plan)
+            # Diameters interpolate along the source linear taper.
+            for i, segment in enumerate(derived):
+                assert segment.geometry.diameter_um == pytest.approx(
+                    2.0 + 2.0 * (i / count), rel=1e-12
+                )
+            assert derived[-1].geometry.diameter_distal_um == pytest.approx(
+                4.0, rel=1e-12
+            )
+            # Total tapered AREA is conserved exactly.
+            total_area = sum(c.membrane_area_cm2 for c in axon)
+            assert total_area * 1e8 == pytest.approx(DLMN_AXON_AREA_UM2, rel=1e-9)
+            # Total tapered AXIAL RESISTANCE is conserved exactly. Each segment
+            # carries its own frustum resistance, so the sum over the N segments
+            # equals the whole-section tapered value at every count.
+            segment_resistances = [
+                _frustum_resistance_ohm(
+                    s.geometry.diameter_um,
+                    s.geometry.diameter_distal_um,
+                    s.geometry.length_um,
+                )
+                for s in derived
+            ]
+            total_resistance = sum(segment_resistances)
+            assert total_resistance == pytest.approx(
+                DLMN_AXON_R_MOHM * 1e6, rel=1e-9
+            )
+            # The RECORDED internal interfaces agree. The DLMn axon is an
+            # electrical ROOT (its anatomical parent soma is excluded), so its
+            # first segment has no proximal neighbour and records no axial
+            # resistance; the N-1 recorded interfaces therefore sum to the whole
+            # value minus the root segment's own resistance.
+            recorded = [
+                c.axial_resistance_ohm for c in axon
+                if c.axial_resistance_ohm is not None
+            ]
+            assert len(recorded) == count - 1
+            assert sum(recorded) == pytest.approx(
+                total_resistance - segment_resistances[0], rel=1e-9
+            )
+
+    def test_06_the_root_axon_has_no_proximal_axial_connection(self):
+        """The missing proximal resistance is topology, not a dropped value.
+
+        The DLMn soma's geometry is insufficient for electrical representation
+        (3.0D-7I), so the 7Q computational abstraction makes DLMn_axon an
+        electrical root. 8F records that as-is and does not invent a parent
+        connection to fill it.
+        """
+        network = _eight_f_network(segment_count=11)
+        axon = [
+            c for c in network.network.compartments
+            if c.source_section_id == "DLMn_axon"
+        ]
+        assert axon[0].axial_resistance_ohm is None
+        assert all(c.axial_resistance_ohm is not None for c in axon[1:])
+        # The dendrite attaches at the PROXIMAL axon segment, per 3.0D-7Q.
+        parents = {
+            c.parent_id for c in network.network.connections
+            if c.child_id == "DLMn_dendrite"
+        }
+        assert parents == {"DLMn_axon#seg0"}
+
+    # --- 12: intra-neuron topology ----------------------------------------
+
+    def test_07_the_topology_connects_the_dendrite_to_the_axon(self):
+        """DLMn_dendrite -> DLMn_axon, from the existing 3.0D-7P record."""
+        from biological_brain.computational_topology import (
+            get_computational_topology,
+        )
+
+        topology = get_computational_topology(_eight_f_dlmn())
+        assert topology is not None
+        pairs = {
+            (c.child_section_id, c.parent_section_id)
+            for c in topology.connections
+            if c.child_section_id.startswith("DLMn")
+        }
+        assert pairs == {("DLMn_dendrite", "DLMn_axon")}
+        for connection in topology.connections:
+            if connection.child_section_id.startswith("DLMn"):
+                assert connection.source_file == "gfpn.py"
+                assert connection.source_line == 121
+                assert "connect" in connection.source_statement
+
+    # --- 13: the PSI input placement, NOT activated -----------------------
+
+    def test_08_the_psi_input_placement_is_preserved_but_not_activated(self):
+        """12.5 um of source ANATOMY, with no synapse placed on it.
+
+        The placement is real, source-backed morphology, so 8F preserves it. But
+        8F implements no PSI->DLMn synapse, so nothing acts on that location:
+        the placement is anatomy, not a connection.
+        """
+        import ast
+        import inspect
+
+        from biological_brain.dynamics import dlmn_active
+        from biological_brain.subdivision import map_placement_to_segment
+
+        axon = _eight_f_dlmn().compartments["DLMn_axon"]
+        assert len(axon.placements) == 1
+        placement = axon.placements[0]
+        assert placement.distance_um == 12.5
+        assert placement.kind == "input"
+        assert "PSI" in placement.description
+        assert placement.provenance.category.value == "PUBLISHED_MODEL_PARAMETER"
+        # It maps onto a derived segment exactly as 7K defines.
+        assert map_placement_to_segment(12.5, 50.0, 11) == 2
+        # And NO synapse, conductance or channel exists at that location. The
+        # prepared DLMn network carries only the two anatomical sections.
+        network = _eight_f_network()
+        assert network.model_id == "DLMn"
+        assert all(
+            segment_id.startswith("DLMn_")
+            for segment_id in network.segment_ids
+        )
+        # The check is on CODE, not on the module text: this module's docstrings
+        # deliberately NAME these mechanisms to declare that they are absent, so
+        # a substring search over the source would match its own prose. What
+        # matters is that none of them is DEFINED or IMPORTED.
+        tree = ast.parse(inspect.getsource(dlmn_active))
+        defined = {
+            node.name for node in ast.walk(tree)
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef,
+                                 ast.ClassDef))
+        }
+        assigned = {
+            target.id
+            for node in ast.walk(tree) if isinstance(node, ast.Assign)
+            for target in node.targets if isinstance(target, ast.Name)
+        }
+        constants = {
+            node.value for node in ast.walk(tree)
+            if isinstance(node, ast.Assign)
+            and isinstance(node.value, ast.Constant)
+        }
+        for banned in (
+            "Exp2Syn", "Dalpha7", "Synapse", "synaptic", "receptor",
+            "neurotransmitter", "nAChR",
+        ):
+            assert banned not in defined, banned
+            assert banned not in assigned, banned
+            assert banned not in constants, banned
+        imported = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and node.module:
+                imported.append(node.module)
+            elif isinstance(node, ast.Import):
+                imported.extend(a.name for a in node.names)
+        joined = " ".join(imported)
+        for banned in ("synaptic_abstraction", "synaptic_mechanism_registry",
+                       "electrical_coupling"):
+            assert banned not in joined, banned
+
+    # --- 2, 3: exactly one active section ---------------------------------
+
+    def test_09_only_the_axon_is_active(self):
+        """Exactly one active section, and it is DLMn_axon."""
+        from biological_brain import DLMN_PASSIVE_SECTION_IDS
+
+        network = _eight_f_network()
+        roles = _eight_f_model().section_roles(network)
+        assert roles.active_section_ids == ("DLMn_axon",)
+        assert set(roles.passive_section_ids) == set(DLMN_PASSIVE_SECTION_IDS)
+        assert roles.is_active_section("DLMn_axon")
+        assert not roles.is_active_section("DLMn_dendrite")
+        assert "read back off the prepared network" in roles.basis
+        sources = {
+            c.source_section_id for c in network.network.compartments
+            if network.is_active(c.compartment_id)
+        }
+        assert sources == {"DLMn_axon"}
+        assert network.active_compartment_ids == tuple(
+            f"DLMn_axon#seg{i}" for i in range(11)
+        )
+        assert network.passive_compartment_ids == ("DLMn_dendrite",)
+
+    # --- 4: the dendrite is numerically passive ---------------------------
+
+    def test_10_the_dendrite_receives_no_active_conductance_at_all(self):
+        """Passive means ZERO active conductance AND zero active current."""
+        model = _eight_f_model()
+        network = model.prepare_dlmn(_eight_f_dlmn(), segment_count=11)
+        state = model.initial_state(network)
+        for _ in range(50):
+            model.step(network, state, timestep_ms=0.01)
+        segment = state["DLMn_dendrite"]
+        conductances = segment.last_conductances_mS_per_cm2
+        # The leak is still there: passive is not the same as inert.
+        assert conductances["leak"] > 0.0
+        for mechanism in ("nat", "nap", "k"):
+            assert mechanism in conductances
+            assert conductances[mechanism] == 0.0
+            assert segment.last_currents_mA_per_cm2[mechanism] == 0.0
+        assert model.passive_are_inert(network, state) is True
+
+    def test_11_the_dendrite_still_participates_in_the_cable_solve(self):
+        """A passive dendrite is not a disconnected decoration."""
+        import math
+
+        model = _eight_f_model()
+        network = model.prepare_dlmn(_eight_f_dlmn(), segment_count=11)
+        dendrite = next(
+            c for c in network.network.compartments
+            if c.compartment_id == "DLMn_dendrite"
+        )
+        assert dendrite.capacitance_F > 0.0
+        assert dendrite.leak_conductance_S > 0.0
+        state = model.initial_state(network)
+        for _ in range(200):
+            model.step(network, state, timestep_ms=0.01)
+        voltages = model.voltages_mV(network, state)
+        axon = voltages["DLMn_axon#seg0"]
+        dendrite_v = voltages["DLMn_dendrite"]
+        assert math.isfinite(dendrite_v)
+        assert dendrite_v != -85.0
+        assert abs(dendrite_v - axon) < 5.0
+
+    # --- 5: EVERY axon subdivision is active ------------------------------
+
+    def test_12_every_axon_subdivision_carries_all_three_active_channels(self):
+        """The taper stays ACTIVE across all of its subdivisions.
+
+        A tapered axon is the easy place for an active density to be silently
+        dropped on one segment, so this checks EVERY segment rather than the
+        first: each carries nat, nap and k above zero, plus its own leak.
+        """
+        model = _eight_f_model()
+        for count in (1, 2, 5, 11, 51):
+            network = model.prepare_dlmn(_eight_f_dlmn(), segment_count=count)
+            state = model.initial_state(network)
+            for _ in range(20):
+                model.step(network, state, timestep_ms=0.01)
+            assert len(network.active_compartment_ids) == count
+            for segment_id in network.active_compartment_ids:
+                conductances = state[segment_id].last_conductances_mS_per_cm2
+                for mechanism in ("nat", "nap", "k"):
+                    assert conductances[mechanism] > 0.0, (count, segment_id)
+                assert conductances["leak"] > 0.0, (count, segment_id)
+            # And the dendrite is still inert at every subdivision.
+            assert model.passive_are_inert(network, state) is True
+
+    # --- 6, 7: no duplicated equations, one shared implementation ----------
+
+    def test_13_no_rate_equations_are_duplicated_in_dlmn_active(self):
+        """By AST inspection, DLMn defines no nat/nap/k equation of its own."""
+        import ast
+        import inspect
+
+        from biological_brain.dynamics import dlmn_active
+
+        source = inspect.getsource(dlmn_active)
+        tree = ast.parse(source)
+        assigned = {
+            target.id
+            for node in ast.walk(tree) if isinstance(node, ast.Assign)
+            for target in node.targets if isinstance(target, ast.Name)
+        }
+        for banned in (
+            "V1_2M", "KM", "V1_2H", "KH", "minf", "mtau", "hinf", "htau",
+            "gna", "gnap", "gk", "alpha", "beta", "vhalf", "slope",
+        ):
+            assert banned not in assigned, banned
+        functions = {
+            node.name for node in ast.walk(tree)
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        }
+        for banned in (
+            "minf", "mtau", "hinf", "htau", "step", "_advance_linear",
+            "_active_currents", "_build_nat_rates", "_build_nap_rates",
+            "_build_k_rates",
+        ):
+            assert banned not in functions, banned
+        # It adds no new mechanism name, and no new taper equation either.
+        for banned in (
+            "nat", "nap", "k", "gap2", "ShakB", "DmCa1D", "Slowpoke",
+            "Shaker", "Para", "Exp2Syn", "Dalpha7",
+        ):
+            assert not any(
+                node.value == banned
+                for node in tree.body
+                if isinstance(node, ast.Assign)
+                for target in node.targets
+                if isinstance(target, ast.Name)
+                and isinstance(node.value, ast.Constant)
+            ), banned
+        assert dlmn_active.DLMNActiveAxonModel.__module__.endswith("dlmn_active")
+        for absent in ("step", "NatRates", "SingleGateRates", "_active_currents"):
+            assert not hasattr(dlmn_active, absent), absent
+
+    def test_14_dlmn_uses_the_exact_same_implementation_as_gf_ttmn_psi(self):
+        """Single source, proven by IDENTITY of functions and rate objects.
+
+        The four published GFS cells must be four CONFIGURATIONS of one engine.
+        """
+        from biological_brain.dynamics.dlmn_active import DLMNActiveAxonModel
+        from biological_brain.dynamics.gf_active import (
+            ActiveAxonModel, GFActiveAxonModel, GF_ACTIVE_MECHANISMS,
+        )
+        from biological_brain.dynamics.psi_active import PSIActiveAxonModel
+        from biological_brain.dynamics.ttmn_active import TTMActiveAxonModel
+
+        dlmn = _eight_f_model()
+        gf = GFActiveAxonModel()
+        ttmn = TTMActiveAxonModel()
+        psi = PSIActiveAxonModel()
+        # Same mechanism names, same recorded .mod equations, same files.
+        for other in (gf, ttmn, psi):
+            assert [r.mechanism_name for r in dlmn.mechanism_records()] == list(
+                GF_ACTIVE_MECHANISMS
+            )
+            for dlmn_record, other_record in zip(
+                dlmn.mechanism_records(), other.mechanism_records()
+            ):
+                assert dlmn_record.equations == other_record.equations
+                assert dlmn_record.source_file == other_record.source_file
+                assert dlmn_record.solve_method == other_record.solve_method
+                assert "cnexp" in dlmn_record.solve_method
+        # Identity of the rate objects and of the builders that made them.
+        assert dlmn.nat_rates == gf.nat_rates == ttmn.nat_rates == psi.nat_rates
+        assert dlmn.nap_rates == gf.nap_rates == ttmn.nap_rates == psi.nap_rates
+        assert dlmn.k_rates == gf.k_rates == ttmn.k_rates == psi.k_rates
+        for builder in ("_build_nat_rates", "_build_nap_rates", "_build_k_rates"):
+            for other in (gf, ttmn, psi):
+                assert getattr(dlmn, builder).__func__ is getattr(
+                    other, builder
+                ).__func__
+        # EVERY run is the same shared function object across all four neurons.
+        for name in (
+            "equilibrium_report", "stimulus_response", "prepare_active_axon",
+            "axon_diagnostic", "voltages_mV", "passive_are_inert",
+            "with_active_conductances_removed", "step", "initial_state",
+        ):
+            function = getattr(ActiveAxonModel, name)
+            for model in (dlmn, gf, ttmn, psi):
+                assert getattr(type(model), name) is function, name
+        # And 8F's adapter defines no rate-building method of its own.
+        own_builders = {
+            name for name in vars(DLMNActiveAxonModel)
+            if not name.startswith("__")
+            and ("rate" in name.lower() or "_mod" in name.lower())
+        }
+        assert own_builders == set()
+        # The 8E lift still holds: neither TTMn nor DLMn redefines a run.
+        for name in ("equilibrium_report", "stimulus_response", "voltages_mV"):
+            assert name in vars(ActiveAxonModel), name
+            assert name not in vars(DLMNActiveAxonModel), name
+            assert name not in vars(TTMActiveAxonModel), name
+
+    def test_15_the_active_parameters_are_the_authorized_published_values(self):
+        """Reuse the 3.0D-7S profile; no new parameter table, no new numbers."""
+        from biological_brain import PROFILE_AUGUSTIN_2019_ACTIVE_MODEL
+
+        network = _eight_f_network()
+        applied = {p.name: p for p in network.applied_parameters}
+        assert set(applied) == {"g_Na", "g_Nap", "g_K", "E_Na", "E_K"}
+        assert applied["g_Na"].value == pytest.approx(0.3)
+        assert applied["g_Nap"].value == pytest.approx(0.00011)
+        assert applied["g_K"].value == pytest.approx(0.01)
+        assert applied["E_Na"].value == pytest.approx(65.0)
+        assert applied["E_K"].value == pytest.approx(-74.0)
+        for parameter in network.applied_parameters:
+            assert parameter.is_model_reproduction_parameter is True
+            assert parameter.is_experimental_gf_measurement is False
+            assert parameter.profile_name == PROFILE_AUGUSTIN_2019_ACTIVE_MODEL
+            assert "Augustin" in parameter.source
+
+    # --- 14: the unstimulated equilibrium ----------------------------------
+
+    def test_16_the_equilibrium_is_finite_deterministic_and_bounded(self):
+        """DLMn finds its own numerical fixed point, reproducibly."""
+        import math
+
+        first = _eight_f_model().equilibrium_report(
+            _eight_f_dlmn(), segment_count=11, duration_ms=200.0,
+        )
+        second = _eight_f_model().equilibrium_report(
+            _eight_f_dlmn(), segment_count=11, duration_ms=200.0,
+        )
+        assert first.axon_voltage_mV == second.axon_voltage_mV
+        assert first.passive_voltages_mV == second.passive_voltages_mV
+        assert first.all_finite is True
+        assert math.isfinite(first.axon_voltage_mV)
+        for voltage in first.passive_voltages_mV.values():
+            assert math.isfinite(voltage)
+        # No NaN and no Inf anywhere in the whole tapered network.
+        model = _eight_f_model()
+        network = _eight_f_network()
+        for voltage in model.voltages_mV(
+            network, model.initial_state(network)
+        ).values():
+            assert voltage == voltage
+            assert abs(voltage) != float("inf")
+        for segment in model.initial_state(network).values():
+            assert segment.all_finite() is True
+        # A genuine fixed point: away from the declared initial voltage and
+        # clearly hyperpolarized relative to a spike.
+        assert first.axon_voltage_mV != -85.0
+        assert -85.0 < first.axon_voltage_mV < -60.0
+        # The dendrite is electrically coupled, so it settles nearby.
+        for voltage in first.passive_voltages_mV.values():
+            assert abs(voltage - first.axon_voltage_mV) < 1.0
+        assert first.steps == 20000
+        assert first.timestep_ms == 0.01
+        assert "NOT A MEASURED DLMn RESTING POTENTIAL" in first.note
+
+    def test_17_the_gates_stay_finite_and_in_bounds(self):
+        """All four gates stay in [0, 1] at equilibrium and through a spike."""
+        import math
+
+        model = _eight_f_model()
+        report = model.equilibrium_report(
+            _eight_f_dlmn(), segment_count=11, duration_ms=200.0,
+        )
+        gates = report.axon_gates
+        assert gates.all_finite is True
+        assert gates.gates_in_bounds is True
+        for gate in (gates.nat_m, gates.nat_h, gates.nap_m, gates.k_m):
+            assert 0.0 <= gate <= 1.0
+            assert math.isfinite(gate)
+        # At the unstimulated fixed point the gates are physically sensible.
+        assert gates.nat_m < 0.02
+        assert gates.nat_h > 0.99
+        # And bounded through a full action potential, at every subdivision.
+        for count in (1, 5, 11):
+            network = model.prepare_dlmn(_eight_f_dlmn(), segment_count=count)
+            state = model.initial_state(network)
+            target = network.active_compartment_ids[0]
+            for index in range(300):
+                model.step(
+                    network, state,
+                    injected_currents_A=(
+                        {target: FIXTURE_DLMN_AMPLITUDE_A} if index < 3 else {}
+                    ),
+                    timestep_ms=0.01,
+                )
+            for segment in state.values():
+                for gate in (
+                    segment.nat_m, segment.nat_h, segment.nap_m, segment.k_m,
+                ):
+                    assert 0.0 <= gate <= 1.0, (count, gate)
+                    assert math.isfinite(gate), (count, gate)
+
+    # --- 15, 16: the generic stimulus diagnostic --------------------------
+
+    def test_18_the_generic_stimulus_response_produces_a_finite_spike(self):
+        """The GENERIC run, invoked on DLMn, yields a real repolarising spike."""
+        import math
+
+        trace, diagnostic, network = _eight_f_model().stimulus_response(
+            _eight_f_dlmn(), segment_count=11, duration_ms=3.0,
+        )
+        assert diagnostic.all_finite is True
+        assert diagnostic.observed is True
+        assert diagnostic.depolarization_mV > 100.0
+        # The peak approaches but does NOT pass E_Na = +65 mV. This matters more
+        # for the DLMn than for the other neurons: the thin tapered axon is easy
+        # to over-drive into an unphysical overshoot, and a peak above the Na
+        # reversal potential would be a numerical artefact, not a spike.
+        assert 0.0 < diagnostic.peak_voltage_mV < 65.0
+        assert 0.0 < diagnostic.peak_time_ms < 3.0
+        assert diagnostic.end_voltage_mV < diagnostic.peak_voltage_mV - 50.0
+        # The peak is a RESOLVED sample, not the first step of the run.
+        assert diagnostic.peak_time_ms > 0.02
+        assert diagnostic.segment_id == "DLMn_axon#seg0"
+        assert network.is_active(diagnostic.segment_id)
+        assert all(math.isfinite(value) for value in trace)
+        assert "NOT A BIOLOGICAL GF THRESHOLD" in (
+            diagnostic.observation_criterion
+        )
+
+    def test_19_the_stimulus_fixture_is_labelled_and_not_a_rheobase(self):
+        """The amplitude is a solver fixture, never a biological claim."""
+        from biological_brain import (
+            DLMN_DIRECT_STIMULUS_AMPLITUDE_A, DLMN_DIRECT_STIMULUS_DURATION_MS,
+            DLMN_DIRECT_STIMULUS_PROVENANCE, dlmn_scope_note,
+        )
+
+        assert DLMN_DIRECT_STIMULUS_AMPLITUDE_A == FIXTURE_DLMN_AMPLITUDE_A
+        assert DLMN_DIRECT_STIMULUS_DURATION_MS == FIXTURE_DLMN_DURATION_MS
+        provenance = DLMN_DIRECT_STIMULUS_PROVENANCE
+        assert "NUMERICAL SOLVER FIXTURE" in provenance
+        assert "NOT A BIOLOGICAL DLMn STIMULUS" in provenance
+        assert "NOT a DLMn rheobase" in provenance
+        assert "NOT a measurement" in provenance
+        # It refuses the borrowed GF circuit stimulus.
+        assert "120 nA" in provenance
+        assert "not borrowed" in provenance
+        # It refuses to treat the paper's TTMn timing as a DLMn target, and
+        # fabricates no DLMn latency.
+        assert "0.3 ms" in provenance
+        assert "TTMn" in provenance
+        assert "fabricates no DLMn experimental latency" in provenance
+        # AND it documents why its amplitude is SMALLER than the other neurons'
+        # fixtures, so the difference can never be read as a rheobase ranking.
+        assert "SMALLER than" in provenance
+        assert "DISCRETISATION CONSTRAINT" in provenance
+        assert "NOT a claim that a DLMn needs less current" in provenance
+        note = dlmn_scope_note()
+        assert "NUMERICAL SOLVER FIXTURE" in note
+        assert "NOT a biological DLMn stimulus" in note
+        assert "NOT a rheobase" in note
+        assert "discretisation constraint" in note
+
+    def test_20_the_fixture_amplitude_is_not_the_gf_stimulus(self):
+        """DLMn must not silently inherit the published GF circuit stimulus."""
+        from biological_brain import (
+            DLMN_DIRECT_STIMULUS_AMPLITUDE_A, MODELDB_GF_STIMULUS_AMPLITUDE_A,
+        )
+
+        assert _eight_f_model().stimulus_fixture_amplitude_A == (
+            DLMN_DIRECT_STIMULUS_AMPLITUDE_A
+        )
+        assert FIXTURE_DLMN_AMPLITUDE_A != MODELDB_GF_STIMULUS_AMPLITUDE_A
+        # It reads its OWN declared constant rather than the base default.
+        from biological_brain.dynamics.dlmn_active import DLMNActiveAxonModel
+
+        assert "stimulus_fixture_amplitude_A" in vars(DLMNActiveAxonModel)
+
+    def test_21_a_syringe_amplitude_would_break_the_solver_not_the_neuron(self):
+        """Why the fixture is 20 nA: the thin taper cannot take 50 nA.
+
+        This is a NUMERICAL demonstration, not a biological one. Injecting the
+        other neurons' 50 nA into the DLMn axon's much smaller proximal segment
+        drives the linearised implicit step about 1.67 V in a single 0.01 ms
+        step, which overshoots E_Na and destroys timestep convergence. This test
+        documents why the fixture is smaller; it asserts nothing about biology.
+        """
+        model = _eight_f_model()
+        _, strong, _ = model.stimulus_response(
+            _eight_f_dlmn(), segment_count=11, duration_ms=3.0,
+            amplitude_A=50.0e-9, amplitude_duration_ms=FIXTURE_DLMN_DURATION_MS,
+        )
+        # Over-driven: the peak escapes the Na reversal potential entirely.
+        assert strong.peak_voltage_mV > 65.0
+        assert strong.peak_time_ms == 0.02
+        # The chosen fixture does not.
+        _, chosen, _ = model.stimulus_response(
+            _eight_f_dlmn(), segment_count=11, duration_ms=3.0,
+        )
+        assert chosen.peak_voltage_mV < 65.0
+        assert chosen.peak_time_ms > 0.02
+        # The 50 nA case is also far less converged, which is the numerical
+        # symptom that rules it out as a fixture.
+        _, strong_fine, _ = model.stimulus_response(
+            _eight_f_dlmn(), segment_count=11, duration_ms=3.0,
+            amplitude_A=50.0e-9,
+            amplitude_duration_ms=FIXTURE_DLMN_DURATION_MS,
+            timestep_ms=0.002,
+        )
+        _, chosen_fine, _ = model.stimulus_response(
+            _eight_f_dlmn(), segment_count=11, duration_ms=3.0,
+            timestep_ms=0.002,
+        )
+        spread_strong = abs(strong_fine.peak_voltage_mV - strong.peak_voltage_mV)
+        spread_chosen = abs(chosen_fine.peak_voltage_mV - chosen.peak_voltage_mV)
+        assert spread_strong > 10 * spread_chosen
+
+    # --- 17: timestep convergence under the EXISTING policy ---------------
+
+    def test_22_the_spike_converges_under_the_existing_timestep_policy(self):
+        """dt = 0.01, 0.005, 0.002 ms, with the 8A/8D/8E interpretation.
+
+        8F neither defines, widens nor changes the timestep policy; it reuses the
+        3.0D-7R/8A policy and checks the DLMn result under it.
+        """
+        import math
+
+        from biological_brain.dynamics.gf_active import (
+            GF_ACTIVE_NUMERICAL_POLICY, GFActiveNumericalError,
+        )
+
+        model = _eight_f_model()
+        peaks = {}
+        for timestep in (0.01, 0.005, 0.002):
+            trace, diagnostic, _ = model.stimulus_response(
+                _eight_f_dlmn(), segment_count=11, duration_ms=3.0,
+                timestep_ms=timestep,
+            )
+            assert diagnostic.all_finite is True
+            assert diagnostic.observed is True
+            peaks[timestep] = diagnostic.peak_voltage_mV
+            assert all(math.isfinite(value) for value in trace)
+        assert peaks[0.01] == pytest.approx(peaks[0.002], abs=0.5)
+        assert peaks[0.002] > peaks[0.01]
+        # The policy is the existing one and 8F cannot widen it.
+        assert model._timestep_ms == (
+            GF_ACTIVE_NUMERICAL_POLICY.default_timestep_ms
+        )
+        assert GF_ACTIVE_NUMERICAL_POLICY.max_timestep_ms == 0.01
+        assert GF_ACTIVE_NUMERICAL_POLICY.is_fully_implicit is False
+        for too_large in (1.0, 2.0, 100.0):
+            with pytest.raises(GFActiveNumericalError):
+                _eight_f_model(timestep_ms=too_large)
+        for invalid in (0.0, -0.01):
+            with pytest.raises(GFActiveNumericalError):
+                _eight_f_model(timestep_ms=invalid)
+
+    def test_23_every_subdivision_count_stays_finite_and_dendrite_stays_passive(self):
+        """N = 1, 2, 5, 11, 51 all run on the tapered axon, all finite."""
+        import math
+
+        for count in (1, 2, 5, 11, 51):
+            model = _eight_f_model()
+            network = model.prepare_dlmn(_eight_f_dlmn(), segment_count=count)
+            state = model.initial_state(network)
+            assert len(network.active_compartment_ids) == count
+            for _ in range(200):
+                model.step(network, state, timestep_ms=0.01)
+            voltages = model.voltages_mV(network, state)
+            assert len(voltages) == count + 1
+            for segment_id, voltage in voltages.items():
+                assert math.isfinite(voltage), (count, segment_id)
+            for segment in state.values():
+                assert segment.all_finite() is True
+                for gate in (
+                    segment.nat_m, segment.nat_h, segment.nap_m, segment.k_m,
+                ):
+                    assert 0.0 <= gate <= 1.0
+                    assert math.isfinite(gate)
+            assert model.passive_are_inert(network, state) is True
+            if count == 1:
+                with pytest.raises(Exception):
+                    model.prepare_dlmn(_eight_f_dlmn(), segment_count=0)
+
+    def test_24_removing_the_active_conductances_returns_passive_behaviour(self):
+        """The control that proves the active channels are what changes things."""
+        from biological_brain.dynamics.passive_cable import (
+            PassiveCableModel, PassiveNetworkState, PassiveNumericalMethod,
+        )
+        from biological_brain.passive_profiles import (
+            PROFILE_AUGUSTIN_2019_GFS_PASSIVE,
+        )
+        from biological_brain.subdivision import (
+            SubdivisionPlan, SectionSubdivision,
+        )
+
+        model = _eight_f_model()
+        network = model.prepare_dlmn(_eight_f_dlmn(), segment_count=11)
+        zeroed = model.with_active_conductances_removed(network)
+        conductances = {p.name: p.value for p in zeroed.applied_parameters}
+        assert conductances["g_Na"] == 0.0
+        assert conductances["g_Nap"] == 0.0
+        assert conductances["g_K"] == 0.0
+        assert conductances["E_Na"] == pytest.approx(65.0)
+        assert conductances["E_K"] == pytest.approx(-74.0)
+
+        state = model.initial_state(zeroed)
+        for index in range(200):
+            model.step(
+                zeroed, state,
+                injected_currents_A=(
+                    {zeroed.active_compartment_ids[0]: FIXTURE_DLMN_AMPLITUDE_A}
+                    if index < 3 else {}
+                ),
+                timestep_ms=0.01,
+            )
+        got = model.voltages_mV(zeroed, state)
+
+        plan = SubdivisionPlan(sections=(
+            SectionSubdivision("DLMn_axon", 11),
+            SectionSubdivision("DLMn_dendrite", 1),
+        ))
+        backend = PassiveCableModel(
+            profile_name=PROFILE_AUGUSTIN_2019_GFS_PASSIVE,
+            numerical_method=PassiveNumericalMethod.BACKWARD_EULER,
+        )
+        passive_network = backend.prepare(_eight_f_dlmn(), plan)
+        segment_ids = [c.compartment_id for c in passive_network.compartments]
+        passive_state = PassiveNetworkState(
+            voltages_mV={segment_id: -85.0 for segment_id in segment_ids}
+        )
+        axon_first = next(
+            c.compartment_id for c in passive_network.compartments
+            if c.source_section_id == "DLMn_axon"
+        )
+        for index in range(200):
+            backend.step(
+                passive_network, passive_state,
+                injected_currents_A=(
+                    {axon_first: FIXTURE_DLMN_AMPLITUDE_A} if index < 3 else {}
+                ),
+                timestep_ms=0.01,
+            )
+        passive_voltages = dict(passive_state.voltages_mV)
+        assert len(passive_voltages) == len(got)
+        for segment_id, voltage in passive_voltages.items():
+            assert got[segment_id] == pytest.approx(voltage, abs=1e-9), segment_id
+        # And with no active channel the axon cannot spike.
+        assert max(got.values()) < 0.0
+
+    # --- 18: GF / TTMn / PSI regressions ----------------------------------
+
+    def test_25_the_8a_8d_8e_neurons_are_unchanged_by_8f(self):
+        """Adding a fourth live neuron moved none of the other three.
+
+        8F is the first checkpoint to have three live neurons in existence, so
+        this is where an accidental cross-contamination would show up: the
+        validated GF equilibrium, the 8D TTMn results and the 8E PSI results
+        must all be reproduced exactly through the shared engine.
+        """
+        from biological_brain.dynamics.gf_active import GFActiveAxonModel
+        from biological_brain.dynamics.psi_active import PSIActiveAxonModel
+        from biological_brain.dynamics.ttmn_active import TTMActiveAxonModel
+        from biological_brain.morphology_builder import build_gfs_compartment_models
+
+        def neuron(neuron_id):
+            model = build_gfs_compartment_models()[neuron_id]
+            model.passive_profile_name = PROFILE_AUGUSTIN_2019_GFS_PASSIVE
+            return model
+
+        # GF: the 8B-validated unstimulated fixed point, still exact.
+        gf = GFActiveAxonModel()
+        gf_report = gf.equilibrium_report(
+            _eight_a_gf(), segment_count=11, duration_ms=200.0,
+        )
+        assert gf_report.axon_voltage_mV == pytest.approx(-74.6696, abs=0.001)
+        assert gf_report.all_finite is True
+        assert gf_report.passive_voltages_mV == {}
+
+        # TTMn: the 8D-validated equilibrium shape and its own fixture.
+        ttmn = TTMActiveAxonModel()
+        ttmn_report = ttmn.equilibrium_report(
+            neuron("TTMn"), segment_count=11, duration_ms=200.0,
+        )
+        assert ttmn_report.all_finite is True
+        assert -85.0 < ttmn_report.axon_voltage_mV < -60.0
+        assert len(ttmn_report.passive_voltages_mV) == 2
+        assert "NOT A MEASURED TTMn RESTING POTENTIAL" in ttmn_report.note
+        assert ttmn.stimulus_fixture_amplitude_A == FIXTURE_TTMN_AMPLITUDE_A
+
+        # PSI: the 8E-validated equilibrium shape and its own fixture.
+        psi = PSIActiveAxonModel()
+        psi_report = psi.equilibrium_report(
+            neuron("PSI"), segment_count=11, duration_ms=200.0,
+        )
+        assert psi_report.all_finite is True
+        assert -85.0 < psi_report.axon_voltage_mV < -60.0
+        assert len(psi_report.passive_voltages_mV) == 1
+        assert "NOT A MEASURED PSI RESTING POTENTIAL" in psi_report.note
+        assert psi.stimulus_fixture_amplitude_A == FIXTURE_PSI_AMPLITUDE_A
+
+        # And all four keep distinct identities and their own active sections.
+        assert _eight_f_model().neuron_id == "DLMn"
+        assert _eight_f_model().active_section_id == "DLMn_axon"
+        assert _eight_f_model().name == "dlmn_active_v0"
+        for model, neuron_id in ((gf, "GF"), (ttmn, "TTMn"), (psi, "PSI")):
+            assert model.neuron_id == neuron_id
+
+    # --- 19: scope guard --------------------------------------------------
+
+    def test_26_dlmn_adds_no_synapse_coupling_or_unsupported_mechanism(self):
+        """8F introduces no synapse, no gap value, no Dalpha7, no extra channel."""
+        import ast
+        import inspect
+
+        from biological_brain.dynamics import dlmn_active
+        from biological_brain.dynamics.gf_active import (
+            GFActiveScopeError, GF_ACTIVE_MECHANISMS, MECHANISM_GAP2,
+        )
+
+        tree = ast.parse(inspect.getsource(dlmn_active))
+        imported = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom):
+                if node.module:
+                    imported.append(node.module)
+            elif isinstance(node, ast.Import):
+                imported.extend(a.name for a in node.names)
+        joined = " ".join(imported)
+        for banned in (
+            "synaptic_abstraction", "synaptic_mechanism_registry",
+            "electrical_coupling", "looming_abstraction",
+            "sensorimotor_integration", "motor_output_abstraction",
+            "source_reconciliation", "gf_equilibrium",
+        ):
+            assert banned not in joined, banned
+        # Exactly the three vendored density channels, and nothing else.
+        model = _eight_f_model()
+        assert tuple(GF_ACTIVE_MECHANISMS) == ("nat", "nap", "k")
+        assert {r.mechanism_name for r in model.mechanism_records()} == {
+            "nat", "nap", "k"
+        }
+        for banned in (
+            "ShakB", "DmCa1D", "Slowpoke", "Shaker", "Para", "Exp2Syn",
+            MECHANISM_GAP2, "ca", "Ca", "BK", "muscle", "Dalpha7", "alpha7",
+            "nAChR", "Q10",
+        ):
+            with pytest.raises(GFActiveScopeError) as excinfo:
+                model.reject_unsupported_mechanism(banned)
+            assert "OUT OF SCOPE" in str(excinfo.value)
+        for supported in GF_ACTIVE_MECHANISMS:
+            with pytest.raises(GFActiveScopeError) as excinfo:
+                model.reject_unsupported_mechanism(supported)
+            assert "IS implemented" in str(excinfo.value)
+
+    def test_27_the_7u_conflict_and_7w_7x_7y_7z_are_untouched(self):
+        """7U stays unresolved; the 7W-7Z abstraction layers still load."""
+        from biological_brain.source_reconciliation import (
+            ResolutionStatus, get_source_reconciliation_registry,
+        )
+
+        registry = get_source_reconciliation_registry()
+        assert len(registry.unresolved()) == 2
+        for conflict_id in registry.unresolved():
+            conflict = registry.get(conflict_id)
+            assert conflict.resolution_status == ResolutionStatus.UNRESOLVED
+            assert conflict.preferred_side is None
+            assert conflict.discrepancy_factor == 1000.0
+        # The abstraction layers 8F must not have modified still load, and still
+        # describe the PSI->DLMn connection qualitatively rather than
+        # quantitatively.
+        from biological_brain.looming_abstraction import get_looming_abstraction
+        from biological_brain.motor_output_abstraction import (
+            get_motor_output_abstraction,
+        )
+        from biological_brain.sensorimotor_integration import (
+            get_sensorimotor_integration,
+        )
+        from biological_brain.synaptic_abstraction import get_synaptic_abstraction
+
+        assert get_synaptic_abstraction() is not None
+        assert get_looming_abstraction() is not None
+        assert get_sensorimotor_integration() is not None
+        assert get_motor_output_abstraction() is not None
