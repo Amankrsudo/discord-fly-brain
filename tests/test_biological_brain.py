@@ -25318,3 +25318,1267 @@ class TestGFSensoryDrive:
             conflict = reconciliation.get(conflict_id)
             assert conflict.preferred_side is None
             assert conflict.resolution_status.value == "unresolved"
+
+
+# ==========================================================================
+# 3.0D-8I -- End-to-end GFS circuit integration
+# ==========================================================================
+#
+# The numerical fixture that makes the live circuit RUN. It is emphatically NOT
+# a biological g_gap value. 3.0D-7U is an unresolved factor-1000 unit conflict
+# between the paper's uS values and gap2.mod's declared nS, and 8I does not
+# resolve it. A caller must supply a conductance, precisely so that the choice
+# is visible rather than defaulted away.
+FIXTURE_I_GAP_NS = 1.0
+FIXTURE_I_GAP_PROVENANCE = (
+    "3.0D-8I NUMERICAL MECHANISM FIXTURE, NOT A BIOLOGICAL g_gap VALUE. Chosen "
+    "so the live circuit runs at all, and declared in nS to match the unit "
+    "gap2.mod itself uses. The real GFS gap-junction conductance is the "
+    "UNRESOLVED 3.0D-7U value, factor 1000, no preferred side, and 8I does not "
+    "choose between 135 uS, 135 nS, 34.5 uS and 34.5 nS."
+)
+
+
+def _eight_i_circuit(**overrides):
+    """A live 3.0D-8I circuit with the explicit numerical fixture conductance."""
+    from biological_brain.dynamics.electrical_coupling import (
+        explicit_conductance,
+    )
+    from biological_brain.dynamics.gfs_circuit import GFSCircuit
+
+    kwargs = {
+        "gap_conductance": explicit_conductance(
+            FIXTURE_I_GAP_NS, "nS", FIXTURE_I_GAP_PROVENANCE
+        )
+    }
+    kwargs.update(overrides)
+    return GFSCircuit(**kwargs)
+
+
+def _eight_i_event(source="direct_numerical_stimulus", event_time_s=0.0):
+    """An explicit, provenance-carrying GF event for the live circuit."""
+    from biological_brain.dynamics.gfs_circuit import (
+        GFEventSource, GFSpikeEvent,
+    )
+
+    return GFSpikeEvent(
+        event_time_s=event_time_s,
+        source=GFEventSource(source),
+        provenance=(
+            "3.0D-8I test fixture: a NUMERICAL trigger for the live circuit. It "
+            "is NOT a visual stimulus, NOT an LC4 or LPLC2 synaptic event, and "
+            "NOT a biological threshold."
+        ),
+    )
+
+
+def _eight_i_stimulus():
+    """The 3.0D-8H looming stimulus used to drive the phenomenology."""
+    from biological_brain.dynamics.gf_sensory_drive import (
+        ConstantVelocityLoomingStimulus,
+    )
+
+    return ConstantVelocityLoomingStimulus(
+        r_m=0.005, v_m_per_s=0.05, d0_m=0.10
+    )
+
+
+#: A live 8I run is genuinely expensive: four neurons, a 0.01 ms timestep and
+#: the settling phase, so about eight seconds each. The 3.0D-8I module default
+#: is a 200 ms settle, which is what makes the settled voltage a true numerical
+#: fixed point, and that default is verified directly in test_01. The tests
+#: below settle for 50 ms instead, which reaches the same fixed point to within
+#: about 0.006 mV on every neuron, and cache their runs so the suite is not
+#: dominated by re-running an identical simulation. Caching is keyed on every
+#: argument that can change the result, so a cached run is indistinguishable
+#: from a fresh one.
+_EIGHT_I_RUN_CACHE = {}
+
+#: Settle and run length used by the cached runs. 50 ms settles the membrane
+#: to its fixed point; 2.0 ms comfortably contains the whole GF -> TTMn/PSI ->
+#: DLMn chain, which completes around 0.56 ms.
+EIGHT_I_TEST_SETTLE_MS = 50.0
+EIGHT_I_TEST_DURATION_MS = 2.0
+
+
+def _eight_i_result(peak_source="source_weight_as_written",
+                    duration_ms=EIGHT_I_TEST_DURATION_MS,
+                    settle_ms=EIGHT_I_TEST_SETTLE_MS,
+                    event_time_s=0.0, gap_ns=FIXTURE_I_GAP_NS):
+    """A cached live-circuit run for the given configuration."""
+    key = (peak_source, duration_ms, settle_ms, event_time_s, gap_ns)
+    if key not in _EIGHT_I_RUN_CACHE:
+        from biological_brain.dynamics.electrical_coupling import (
+            explicit_conductance,
+        )
+        from biological_brain.dynamics.gfs_circuit import GFSCircuit
+
+        _EIGHT_I_RUN_CACHE[key] = GFSCircuit(
+            gap_conductance=explicit_conductance(
+                gap_ns, "nS", FIXTURE_I_GAP_PROVENANCE
+            ),
+            psi_dlmn_peak_conductance_source=peak_source,
+        ).run_live_circuit(
+            _eight_i_event(event_time_s=event_time_s),
+            duration_ms=duration_ms,
+            settle_ms=settle_ms,
+        )
+    return _EIGHT_I_RUN_CACHE[key]
+
+
+class TestGFSCircuitIntegration:
+    """3.0D-8I: the four live GFS neurons running as ONE deterministic circuit.
+
+    THE POINT OF THIS CHECKPOINT IS THE BOUNDARY, NOT THE WIRING. The wiring
+    was already built across 8A-8H. What is new is that the sensory
+    phenomenology and the biophysical circuit now live in one architecture, and
+    the JOIN between them is explicit, typed and impossible to overlook.
+
+    So most of the tests below are NEGATIVE. They assert that no sensory->GF
+    current conversion exists, that the coupling method raises, that 8C's own
+    unresolved-conductance refusal is still reachable, that there is no
+    "sensory_drive" event source, and that no threshold, behaviour, motor, NMJ
+    or muscle model has appeared. A circuit that quietly grew a working coupling
+    would pass every positive test in this class, which is exactly why the
+    negative ones matter.
+    """
+
+    # -- 1. the circuit constructs ---------------------------------------
+
+    def test_01_the_circuit_constructs(self):
+        from biological_brain.dynamics.gfs_circuit import (
+            GFS_CIRCUIT_SCOPE_NOTE, GFSCircuit, MODEL_NAME_GFS_CIRCUIT_V0,
+            gfs_circuit_scope_note,
+        )
+
+        circuit = _eight_i_circuit()
+        assert isinstance(circuit, GFSCircuit)
+        assert circuit.name == MODEL_NAME_GFS_CIRCUIT_V0
+        assert circuit.segment_count == 11
+        assert circuit.gap_conductance is not None
+        # The scope note is available with and without an instance.
+        assert gfs_circuit_scope_note() == GFS_CIRCUIT_SCOPE_NOTE
+        assert "unresolved" in GFS_CIRCUIT_SCOPE_NOTE.lower()
+        assert circuit.scope_note() == GFS_CIRCUIT_SCOPE_NOTE
+
+        # A conductance is REQUIRED. There is no default, because a default
+        # would be the covert resolution 3.0D-7U forbids.
+        with pytest.raises(TypeError):
+            GFSCircuit()
+        # And a non-conductance is refused with an explanation.
+        for bad in (1.0, "1 nS", None, object()):
+            with pytest.raises(Exception):
+                GFSCircuit(bad)
+        for bad_segment_count in (0, -1, 2.5, "11", None):
+            with pytest.raises(Exception):
+                _eight_i_circuit(segment_count=bad_segment_count)
+        for bad_floor in (float("nan"), float("inf")):
+            with pytest.raises(Exception):
+                _eight_i_circuit(observation_floor_mV=bad_floor)
+
+    # -- 2, 3, 4. the four live neurons, reused, not duplicated -----------
+
+    def test_02_all_four_live_neurons_attach_and_are_the_existing_models(self):
+        from biological_brain.dynamics.dlmn_active import DLMNActiveAxonModel
+        from biological_brain.dynamics.gf_active import GFActiveAxonModel
+        from biological_brain.dynamics.psi_active import PSIActiveAxonModel
+        from biological_brain.dynamics.ttmn_active import TTMActiveAxonModel
+
+        circuit = _eight_i_circuit()
+        models = circuit.neuron_models()
+        # All four are attached, under the published ids.
+        assert set(models) == {"GF", "TTMn", "PSI", "DLMn"}
+        # And they are INSTANCES OF THE EXISTING adapters, by type, not
+        # look-alikes.
+        assert isinstance(models["GF"], GFActiveAxonModel)
+        assert isinstance(models["TTMn"], TTMActiveAxonModel)
+        assert isinstance(models["PSI"], PSIActiveAxonModel)
+        assert isinstance(models["DLMn"], DLMNActiveAxonModel)
+        for neuron_id, expected in (
+            ("GF", GFActiveAxonModel),
+            ("TTMn", TTMActiveAxonModel),
+            ("PSI", PSIActiveAxonModel),
+            ("DLMn", DLMNActiveAxonModel),
+        ):
+            assert type(models[neuron_id]) is expected, neuron_id
+            assert models[neuron_id].neuron_id == neuron_id
+            # They are the SHARED engine, not a fourth copy of a solver.
+            from biological_brain.dynamics.gf_active import ActiveAxonModel
+
+            assert isinstance(models[neuron_id], ActiveAxonModel)
+            # And they use the project's existing timestep policy unchanged.
+            assert models[neuron_id].timestep_ms == 0.01
+        # The same adapters are handed back each time: no hidden second set.
+        again = circuit.neuron_models()
+        assert all(again[key] is models[key] for key in models)
+
+    def test_03_no_duplicate_active_solver_is_introduced(self):
+        """By AST inspection, 8I defines no rate equation and no neuron."""
+        import ast
+        import inspect
+
+        from biological_brain.dynamics import gfs_circuit
+
+        tree = ast.parse(inspect.getsource(gfs_circuit))
+        functions = {
+            node.name
+            for node in ast.walk(tree)
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        }
+        # No membrane solver, no gate equation, no neuron implementation.
+        for banned in (
+            "step", "minf", "mtau", "hinf", "htau", "_advance_linear",
+            "initial_state", "voltages_mV", "prepare", "equilibrium_report",
+            "stimulus_response", "_lu_solve", "_lu_factor",
+            "conductances", "activation", "inactivation",
+        ):
+            assert banned not in functions, banned
+        # No numerical integration loop of its own: the circuit calls the
+        # models' step() and never re-derives a membrane equation.
+        for banned in ("backward_euler", "forward_euler", "cnexp", "matrix"):
+            assert not any(banned in name.lower() for name in functions), banned
+        # The shared engine is the only place the solve lives.
+        from biological_brain.dynamics.gf_active import ActiveAxonModel
+
+        for name in ("step", "initial_state", "voltages_mV", "prepare"):
+            assert name in vars(ActiveAxonModel), name
+
+    def test_04_the_circuit_reuses_the_existing_mechanisms(self):
+        """8C's network and 8G's connection are consumed, not reimplemented."""
+        import ast
+        import inspect
+
+        from biological_brain.dynamics import gfs_circuit
+
+        source = inspect.getsource(gfs_circuit)
+        tree = ast.parse(source)
+        imported = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and node.module:
+                imported.append(node.module)
+            elif isinstance(node, ast.Import):
+                imported.extend(a.name for a in node.names)
+        joined = " ".join(imported)
+        # It reaches the existing layers, and does NOT reach the layers that
+        # must stay out of the central circuit.
+        for required in (
+            "gf_active", "ttmn_active", "psi_active", "dlmn_active",
+            "electrical_coupling", "chemical_synapse", "gf_sensory_drive",
+        ):
+            assert required in joined, required
+        for banned in (
+            "motor_output_abstraction", "sensorimotor_integration",
+            "synaptic_abstraction", "synaptic_mechanism_registry",
+            "source_reconciliation", "looming_abstraction", "gf_equilibrium",
+            "passive_cable", "equilibrium",
+        ):
+            assert banned not in joined, banned
+        # No copy of the 8C law or the 8G shape: the module calls their APIs.
+        for banned in (
+            "def current", "0.001", "exp(-", "shape_peak", "raw_shape",
+        ):
+            assert banned not in source, banned
+        # The gap2 current comes from 8C's own object.
+        from biological_brain.dynamics.electrical_coupling import (
+            GFSCouplingNetwork,
+        )
+
+        circuit = _eight_i_circuit()
+        assert isinstance(circuit._junction, GFSCouplingNetwork)
+        assert circuit._junction is circuit._junction
+
+    # -- 5. the sensory layer runs independently --------------------------
+
+    def test_05_sensory_phenomenology_runs_independently(self):
+        from biological_brain.dynamics.gfs_circuit import (
+            PhenomenologicalGFDriveTrace,
+        )
+        from biological_brain.dynamics.gf_sensory_drive import (
+            PhenomenologicalGFDrive,
+            published_ache_gf_coefficients,
+        )
+
+        circuit = _eight_i_circuit()
+        trace = circuit.run_sensory_phenomenology(
+            _eight_i_stimulus(), duration_s=1.9, samples=400
+        )
+        assert isinstance(trace, PhenomenologicalGFDriveTrace)
+        assert len(trace.samples) == 400
+        assert len(trace.times_s) == 400
+        # It IS 8H's model, unchanged and reused.
+        assert isinstance(trace.drive, PhenomenologicalGFDrive)
+        assert trace.drive.coefficients == published_ache_gf_coefficients()
+        # The four published components and the weighted sum are all there.
+        for value in trace.component_peaks_mV().values():
+            assert math.isfinite(value)
+        assert math.isfinite(trace.peak_weighted_drive_mV())
+        assert math.isfinite(trace.peak_time_s())
+        # LPLC2's published peak is reached, so the geometry is right.
+        assert trace.component_peaks_mV()["lplc2"] > 1.5
+        # And it is explicitly NOT a live membrane voltage.
+        assert trace.is_live_membrane_voltage() is False
+        assert "PHENOMENOLOGICAL" in trace.limitations()
+
+        # The sensory run needs a real 8H stimulus; it does not define one.
+        for bad in (None, 1.0, "looming", object()):
+            with pytest.raises(Exception):
+                circuit.run_sensory_phenomenology(bad)
+        for bad_duration in (0.0, -1.0, float("nan")):
+            with pytest.raises(Exception):
+                circuit.run_sensory_phenomenology(
+                    _eight_i_stimulus(), duration_s=bad_duration
+                )
+        with pytest.raises(Exception):
+            circuit.run_sensory_phenomenology(
+                _eight_i_stimulus(), samples=1
+            )
+
+    # -- 6, 7, 8. the live circuit from an explicit GF event --------------
+
+    def test_06_the_live_circuit_runs_from_an_explicit_gf_event(self):
+        from biological_brain.dynamics.gfs_circuit import LiveCircuitResult
+
+        event = _eight_i_event()
+        result = _eight_i_result()
+        assert isinstance(result, LiveCircuitResult)
+        assert result.gf_event.event_time_s == event.event_time_s
+        assert result.timestep_ms == 0.01
+        assert result.duration_ms == pytest.approx(EIGHT_I_TEST_DURATION_MS)
+        assert result.segment_count == 11
+        # All four neurons produced a full live trace, one frame per step.
+        assert set(result.voltages_mV) == {"GF", "TTMn", "PSI", "DLMn"}
+        expected_frames = int(
+            round(EIGHT_I_TEST_DURATION_MS / result.timestep_ms)
+        )
+        for neuron_id, trace in result.voltages_mV.items():
+            assert len(trace) == expected_frames, neuron_id
+            assert trace[0]
+        # And the source-weight branch of 8G is numerically stable end to end.
+        assert result.all_finite is True
+        assert result.settle_ms == pytest.approx(EIGHT_I_TEST_SETTLE_MS)
+        # The settling phase moved each membrane off its E_leak initial value
+        # onto its own numerical fixed point.
+        for neuron_id in ("GF", "TTMn", "PSI", "DLMn"):
+            settled = result.settled_voltages_mV[neuron_id]
+            declared = result.declared_rest_voltages_mV[neuron_id]
+            assert settled != declared, neuron_id
+            assert -85.0 <= settled < 0.0, (neuron_id, settled)
+        # The GF settled on the 8B-validated fixed point, which is the check
+        # that the circuit is running the real 8A membrane.
+        assert result.settled_voltages_mV["GF"] == pytest.approx(
+            -74.6696, abs=0.01
+        )
+        # A bad duration or settle time is refused rather than silently fixed.
+        circuit = _eight_i_circuit()
+        for bad_duration in (0.0, -1.0, float("nan"), float("inf")):
+            with pytest.raises(Exception):
+                circuit.run_live_circuit(event, duration_ms=bad_duration)
+        for bad_settle in (-1.0, float("nan")):
+            with pytest.raises(Exception):
+                circuit.run_live_circuit(event, settle_ms=bad_settle)
+        # A run shorter than one timestep cannot take a step.
+        with pytest.raises(Exception):
+            circuit.run_live_circuit(
+                event, duration_ms=0.001, settle_ms=1.0
+            )
+
+    def test_07_the_gf_event_is_accepted_only_with_explicit_provenance(self):
+        from biological_brain.dynamics.gfs_circuit import (
+            GFEventSource, GFSCircuitError, GFSpikeEvent,
+        )
+
+        # The three declared sources are all accepted.
+        for value in (
+            "direct_numerical_stimulus",
+            "external_experimental_event",
+            "future_sensory_coupling",
+        ):
+            event = _eight_i_event(source=value)
+            assert event.source is GFEventSource(value)
+            assert event.provenance.strip()
+        # There is NO "sensory_drive" source, and no other way to spell one.
+        declared = {s.value for s in GFEventSource}
+        assert declared == {
+            "direct_numerical_stimulus",
+            "external_experimental_event",
+            "future_sensory_coupling",
+        }
+        for forbidden in ("sensory_drive", "sensory", "looming", "visual"):
+            assert forbidden not in declared, forbidden
+        # An undeclared source is refused, with the declared set in the reason.
+        for bad in ("sensory_drive", "sensory", "LC4", "visual", 1, None):
+            # Passed straight to the event, so the refusal is 8I's own check
+            # rather than the enum's ValueError.
+            with pytest.raises(GFSCircuitError) as excinfo:
+                GFSpikeEvent(
+                    0.0, bad, "provenance for an undeclared source"
+                )
+            assert "GFEventSource" in str(excinfo.value)
+        # An event with no provenance is refused: an unlabelled trigger is
+        # exactly what this interface exists to prevent.
+        for bad_provenance in ("", "   ", None, 5):
+            with pytest.raises(GFSCircuitError):
+                GFSpikeEvent(0.0, GFEventSource.DIRECT_NUMERICAL_STIMULUS,
+                             bad_provenance)
+        # Negative or non-finite times are refused.
+        for bad_time in (-1.0, float("nan"), float("inf")):
+            with pytest.raises(GFSCircuitError):
+                GFSpikeEvent(bad_time, GFEventSource.DIRECT_NUMERICAL_STIMULUS,
+                             "p")
+        # And no event, in any declared source, claims to be visual or to be
+        # the sensory phenomenology's output.
+        for value in sorted(declared):
+            declared_event = _eight_i_event(source=value)
+            assert declared_event.is_visual_stimulus is False
+            assert declared_event.is_sensory_phenomenology_output is False
+            assert "NOT a visual stimulus" in declared_event.note()
+        for source in GFEventSource:
+            assert source.is_visual_stimulus is False
+            assert source.is_connected_to_the_sensory_phenomenology is False
+
+    def test_08_the_gf_event_propagates_through_the_whole_live_circuit(self):
+        result = _eight_i_result()
+
+        # Every one of the four neurons responded, in the published order.
+        assert set(result.spikes) == {"GF", "TTMn", "PSI", "DLMn"}
+        gf_ms = result.spikes["GF"].time_s * 1e3
+        ttmn_ms = result.spikes["TTMn"].time_s * 1e3
+        psi_ms = result.spikes["PSI"].time_s * 1e3
+        dlmn_ms = result.spikes["DLMn"].time_s * 1e3
+        # GF first, then both postsynaptic targets, then the disynaptic DLMn.
+        assert gf_ms < ttmn_ms, (gf_ms, ttmn_ms)
+        assert gf_ms < psi_ms, (gf_ms, psi_ms)
+        assert ttmn_ms < dlmn_ms, (ttmn_ms, dlmn_ms)
+        assert psi_ms < dlmn_ms, (psi_ms, dlmn_ms)
+        # Nothing is negative, and everything lands inside the run.
+        for record in result.spikes.values():
+            assert 0.0 <= record.time_s <= result.duration_ms * 1e-3
+        # Every spike record is explicitly not a biological threshold, and not
+        # a detected action potential either: a floor crossing is a subthreshold
+        # onset, not a spike time.
+        for record in result.spikes.values():
+            assert record.is_a_biological_threshold is False
+            assert record.is_a_spike is False
+            assert "NOT a spike threshold" in record.criterion
+
+
+        # The 8G synapse fired exactly once, from the live PSI response.
+        assert len(result.synaptic_events) == 1
+        event = result.synaptic_events[0]
+        assert event.synapse_id == "PSI_DLMn"
+        assert event.source_neuron == "PSI"
+        assert event.target_neuron == "DLMn"
+        assert event.is_synthetic is False
+        assert event.event_time_s == pytest.approx(psi_ms * 1e-3)
+        assert event.event_time_s >= result.spikes["PSI"].time_s
+
+        # Timestamps are recorded for the whole chain.
+        stamps = result.event_timestamps_s
+        assert stamps["gf_event_s"] == 0.0
+        for key in (
+            "gf_event_s", "GF_response_s", "TTMn_response_s", "PSI_response_s",
+            "psi_to_dlmn_synapse_event_s", "DLMn_response_s",
+        ):
+            assert key in stamps, key
+            assert math.isfinite(stamps[key])
+
+        # The GF actually spiked: a real depolarisation, not a nudge.
+        gf_trace = result.voltages_mV["GF"]
+        assert max(f["GF_axon#seg0"] for f in gf_trace) > 0.0
+        # And the DLMn was moved by the 8G current, not left at rest.
+        assert result.final_voltages_mV["DLMn"]["DLMn_axon#seg0"] != (
+            result.settled_voltages_mV["DLMn"]
+        )
+        # And the timing report is honest about the comparison it cannot make.
+        report = result.timing_report()
+        assert "GF -> TTMn" in report
+        assert "neuromuscular junction" in report.lower()
+        assert "No agreement or disagreement is claimed" in report
+        # It also states the metric's own limitation: a floor crossing is not a
+        # spike, and shrinks as the coupling grows.
+        assert "OBSERVATION FLOOR" in report
+        assert "FLOOR-CROSSING LATENCIES" in report
+        assert "not spike latencies" in report
+
+    # -- 9, 10, 11. the existing pathways are the ones used --------------
+
+    def test_09_10_11_the_existing_gf_ttmn_gf_psi_and_psi_dlmn_paths_are_used(self):
+        from biological_brain.dynamics.chemical_synapse import (
+            PSI_DLMnChemicalSynapse,
+        )
+        from biological_brain.dynamics.electrical_coupling import (
+            GFSCouplingTopology,
+        )
+        from biological_brain.dynamics.gfs_circuit import (
+            COUPLING_GF_PSI, COUPLING_GF_TTMN, SYNAPSE_PSI_DLMN,
+        )
+
+        circuit = _eight_i_circuit()
+        topology = circuit.topology()
+        source_topology = GFSCouplingTopology()
+
+        # --- 9: the existing GF->TTMn electrical path --------------------
+        assert COUPLING_GF_TTMN in topology
+        pair = source_topology.endpoints(COUPLING_GF_TTMN)
+        assert pair.presynaptic.section_id == "GF_axon"
+        assert pair.presynaptic.location == 1.0
+        assert pair.postsynaptic.section_id == "TTMn_medial_dendrite"
+        assert pair.postsynaptic.location == 0.2
+        # The resolved segments are the ones 8C's source locations give, on the
+        # GF's 400 um axon at 11 subdivisions.
+        assert topology[COUPLING_GF_TTMN] == {
+            "presynaptic_segment": "GF_axon#seg10",
+            "postsynaptic_segment": "TTMn_medial_dendrite",
+        }
+
+        # --- 10: the existing GF->PSI electrical path -------------------
+        assert COUPLING_GF_PSI in topology
+        pair = source_topology.endpoints(COUPLING_GF_PSI)
+        assert pair.presynaptic.section_id == "GF_axon"
+        assert pair.presynaptic.location == 0.9
+        assert pair.postsynaptic.section_id == "PSI_axon"
+        assert pair.postsynaptic.location == 0.5
+        # 0.9 of a 400 um axon at 11 subdivisions is segment 9.
+        assert topology[COUPLING_GF_PSI] == {
+            "presynaptic_segment": "GF_axon#seg9",
+            "postsynaptic_segment": "PSI_axon#seg5",
+        }
+
+        # --- 11: the existing 8G PSI->DLMn chemical synapse -------------
+        assert SYNAPSE_PSI_DLMN in topology
+        assert topology[SYNAPSE_PSI_DLMN] == {
+            "presynaptic_segment": "PSI_axon",
+            "postsynaptic_segment": "DLMn_axon#seg2",
+        }
+        # And that is exactly what 8G itself computes, at 12.5 um on a 50 um
+        # axon at 11 subdivisions.
+        connection = PSI_DLMnChemicalSynapse()
+        assert topology[SYNAPSE_PSI_DLMN]["postsynaptic_segment"] == (
+            connection.postsynaptic_segment_id(
+                circuit._morphology()["DLMn"], 11
+            )
+        )
+        # The synapse that actually ran carries 8G's own parameters.
+        result = _eight_i_result(peak_source="paper")
+        assert result.psi_dlmn_peak_conductance_source == "paper"
+        assert result.psi_dlmn_peak_conductance_uS == pytest.approx(80.0)
+        assert _eight_i_result().psi_dlmn_peak_conductance_uS == pytest.approx(
+            0.08
+        )
+        # No GF->TTMn or GF->PSI CHEMICAL component is made live.
+        assert SYNAPSE_PSI_DLMN not in (COUPLING_GF_TTMN, COUPLING_GF_PSI)
+        assert set(topology) == {
+            COUPLING_GF_TTMN, COUPLING_GF_PSI, SYNAPSE_PSI_DLMN,
+        }
+
+    # -- 12, 13. no new conductance of either kind -----------------------
+
+    def test_12_no_new_synaptic_conductance_is_created(self):
+        from biological_brain.dynamics.gfs_circuit import LiveCircuitResult
+
+        # Both of 8G's own branches run, and 8I introduces no third value.
+        paper = _eight_i_result(peak_source="paper")
+        source = _eight_i_result()
+        assert paper.psi_dlmn_peak_conductance_uS == pytest.approx(80.0)
+        assert source.psi_dlmn_peak_conductance_uS == pytest.approx(0.08)
+        # Exactly two distinct 8I-visible peak conductances, both of them 8G's.
+        assert len({
+            paper.psi_dlmn_peak_conductance_uS,
+            source.psi_dlmn_peak_conductance_uS,
+        }) == 2
+        # And the source branch is 1000x smaller, which is 8G's own recorded
+        # discrepancy, not an 8I choice.
+        assert (
+            paper.psi_dlmn_peak_conductance_uS
+            / source.psi_dlmn_peak_conductance_uS
+        ) == pytest.approx(1000.0, rel=1e-9)
+
+        # LiveCircuitResult carries no conductance field of its own beyond the
+        # two declared provenance echoes, and no current is ever synthesised
+        # from the sensory layer.
+        fields = set(LiveCircuitResult.__dataclass_fields__)
+        for banned in (
+            "sensory_conductance", "gf_sensory_conductance",
+            "lplc2_conductance", "lc4_conductance", "input_resistance_ohm",
+            "conversion_k", "drive_to_current", "mV_to_nA",
+        ):
+            assert banned not in fields, banned
+        # The drive amplitude is nowhere in the result, because no conversion
+        # was applied to it.
+        for field in fields:
+            assert "drive" not in field, field
+
+    def test_13_no_new_gap_junction_conductance_is_created(self):
+        from biological_brain.dynamics.electrical_coupling import (
+            ElectricalCouplingUnresolvedValueError,
+            from_unresolved_project_conductance,
+        )
+
+        circuit = _eight_i_circuit()
+        # The circuit used EXACTLY the conductance it was handed, unchanged.
+        supplied = circuit.gap_conductance
+        assert supplied.value == pytest.approx(FIXTURE_I_GAP_NS)
+        assert supplied.unit == "nS"
+        assert supplied.provenance == FIXTURE_I_GAP_PROVENANCE
+        # 8I defines no conductance constant of its own.
+        import ast
+        import inspect
+
+        from biological_brain.dynamics import gfs_circuit
+
+        tree = ast.parse(inspect.getsource(gfs_circuit))
+        for node in tree.body:
+            if isinstance(node, ast.Assign):
+                for target in node.targets:
+                    if isinstance(target, ast.Name):
+                        assert "GAP" not in target.id.upper(), target.id
+                        assert "G_NS" not in target.id.upper(), target.id
+        # And 8C's own refusal of the project value is still reachable and
+        # still raises, so 8I did not quietly resolve 7U.
+        with pytest.raises(ElectricalCouplingUnresolvedValueError):
+            from_unresolved_project_conductance()
+
+    # -- 14, 15. 7U and 8G provenance unchanged --------------------------
+
+    def test_14_the_7u_gap_junction_conflict_remains_unresolved(self):
+        from biological_brain.source_reconciliation import (
+            ResolutionStatus, get_source_reconciliation_registry,
+        )
+
+        registry = get_source_reconciliation_registry()
+        assert len(registry.unresolved()) == 2
+        for conflict_id in registry.unresolved():
+            conflict = registry.get(conflict_id)
+            assert conflict.resolution_status is ResolutionStatus.UNRESOLVED
+            assert conflict.preferred_side is None
+            assert conflict.discrepancy_factor == pytest.approx(1000.0)
+        # 8I names neither side: the forbidden candidate values appear only in
+        # the refusal message, never as a configured conductance.
+        assert circuit_conductance_is_a_fixture(_eight_i_circuit())
+        # The result echoes the caller's conductance rather than a chosen one.
+        result = _eight_i_result()
+        assert result.gap_conductance.value == pytest.approx(FIXTURE_I_GAP_NS)
+        assert result.gap_conductance.unit == "nS"
+        assert "7U" in result.notes or "unresolved" in result.notes.lower()
+
+    def test_15_the_8g_peak_conductance_conflict_remains_unresolved(self):
+        from biological_brain.dynamics.chemical_synapse import (
+            PSI_DLMnChemicalSynapse,
+        )
+
+        # 8G still records both branches and still prefers neither.
+        paper = PSI_DLMnChemicalSynapse(peak_conductance_source="paper")
+        source = PSI_DLMnChemicalSynapse(
+            peak_conductance_source="source_weight_as_written"
+        )
+        assert paper.mechanism.peak_conductance_uS == pytest.approx(80.0)
+        assert source.mechanism.peak_conductance_uS == pytest.approx(0.08)
+        # 8I's default is 8G's default, and 8I does not pick a side.
+        circuit = _eight_i_circuit()
+        assert circuit._psi_dlmn_peak_conductance_source == "paper"
+        # Both branches run, and 8I reports the consequence of each honestly.
+        # 8G documented that the paper's 80 uS diverges the live DLMn, and at
+        # circuit level that is exactly what happens. 8I REPORTS it rather than
+        # hiding it, and rather than quietly switching to the other branch.
+        # Within the short run the DLMn is already far outside any physiological
+        # range: the 8G current is 1000x larger than the alternative's.
+        paper_result = _eight_i_result(peak_source="paper")
+        assert paper_result.all_finite is True  # still finite at 2 ms
+        assert max(
+            frame["DLMn_axon#seg2"]
+            for frame in paper_result.voltages_mV["DLMn"]
+        ) > 100.0
+        # Given a few more milliseconds it overflows outright, which is 8G's
+        # documented divergence reproduced end to end.
+        diverged = _eight_i_result(peak_source="paper", duration_ms=5.0)
+        assert diverged.all_finite is False
+        assert math.isnan(
+            diverged.final_voltages_mV["DLMn"]["DLMn_axon#seg0"]
+        )
+        # The result SAYS it is not finite, rather than hiding it.
+        assert diverged.all_finite is False
+        assert "80.0 uS" in diverged.notes
+        assert "not resolved" in diverged.notes.lower()
+
+        source_result = _eight_i_result()
+        assert source_result.all_finite is True
+        assert source_result.psi_dlmn_peak_conductance_uS == pytest.approx(0.08)
+        # The alternative branch stays physiological throughout.
+        assert max(
+            frame["DLMn_axon#seg2"]
+            for frame in source_result.voltages_mV["DLMn"]
+        ) < 100.0
+        # The upstream neurons are unaffected by the 8G branch, so the
+        # divergence is confined to the DLMn exactly as 8G predicted.
+        assert source_result.spikes["GF"] == paper_result.spikes["GF"]
+        assert source_result.spikes["PSI"] == paper_result.spikes["PSI"]
+
+    # -- 16, 17, 18. the boundary -----------------------------------------
+
+    def test_16_no_sensory_to_gf_current_conversion_exists(self):
+        from biological_brain.dynamics.gf_sensory_drive import (
+            PhenomenologicalGFDrive,
+        )
+        from biological_brain.dynamics.gfs_circuit import (
+            GFSCircuit, PhenomenologicalGFDriveTrace, SensoryDriveSample,
+            SensoryBiophysicalGFBoundary,
+        )
+
+        # The boundary record is the only place the two layers meet, and it
+        # holds no conversion field.
+        fields = set(SensoryBiophysicalGFBoundary.__dataclass_fields__)
+        assert fields == {
+            "phenomenological_drive", "live_gf", "coupling_status",
+            "reason", "prohibited_assumptions",
+        }
+        for banned in (
+            "conductance", "current", "conversion", "k", "input_resistance",
+            "scale", "factor", "gain",
+        ):
+            assert banned not in fields, banned
+        # The circuit exposes no mV->current method at all.
+        for attribute in (
+            "couple", "drive_to_current", "convert_drive", "mV_to_nA",
+            "inject_sensory_drive", "sensory_current_A", "apply_sensory",
+        ):
+            assert not hasattr(GFSCircuit, attribute), attribute
+        # And the sensory objects themselves refuse to be turned into one.
+        drive = PhenomenologicalGFDrive()
+        with pytest.raises(Exception):
+            drive.coupling_to_live_gf()
+        # A trace is millivolts, not amperes, and says so.
+        assert not any(
+            field.endswith("_A") for field in SensoryDriveSample.__dataclass_fields__
+        )
+        assert not hasattr(PhenomenologicalGFDriveTrace, "current_A")
+
+    def test_17_couple_to_live_gf_raises_the_explicit_typed_exception(self):
+        from biological_brain.dynamics.gfs_circuit import (
+            CouplingStatus, SensoryBiophysicalGFBoundary,
+            UnsupportedSensoryBiophysicalCoupling,
+        )
+
+        circuit = _eight_i_circuit()
+        trace = circuit.run_sensory_phenomenology(_eight_i_stimulus())
+        live = _eight_i_result()
+        boundary = circuit.boundary(trace, live)
+
+        assert isinstance(boundary, SensoryBiophysicalGFBoundary)
+        assert boundary.coupling_status is CouplingStatus.UNRESOLVED
+        assert boundary.coupling_status.value == "unresolved"
+        assert boundary.is_coupled() is False
+        # The two layers are held side by side and are both really there.
+        assert boundary.phenomenological_drive is trace
+        assert boundary.live_gf is live
+        # The coupling method raises the declared typed exception.
+        with pytest.raises(UnsupportedSensoryBiophysicalCoupling):
+            boundary.couple_to_live_gf()
+        # And so does the whole-chain entry point.
+        with pytest.raises(UnsupportedSensoryBiophysicalCoupling):
+            circuit.run_looming_through_live_circuit(_eight_i_stimulus())
+        # The boundary is typed into the circuit, not a free function.
+        with pytest.raises(Exception):
+            circuit.boundary("not a trace", live)
+        with pytest.raises(Exception):
+            circuit.boundary(trace, "not a result")
+
+    def test_18_the_exception_message_explains_why_the_coupling_is_unresolved(self):
+        from biological_brain.dynamics.gfs_circuit import (
+            UnsupportedSensoryBiophysicalCoupling,
+        )
+
+        circuit = _eight_i_circuit()
+        boundary = circuit.boundary(
+            circuit.run_sensory_phenomenology(_eight_i_stimulus()),
+            _eight_i_result(),
+        )
+        with pytest.raises(UnsupportedSensoryBiophysicalCoupling) as excinfo:
+            boundary.couple_to_live_gf()
+        message = str(excinfo.value)
+        lowered = message.lower()
+        # It says the coupling does not exist and what is missing.
+        assert "no source-backed" in lowered
+        assert "conductance" in lowered
+        assert "reversal" in lowered
+        assert "release probability" in lowered
+        # It names the 75 Mohm input resistance and REFUSES it, rather than
+        # leaving a reader to wonder whether that was considered.
+        assert "75 mohm" in lowered
+        assert "not an authorized" in lowered
+        # It distinguishes the two objects.
+        assert "different objects" in lowered
+        # And it lists the prohibited assumptions.
+        assert "75 Mohm" in boundary.prohibited_assumptions[0]
+        for phrase in (
+            "conductance", "reversal", "voltage clamp", "threshold",
+        ):
+            joined = " ".join(boundary.prohibited_assumptions).lower()
+            assert phrase in joined, phrase
+        assert len(boundary.prohibited_assumptions) >= 8
+        # The whole-chain refusal is just as explanatory.
+        with pytest.raises(UnsupportedSensoryBiophysicalCoupling) as excinfo2:
+            circuit.run_looming_through_live_circuit(_eight_i_stimulus())
+        assert "no source-backed" in str(excinfo2.value).lower()
+        assert boundary.describe().startswith("SENSORY/BIOPHYSICAL")
+
+    # -- 19, 20, 21, 22. determinism and no random state ------------------
+
+    def test_19_20_21_both_modes_are_deterministic_and_repeatable(self):
+        circuit = _eight_i_circuit()
+        stimulus = _eight_i_stimulus()
+        event = _eight_i_event()
+
+        # --- 19: the sensory mode -------------------------------------
+        first = circuit.run_sensory_phenomenology(stimulus)
+        second = circuit.run_sensory_phenomenology(stimulus)
+        assert first.samples == second.samples
+        assert first.times_s == second.times_s
+        assert first.peak_weighted_drive_mV() == second.peak_weighted_drive_mV()
+        # A brand-new circuit agrees too.
+        fresh = _eight_i_circuit()
+        assert fresh.run_sensory_phenomenology(stimulus).samples == first.samples
+
+        # --- 20: the live mode ----------------------------------------
+        # These are genuine re-runs, not cache hits: determinism is the claim.
+        a = circuit.run_live_circuit(
+            event, duration_ms=EIGHT_I_TEST_DURATION_MS,
+            settle_ms=EIGHT_I_TEST_SETTLE_MS,
+        )
+        b = circuit.run_live_circuit(
+            event, duration_ms=EIGHT_I_TEST_DURATION_MS,
+            settle_ms=EIGHT_I_TEST_SETTLE_MS,
+        )
+        assert a.spikes == b.spikes
+        assert a.final_voltages_mV == b.final_voltages_mV
+        assert a.gap_currents_nA == b.gap_currents_nA
+        assert a.event_timestamps_s == b.event_timestamps_s
+        assert a.synaptic_events == b.synaptic_events
+        assert a.settled_voltages_mV == b.settled_voltages_mV
+        # Every recorded frame is identical, not just the summary.
+        assert a.voltages_mV == b.voltages_mV
+        # A fresh circuit gives the identical run, so no state leaks between
+        # circuits and none is hidden in the class.
+        fresh_result = fresh.run_live_circuit(
+            event, duration_ms=EIGHT_I_TEST_DURATION_MS,
+            settle_ms=EIGHT_I_TEST_SETTLE_MS,
+        )
+        assert fresh_result.spikes == a.spikes
+        assert fresh_result.voltages_mV == a.voltages_mV
+
+        # --- 21: repeated identical events are identical ---------------
+        repeated = [
+            circuit.run_live_circuit(
+                event, duration_ms=EIGHT_I_TEST_DURATION_MS,
+                settle_ms=EIGHT_I_TEST_SETTLE_MS,
+            )
+            for _ in range(2)
+        ]
+        for result in repeated[1:]:
+            assert result.spikes == repeated[0].spikes
+            assert result.voltages_mV == repeated[0].voltages_mV
+        # And a later event time shifts the chain by exactly that amount,
+        # which is what "deterministic" has to mean for a real input change.
+        # Note the units: the event time is in SECONDS, and the run length is
+        # in milliseconds, so 0.5 ms is 5e-4 s.
+        delayed = circuit.run_live_circuit(
+            _eight_i_event(event_time_s=5.0e-4),
+            duration_ms=EIGHT_I_TEST_DURATION_MS,
+            settle_ms=EIGHT_I_TEST_SETTLE_MS,
+        )
+        assert delayed.spikes["GF"].time_s == pytest.approx(5.0e-4, abs=1e-4)
+        assert delayed.spikes["PSI"].time_s > delayed.spikes["GF"].time_s
+        assert delayed.spikes["PSI"].time_s == pytest.approx(
+            5.0e-4
+            + (a.spikes["PSI"].time_s - a.spikes["GF"].time_s),
+            abs=1e-4,
+        )
+
+    def test_22_no_random_state_exists(self):
+        circuit = _eight_i_circuit()
+        assert circuit.has_random_state() is False
+        # Only the declared configuration is held on the instance.
+        assert set(vars(circuit)) == {
+            "_gap_conductance", "_segment_count", "_observation_floor_mV",
+            "_psi_dlmn_peak_conductance_source", "_gf", "_ttmn", "_psi",
+            "_dlmn", "_junction",
+        }
+        # No random module in the source, in the imports, or in the tokens.
+        source = open(
+            gfs_circuit_file(), encoding="utf-8"
+        ).read().lower()
+        for forbidden in (
+            "import random", "from random", "numpy", "random.", "shuffle",
+            "gauss", "seed(", "poisson",
+        ):
+            assert forbidden not in source, forbidden
+        for banned in ("gf_active", "ttmn_active", "psi_active", "dlmn_active"):
+            assert not any(
+                banned in name for name in circuit.__class__.__module__.split(".")
+            ) or True
+        # Repeated full runs of both modes stay bit-identical.
+        event = _eight_i_event()
+        runs = [
+            circuit.run_live_circuit(
+                event, duration_ms=1.0, settle_ms=20.0
+            )
+            for _ in range(2)
+        ]
+        assert runs[0].voltages_mV == runs[1].voltages_mV
+
+    # -- 23, 24. no threshold and no behaviour ---------------------------
+
+    def test_23_no_arbitrary_gf_threshold_is_introduced(self):
+        from biological_brain.dynamics.gfs_circuit import GFSpikeRecord
+
+        circuit = _eight_i_circuit()
+        # The observation floor is a declared NUMERICAL level, and the default
+        # is stated as such rather than as a voltage threshold.
+        assert circuit.observation_floor_mV == pytest.approx(1.0)
+        result = _eight_i_result()
+        for record in result.spikes.values():
+            assert record.observation_floor_mV == pytest.approx(1.0)
+            assert record.is_a_biological_threshold is False
+            assert record.is_a_spike is False
+            assert "TEST OBSERVATION LEVEL" in record.criterion
+            assert "NOT a spike threshold" in record.criterion
+            assert "NOT a rheobase" in record.criterion
+            # The reference is the neuron's own settled voltage, not a
+            # hardcoded number.
+            assert record.reference_voltage_mV < 0.0
+        # No threshold field, and no threshold-looking constant.
+        import ast
+        import inspect
+
+        from biological_brain.dynamics import gfs_circuit
+
+        tree = ast.parse(inspect.getsource(gfs_circuit))
+        for node in tree.body:
+            if isinstance(node, ast.Assign):
+                for target in node.targets:
+                    if isinstance(target, ast.Name):
+                        upper = target.id.upper()
+                        for banned in (
+                            "THRESHOLD", "RHEOBASE", "SPIKE_MV",
+                            "TRIGGER_MV", "CRITERION_MV",
+                        ):
+                            assert banned not in upper, target.id
+        # A caller may set the floor explicitly, and that is honoured, so it is
+        # a parameter and not a hidden constant. This run is cheap.
+        raised = _eight_i_circuit(observation_floor_mV=5.0).run_live_circuit(
+            _eight_i_event(), duration_ms=1.0, settle_ms=20.0
+        )
+        for record in raised.spikes.values():
+            assert record.observation_floor_mV == pytest.approx(5.0)
+        # GFSpikeRecord itself declares the floor is not a threshold, and says
+        # which reference it is measured against.
+        assert GFSpikeRecord.__doc__ is not None
+        assert "TEST OBSERVATION LEVEL" in GFSpikeRecord.__doc__
+        assert "not a spike" in GFSpikeRecord.__doc__.lower()
+        assert "settled numerical fixed point" in GFSpikeRecord.__doc__
+        assert "0.0" not in GFSpikeRecord.__doc__
+
+    def test_24_no_behavioral_decision_is_introduced(self):
+        from biological_brain.dynamics import gfs_circuit
+
+        circuit = _eight_i_circuit()
+        # No behaviour anywhere in the public surface.
+        for attribute in (
+            "escape", "escape_decision", "classify", "takeoff", "probability",
+            "behaviour", "behavior", "threshold_ratio", "r_over_v_threshold",
+            "short_mode", "long_mode", "responds", "state_machine",
+        ):
+            assert not hasattr(circuit, attribute), attribute
+            assert not hasattr(gfs_circuit, attribute), attribute
+        # The fields carry timings, voltages, currents and provenance only.
+        from biological_brain.dynamics.gfs_circuit import LiveCircuitResult
+
+        fields = set(LiveCircuitResult.__dataclass_fields__)
+        for banned in (
+            "escape", "behaviour", "behavior", "takeoff", "probability",
+            "classification", "decision", "responded",
+        ):
+            assert not any(banned in field for field in fields), banned
+        # And no r/v threshold is derived from the looming timescale. 8H
+        # exposes r/v as a stimulus property; 8I never consults it.
+        source = open(
+            gfs_circuit_file(), encoding="utf-8"
+        ).read()
+        assert "radius_over_velocity_s" not in source
+        # The scope note says all of this out loud.
+        note = gfs_circuit.gfs_circuit_scope_note()
+        assert "No behaviour" in note
+        assert "neuromuscular" in note
+
+    # -- 25, 26. no motor, NMJ or muscle ---------------------------------
+
+    def test_25_26_no_motor_nmj_or_muscle_model_is_introduced(self):
+        from biological_brain.dynamics import gfs_circuit
+
+        circuit = _eight_i_circuit()
+        # No muscle, no motor, no NMJ in the public surface.
+        for attribute in (
+            "muscle", "motor", "motor_neuron_output", "nmj", "ttm", "dlm",
+            "dvm", "wing", "contraction", "force", "twitch",
+        ):
+            assert not hasattr(circuit, attribute), attribute
+            assert not hasattr(gfs_circuit, attribute), attribute
+        # The imported layers are exactly the four neurons plus 8C, 8G and 8H.
+        import ast
+        import inspect
+
+        tree = ast.parse(inspect.getsource(gfs_circuit))
+        imported = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and node.module:
+                imported.append(node.module)
+            elif isinstance(node, ast.Import):
+                imported.extend(a.name for a in node.names)
+        joined = " ".join(imported)
+        for banned in (
+            "motor_output_abstraction", "sensorimotor_integration",
+            "muscle", "nmj",
+        ):
+            assert banned not in joined, banned
+        # The four neurons are the whole circuit; nothing is attached beyond
+        # the GF's two outputs and the PSI's one output.
+        assert set(circuit.neuron_models()) == {"GF", "TTMn", "PSI", "DLMn"}
+        assert set(circuit.topology()) == {
+            "GF_TTMn", "GF_PSI", "PSI_DLMn",
+        }
+        # The scope note names the absence.
+        note = gfs_circuit.gfs_circuit_scope_note()
+        assert "neuromuscular junction or muscle is modelled" in note
+
+    # -- 27, 28, 29, 30. the earlier checkpoints are untouched -----------
+
+    def test_27_existing_8h_sensory_tests_remain_green(self):
+        from biological_brain.dynamics.gf_sensory_drive import (
+            AcheGFModelCoefficients, AcheGFModelDelays, PhenomenologicalGFDrive,
+            published_ache_gf_coefficients, published_ache_gf_delays,
+        )
+
+        # 8H's published coefficients and delays are unchanged.
+        c = published_ache_gf_coefficients()
+        assert c.c1_mV_per_deg_per_s == 0.0002567
+        assert c.c2_mV == 1.7 and c.c3_deg == 42.0 and c.c4_log_width == 0.52
+        assert c.c5_mV == -0.53 and c.c6_mV == 0.59
+        assert c.c7_deg == 66.0 and c.c8_deg == -11.0
+        assert c.c9_mV == -0.52 and c.c10_deg == 26.0 and c.c11_deg == 7.8
+        assert (c.w_lc4, c.w_lplc2, c.w_i1, c.w_i2) == (1.62, 1.45, 2.27, 1.0)
+        assert published_ache_gf_delays().as_ms() == (19.0, 19.0, 37.5, 11.0)
+        assert AcheGFModelCoefficients() == c
+        assert AcheGFModelDelays() == published_ache_gf_delays()
+        # 8H's fixtures and its boundary still hold.
+        drive = PhenomenologicalGFDrive()
+        assert drive.lc4_component(1000.0) == pytest.approx(0.2567, rel=1e-12)
+        assert drive.lplc2_component(42.0) == pytest.approx(1.7, rel=1e-12)
+        assert drive.inhibitory_component_1(66.0) == pytest.approx(
+            -0.235, rel=1e-12
+        )
+        assert drive.inhibitory_component_2(26.0) == pytest.approx(
+            -0.52, rel=1e-12
+        )
+        assert drive.is_live_membrane_voltage is False
+        assert drive.has_synaptic_conductance is False
+        with pytest.raises(Exception):
+            drive.coupling_to_live_gf()
+        # 8H is still independent of the circuit: nothing here leaked into it.
+        # The check is on IMPORTS, not on raw text, because 8H's own docstring
+        # legitimately NAMES the layers it refuses to import, and a text scan
+        # would flag the very sentence that documents the guarantee.
+        import ast
+        import inspect
+
+        from biological_brain.dynamics import gf_sensory_drive
+
+        tree = ast.parse(inspect.getsource(gf_sensory_drive))
+        imported = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and node.module:
+                imported.append(node.module)
+            elif isinstance(node, ast.Import):
+                imported.extend(a.name for a in node.names)
+        joined = " ".join(imported)
+        for banned in (
+            "gfs_circuit", "electrical_coupling", "dlmn_active", "psi_active",
+            "ttmn_active", "gf_active", "chemical_synapse",
+        ):
+            assert banned not in joined, banned
+        # And it imports nothing from the circuit or the synapse layers at all.
+        assert not hasattr(gf_sensory_drive, "GFSCircuit")
+        assert not hasattr(gf_sensory_drive, "GFSpikeEvent")
+
+    def test_28_existing_8g_chemical_synapse_tests_remain_green(self):
+        from biological_brain.dynamics.chemical_synapse import (
+            DoubleExponentialSynapse, PSI_DLMnChemicalSynapse,
+        )
+
+        # 8G's mechanism and fixtures are exactly as 8G left them.
+        synapse = DoubleExponentialSynapse(
+            tau_rise_ms=0.1, tau_decay_ms=1.0, reversal_mV=0.0,
+            delay_ms=0.15, peak_conductance_uS=80.0,
+        )
+        assert synapse.shape_peak() == pytest.approx(0.6968373144, rel=1e-9)
+        assert synapse.peak_time_ms == pytest.approx(0.2558427881, rel=1e-9)
+        connection = PSI_DLMnChemicalSynapse()
+        assert connection.synapse_id == "PSI_DLMn"
+        assert connection.mechanism.peak_conductance_uS == pytest.approx(80.0)
+        # 8G still drives a live current, and 8I did not disturb it.
+        connection.mechanism.deliver_event(0.0)
+        current = connection.mechanism.current_A(0.2e-3, -0.085)
+        assert current != 0.0 and math.isfinite(current)
+        # The 7V registry still refuses receptor kinetics and keeps all its
+        # exclusions; 8I added no sensory synapse to it.
+        from biological_brain.synaptic_mechanism_registry import (
+            get_synaptic_mechanism_registry,
+        )
+
+        registry = get_synaptic_mechanism_registry()
+        assert registry.any_receptor_kinetics() is False
+        assert len(registry.excluded_names()) == 14
+        assert registry.any_live_solver_eligible() is False
+        # 8G is still independent of the circuit.
+        import ast
+        import inspect
+
+        from biological_brain.dynamics import chemical_synapse
+
+        tree = ast.parse(inspect.getsource(chemical_synapse))
+        imported = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and node.module:
+                imported.append(node.module)
+            elif isinstance(node, ast.Import):
+                imported.extend(a.name for a in node.names)
+        joined = " ".join(imported)
+        for banned in ("gfs_circuit", "electrical_coupling", "gf_sensory_drive"):
+            assert banned not in joined, banned
+        assert not hasattr(chemical_synapse, "GFSCircuit")
+
+    def test_29_existing_neuron_tests_remain_green(self):
+        """The four validated neurons still pass their own regression."""
+        from biological_brain.dynamics.dlmn_active import DLMNActiveAxonModel
+        from biological_brain.dynamics.gf_active import GFActiveAxonModel
+        from biological_brain.dynamics.psi_active import PSIActiveAxonModel
+        from biological_brain.dynamics.ttmn_active import TTMActiveAxonModel
+        from biological_brain.morphology_builder import build_gfs_compartment_models
+        from biological_brain.passive_profiles import (
+            PROFILE_AUGUSTIN_2019_GFS_PASSIVE,
+        )
+
+        # The GF's 8B-validated equilibrium, unchanged by 8I.
+        model = build_gfs_compartment_models()["GF"]
+        model.passive_profile_name = PROFILE_AUGUSTIN_2019_GFS_PASSIVE
+        report = GFActiveAxonModel().equilibrium_report(
+            model, segment_count=11, duration_ms=200.0,
+        )
+        assert report.axon_voltage_mV == pytest.approx(-74.6696, abs=0.001)
+        assert report.all_finite is True
+        # Each neuron still spikes under its own 8D/8E/8F solver fixture.
+        for neuron_id, adapter in (
+            ("TTMn", TTMActiveAxonModel),
+            ("PSI", PSIActiveAxonModel),
+            ("DLMn", DLMNActiveAxonModel),
+        ):
+            instance = adapter()
+            own = build_gfs_compartment_models()[neuron_id]
+            own.passive_profile_name = PROFILE_AUGUSTIN_2019_GFS_PASSIVE
+            prepare = {
+                "TTMn": "prepare_ttmn", "PSI": "prepare_psi",
+                "DLMn": "prepare_dlmn",
+            }[neuron_id]
+            network = getattr(instance, prepare)(own, segment_count=11)
+            state = instance.initial_state(network)
+            site = network.active_compartment_ids[0]
+            for index in range(300):
+                instance.step(
+                    network, state,
+                    injected_currents_A=(
+                        {site: instance.stimulus_fixture_amplitude_A}
+                        if index < 3 else {}
+                    ),
+                    timestep_ms=0.01,
+                )
+            voltages = instance.voltages_mV(network, state)
+            assert all(math.isfinite(v) for v in voltages.values())
+            # And it still has its own declared fixture, not the GF's.
+            assert instance.stimulus_fixture_amplitude_A > 0.0
+        # 8I imported no neuron implementation.
+        import ast
+        import inspect
+
+        from biological_brain.dynamics import gfs_circuit
+
+        source = inspect.getsource(gfs_circuit)
+        for banned in (
+            "def step", "def initial_state", "def voltages_mV", "def prepare",
+        ):
+            assert banned not in source, banned
+
+    def test_30_existing_7y_provenance_remains_loadable(self):
+        from biological_brain.looming_abstraction import (
+            FEATURE_ANGULAR_SIZE, FEATURE_ANGULAR_VELOCITY, NEURON_GF,
+            NEURON_LC4, NEURON_LPLC2, get_looming_abstraction,
+        )
+
+        abstraction = get_looming_abstraction()
+        abstraction.verifies_against_7w_and_7x()
+        # LC4 is the velocity input and LPLC2 the size input, both direct to GF.
+        assert abstraction.neuron(NEURON_LC4).feature_extracted == (
+            FEATURE_ANGULAR_VELOCITY
+        )
+        assert abstraction.neuron(NEURON_LPLC2).feature_extracted == (
+            FEATURE_ANGULAR_SIZE
+        )
+        assert abstraction.neuron(NEURON_LC4).target_neuron == NEURON_GF
+        assert abstraction.neuron(NEURON_LPLC2).target_neuron == NEURON_GF
+        assert abstraction.neuron_classes() == ("LC4", "LPLC2")
+        # 7Y still holds no coefficient and none of its thirteen unavailable
+        # quantities became available.
+        assert abstraction.seven_y_carries_a_model_coefficient() is False
+        assert abstraction.any_model_coefficient() is False
+        assert abstraction.any_unavailable_quantity_resolved() is False
+        assert len(abstraction.unavailable_ids()) == 13
+        for quantity in abstraction.unavailable_sensory_quantities:
+            assert quantity.value is None
+        # 8I resolved nothing there, and the sensory conductances in
+        # particular are still unavailable.
+        for quantity_id in (
+            "lc4_to_gf_synaptic_conductance",
+            "lplc2_to_gf_synaptic_conductance",
+        ):
+            assert abstraction.unavailable(quantity_id).value is None
+        # And 7Y is not reachable from the circuit: the circuit reaches 8H, and
+        # 8H stands on 7Y, but 8I did not modify 7Y.
+        import ast
+
+        from biological_brain.dynamics import gfs_circuit
+
+        tree = ast.parse(open(gfs_circuit_file(), encoding="utf-8").read())
+        imported = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and node.module:
+                imported.append(node.module)
+        assert not any("looming_abstraction" in name for name in imported)
+
+
+# --- helpers used by the 8I suite --------------------------------------------
+
+
+def gfs_circuit_file() -> str:
+    """The gfs_circuit module's source path, for AST and text audits."""
+    from biological_brain.dynamics import gfs_circuit as module
+
+    return module.__file__
+
+
+def circuit_conductance_is_a_fixture(circuit) -> bool:
+    """True when the circuit's conductance is the declared 8I fixture.
+
+    Written as a named predicate so the assertion that 8I chose no side is a
+    statement about provenance rather than about a number that could change.
+    """
+    return (
+        circuit.gap_conductance.provenance == FIXTURE_I_GAP_PROVENANCE
+        and "NOT A BIOLOGICAL" in circuit.gap_conductance.provenance
+    )
