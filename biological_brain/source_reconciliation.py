@@ -182,6 +182,33 @@ SOURCE_SCAN_RANGE = (
     "ranges['g_gap'] = np.arange(20, 160, 10), and line 40: old_g_gap = 34.5"
 )
 
+#: A 2025 preprint that reuses the paper's two numbers. Recorded because it is
+#: the most likely source to be MISREAD as independent corroboration of the
+#: microSiemens reading, and it is not: see :data:`_DERIVATIVE_NOTE`.
+SOURCE_LOPEZ_2025_DERIVATIVE = (
+    "Lopez J, Boerner J, Robbins K, Pena RF, Murphey R (2025). Frazzled/DCC "
+    "regulates gap junction formation at a Drosophila giant synapse through "
+    "transcription. bioRxiv preprint 2025.04.08.647628, posted 9 April 2025. "
+    "https://doi.org/10.1101/2025.04.08.647628 . Its Figure 5B parameter-scan "
+    "axis is labelled 'min L = 34.5 uS, max L = 135 uS, Gap Junction "
+    "Conductance (uS)', i.e. the same two numbers as the Augustin 2019 paper, "
+    "in microSiemens. Read from the full text of the 48-page PDF."
+)
+
+_DERIVATIVE_NOTE = (
+    "A 2025 preprint (Lopez et al., bioRxiv 2025.04.08.647628) scans the same "
+    "34.5-135 uS range and therefore APPEARS to corroborate the paper's "
+    "microSiemens reading. IT IS NOT INDEPENDENT EVIDENCE. Its own text states "
+    "that it 'set our limits of gap junction conductance following parameters "
+    "found in Augustin (2019)' and 'set the upper and lower limits of "
+    "conductivity based on parameters found in the Augustin (2019) model', so "
+    "it inherits the paper's microSiemens figures rather than measuring them. "
+    "The strings 'nS' and 'nanoSiemens' do not occur anywhere in its 48 pages, "
+    "so it never engages with the gap2.mod unit declaration and cannot "
+    "discriminate between the two representations. It is recorded as a "
+    "DERIVATIVE source and adds no independent evidence in either direction. "
+)
+
 _NO_CORRECTION_NOTE = (
     "NO CORRECTED VALUE EXISTS. There is deliberately NO 'corrected_g_gap' "
     "parameter and no other field standing in for a resolved answer. Neither "
@@ -588,6 +615,7 @@ def _conflict(
         f"executes {modeldb_value} nS = {normalized_value} uS. The ratio is "
         f"exactly {discrepancy_factor:g}. " + _CONVERSION_NOT_A_CORRECTION + " "
         + _UNRESOLVED_NOTE + " " + _NO_CORRECTION_NOTE + " " + _NO_SOLVER_NOTE
+        + " " + _DERIVATIVE_NOTE
     )
     return SourceConflictRecord(
         conflict_id=conflict_id,
@@ -612,6 +640,7 @@ def _conflict(
             SOURCE_GAP2_CURRENT,
             SOURCE_SCAN_AXIS,
             SOURCE_SCAN_RANGE,
+            SOURCE_LOPEZ_2025_DERIVATIVE,
         ),
         linked_records=linked_records,
     )

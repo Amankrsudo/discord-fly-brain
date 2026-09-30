@@ -11669,6 +11669,292 @@ class TestSourceReconciliationGapJunctionUnits:
             )
 
 
+class TestGapJunctionUnitRepresentationsStayDistinct:
+    """3.0D-7U: the two g_gap unit representations must stay DISTINGUISHABLE.
+
+    The Augustin 2019 paper and the compiled ModelDB 245415 source state the
+    same two numbers, 135.0 and 34.5, in units that differ by exactly 1000:
+    the paper says MICROsiemens and gap2.mod declares NANOsiemens. Nothing
+    establishes which the authors intended, so 7U records both and resolves
+    neither.
+
+    The danger this class guards against is quiet collapse. If a later change
+    made 135 uS and 135 nS the same object, or applied a hidden x1000, the
+    project would have resolved 7U by accident while appearing to preserve it.
+    These tests are therefore about SEPARATION and NON-CONVERSION, not about
+    picking a side: they must keep passing whichever value a caller supplies,
+    and they would fail if anyone tried to collapse the two representations or
+    quietly normalize one into the other.
+
+    They also record, and refuse to over-credit, the 2025 Lopez et al. preprint
+    that reuses the same 34.5-135 uS range. It looks like corroboration of the
+    microSiemens reading and is not: its own text says it took the limits
+    'following parameters found in Augustin (2019)', and 'nS' occurs nowhere
+    in its 48 pages, so it inherits the paper's figures and cannot discriminate
+    between the two representations.
+    """
+
+    def _registry(self):
+        from biological_brain.source_reconciliation import (
+            get_source_reconciliation_registry,
+        )
+
+        return get_source_reconciliation_registry()
+
+    def _conductance(self, value, unit):
+        from biological_brain.dynamics.electrical_coupling import (
+            explicit_conductance,
+        )
+
+        return explicit_conductance(
+            value, unit,
+            "3.0D-7U distinguishability probe. NOT a resolution and NOT a "
+            "default; 7U remains an unresolved factor-1000 unit conflict.",
+        )
+
+    # --- 135 uS vs 135 nS, and 34.5 uS vs 34.5 nS, stay distinct ---
+
+    def test_1_the_two_representations_remain_distinguishable(self):
+        from biological_brain.source_reconciliation import (
+            SIDE_MODELDB_LITERAL, SIDE_PAPER_INTENDED,
+        )
+
+        registry = self._registry()
+
+        # In the provenance record: same number, different unit, and the
+        # record never collapses them into one figure.
+        for conflict_id, paper, modeldb in (
+            ("g_gap_young_unit_conflict", 135.0, 135.0),
+            ("g_gap_old_unit_conflict", 34.5, 34.5),
+        ):
+            record = registry.get(conflict_id)
+            paper_side = record.side(SIDE_PAPER_INTENDED)
+            modeldb_side = record.side(SIDE_MODELDB_LITERAL)
+            # Identical numerals, deliberately different units.
+            assert paper_side.value == modeldb_side.value == paper
+            assert paper_side.unit == "uS", conflict_id
+            assert modeldb_side.unit == "nS", conflict_id
+            assert paper_side.unit != modeldb_side.unit, conflict_id
+            assert record.both_sides_preserved is True, conflict_id
+
+        # At the LIVE API the two are different physical conductances, so a
+        # caller supplying "135" gets something 1000x apart depending on the
+        # unit they declare. This is the property that must survive.
+        for value in (135.0, 34.5):
+            as_us = self._conductance(value, "uS")
+            as_ns = self._conductance(value, "nS")
+            assert as_us.nanoSiemens / as_ns.nanoSiemens == pytest.approx(
+                1000.0, rel=1e-12
+            ), value
+            assert as_us.siemens / as_ns.siemens == pytest.approx(
+                1000.0, rel=1e-12
+            ), value
+            # And they are not equal, so nothing has collapsed them.
+            assert as_us.siemens != as_ns.siemens, value
+            # 135.0 uS really is 135000 nS, and 135.0 nS really is 135 nS.
+            assert as_us.nanoSiemens == pytest.approx(value * 1000.0, rel=1e-12)
+            assert as_ns.nanoSiemens == pytest.approx(value, rel=1e-12)
+
+        # The young and old conditions are also distinct from each other, so a
+        # reader cannot confuse 135 for 34.5 either.
+        young = self._conductance(135.0, "uS")
+        old = self._conductance(34.5, "uS")
+        assert young.siemens / old.siemens == pytest.approx(
+            135.0 / 34.5, rel=1e-12
+        )
+
+    # --- no implicit x1000 anywhere ---
+
+    def test_2_no_implicit_x1000_conversion_occurs(self):
+        from biological_brain.source_reconciliation import (
+            SIDE_MODELDB_LITERAL, SIDE_PAPER_INTENDED,
+        )
+
+        # (a) The stored numeral is never rewritten. A caller who says 135.0
+        # gets 135.0 back, with the unit travelling beside it. That is what
+        # makes the conflict visible instead of absorbed.
+        for value in (135.0, 34.5):
+            for unit in ("uS", "nS"):
+                conductance = self._conductance(value, unit)
+                assert conductance.value == pytest.approx(value, rel=0.0)
+                assert conductance.unit == unit
+        # 135.0 uS does NOT become 135000 as its stored value; the
+        # nanoSiemens property is a derived accessor, not the field.
+        assert self._conductance(135.0, "uS").value == 135.0
+        assert self._conductance(135.0, "uS").nanoSiemens == pytest.approx(
+            135000.0, rel=1e-12
+        )
+        # And it is flagged as a conversion, not a default.
+        as_us = self._conductance(135.0, "uS")
+        assert as_us.is_default is False
+        assert "nanoSiemens" in as_us.describe_conversion()
+
+        # (b) The ONLY x1000 in the project is the explicitly labelled
+        # COMPARISON conversion, and it is declared not-a-correction.
+        registry = self._registry()
+        for conflict_id in registry.names():
+            record = registry.get(conflict_id)
+            conversion = record.conversion
+            assert conversion.from_unit == "nS"
+            assert conversion.to_unit == "uS"
+            assert conversion.multiplier_from_to == pytest.approx(1e-3)
+            assert conversion.is_correction is False
+            assert conversion.unambiguous is True
+            assert "COMPARISON, not a correction" in record.explanatory_note
+            # The normalized figure is a derived comparison value only, and it
+            # never appears as a side.
+            assert record.normalized_comparison_value in (0.135, 0.0345)
+            for side in record.sides():
+                assert side.value in (135.0, 34.5), side.label
+                assert side.unit in ("uS", "nS"), side.label
+                assert not side.is_preferred
+            # Neither side was rewritten into the other side's unit.
+            assert record.paper_side.value != record.normalized_comparison_value
+            assert record.modeldb_side.value != (
+                record.normalized_comparison_value
+            )
+        # The paper side kept 135.0 and the ModelDB side kept 135.0: the
+        # conversion moved NEITHER numeral.
+        young = registry.get("g_gap_young_unit_conflict")
+        assert young.side(SIDE_PAPER_INTENDED).value == 135.0
+        assert young.side(SIDE_MODELDB_LITERAL).value == 135.0
+        old = registry.get("g_gap_old_unit_conflict")
+        assert old.side(SIDE_PAPER_INTENDED).value == 34.5
+        assert old.side(SIDE_MODELDB_LITERAL).value == 34.5
+
+    # --- unresolved stays explicit, and the project value still refuses ---
+
+    def test_3_the_unresolved_status_remains_explicit(self):
+        from biological_brain.dynamics.electrical_coupling import (
+            ElectricalCouplingUnresolvedValueError,
+            from_unresolved_project_conductance,
+        )
+        from biological_brain.source_reconciliation import (
+            ConflictStatus, ResolutionStatus,
+        )
+
+        registry = self._registry()
+        assert registry.unresolved() == registry.names()
+        assert registry.any_resolved() is False
+        assert registry.any_preferred_side() is False
+        assert registry.any_live_solver_eligible() is False
+        for conflict_id in registry.names():
+            record = registry.get(conflict_id)
+            assert record.conflict_status is (
+                ConflictStatus.SOURCE_CODE_UNIT_CONFLICT
+            ), conflict_id
+            assert record.resolution_status is ResolutionStatus.UNRESOLVED
+            assert record.is_resolved is False, conflict_id
+            assert record.preferred_side is None, conflict_id
+            assert record.corrected_value_available is False, conflict_id
+            assert record.live_solver_eligible is False, conflict_id
+            assert record.discrepancy_factor == 1000.0, conflict_id
+        # 8C's own factory still refuses to supply the project value, so the
+        # unresolved number never reaches a solver by accident.
+        with pytest.raises(ElectricalCouplingUnresolvedValueError):
+            from_unresolved_project_conductance()
+        # And 8I still REQUIRES a caller to state the unit, so the unit is
+        # never inferred.
+        import inspect
+
+        from biological_brain.dynamics.gfs_circuit import GFSCircuit
+
+        parameters = inspect.signature(GFSCircuit.__init__).parameters
+        assert "gap_conductance" in parameters
+        assert parameters["gap_conductance"].default is inspect.Parameter.empty
+        with pytest.raises(TypeError):
+            GFSCircuit()
+
+    # --- the 2025 derivative source is recorded, and not over-credited ---
+
+    def test_4_the_2025_derivative_source_is_recorded_as_non_independent(self):
+        from biological_brain.source_reconciliation import (
+            SOURCE_LOPEZ_2025_DERIVATIVE,
+        )
+
+        registry = self._registry()
+        for conflict_id in registry.names():
+            record = registry.get(conflict_id)
+            # It IS recorded, with its identity and the figure that makes it
+            # look like corroboration.
+            assert SOURCE_LOPEZ_2025_DERIVATIVE in record.source_references
+            assert "2025.04.08.647628" in SOURCE_LOPEZ_2025_DERIVATIVE
+            assert "34.5" in SOURCE_LOPEZ_2025_DERIVATIVE
+            assert "135" in SOURCE_LOPEZ_2025_DERIVATIVE
+            # And it is explicitly disqualified as independent evidence, with
+            # the reason rather than an assertion.
+            note = record.explanatory_note
+            assert "IT IS NOT INDEPENDENT EVIDENCE" in note
+            assert "following parameters found in Augustin (2019)" in note
+            assert "nanoSiemens" in note
+            assert "DERIVATIVE source and adds no independent evidence" in note
+            # Adding a 2025 derivative must not have resolved anything.
+            assert record.resolution_status.value == "unresolved"
+            assert record.preferred_side is None
+            assert record.discrepancy_factor == 1000.0
+
+    # --- nothing numerical moved ---
+
+    def test_5_no_existing_numerical_behavior_changed(self):
+        # 3.0D-7E still holds the paper's figures with an EXPLICIT unit, which
+        # is the whole of task 10: the ambiguous-looking 'g_gap' name is
+        # accompanied by a unit on the record, so no API change was needed.
+        from biological_brain.dynamics.electrical_coupling import (
+            GFSCouplingNetwork,
+        )
+        from biological_brain.passive_electrical_registry import (
+            get_passive_electrical_registry,
+        )
+
+        registry = get_passive_electrical_registry()
+        for name, value in (
+            ("gap_junction_conductance_young", 135.0),
+            ("gap_junction_conductance_old", 34.5),
+        ):
+            record = registry.get(name)
+            assert record.value == pytest.approx(value, rel=0.0), name
+            assert record.unit == "uS", name
+
+        # The 8C gap2 law is unchanged from the vendored mechanism's:
+        # i = (v - vgap) * g * 0.001, with v in mV, g in nS and i in nA.
+        # Checked through the same public junction API 8C exposes, so this
+        # pins the shipped law rather than restating it.
+        junction = GFSCouplingNetwork(
+            self._conductance(1.0, "nS")
+        ).junction("GF_TTMn")
+        result = junction.current(20.0, -80.0)
+        assert result.voltage_difference_mV == pytest.approx(100.0, rel=1e-12)
+        assert result.current_from_presynaptic_nA == pytest.approx(
+            0.1, rel=1e-12
+        ), "gap2's i = (v - vgap)*g*0.001 must be unchanged"
+        # Still current-conserving, and still finite.
+        assert result.is_conserved is True
+        assert result.is_finite is True
+        # The same conductance in the other unit gives 1000x the current,
+        # which is the point of the whole record: the unit is not cosmetic.
+        strong = GFSCouplingNetwork(
+            self._conductance(1.0, "uS")
+        ).junction("GF_TTMn").current(20.0, -80.0)
+        assert strong.current_from_presynaptic_nA == pytest.approx(
+            100.0, rel=1e-12
+        )
+        # The coupling network still evaluates against a live GF voltage, and
+        # still refuses to invent a postsynaptic membrane: 8C requires the
+        # caller to supply the TTMn and PSI voltages, which 3.0D-8I does.
+        network = GFSCouplingNetwork(self._conductance(1.0, "nS"))
+        with pytest.raises(Exception):
+            network.currents_from_active_gf(20.0)
+        currents = network.currents_from_active_gf(
+            20.0, {"GF_TTMn": -80.0, "GF_PSI": -80.0}
+        )
+        assert set(currents) == {"GF_TTMn", "GF_PSI"}
+        for current in currents.values():
+            assert current.is_finite
+            assert current.is_conserved
+            assert current.presynaptic_voltage_mV == pytest.approx(20.0)
+            assert current.postsynaptic_voltage_mV == pytest.approx(-80.0)
+
+
 class TestSynapticMechanismProvenance:
     """3.0D-7V: synaptic mechanism provenance and evidence boundary.
 
