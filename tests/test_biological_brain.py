@@ -27904,3 +27904,519 @@ def _eight_h_ast_escape_behavior():
     from biological_brain.dynamics import escape_behavior
 
     return ast.walk(ast.parse(inspect.getsource(escape_behavior)))
+class TestSensoryGFTriggerCandidate:
+    """3.0D-8L: sensory looming -> GF-escape trigger CANDIDATE.
+
+    This checkpoint is deliberately an HONEST BOUNDARY. The test that matters
+    most is the last one: it proves the candidate cannot be read as a GF action
+    potential, because a layer that quietly produced spikes would invalidate
+    every downstream claim while still passing every positive test here.
+
+    The numerical fixtures are 3.0D-8H's own, re-verified against the published
+    coefficients rather than restated. LPLC2 reaching exactly 1.700000 mV is
+    the C2 = 1.7 mV coefficient arriving at its own centre q = 42 deg, so the
+    geometry, the delays, the log-Gaussian and the weighting are all exercised
+    by one number.
+    """
+
+    def _candidate(self, duration_s=1.9, samples=2001):
+        from biological_brain.dynamics.sensory_trigger import (
+            gf_trigger_candidate_from_stimulus,
+        )
+
+        return gf_trigger_candidate_from_stimulus(
+            _eight_i_stimulus(), duration_s=duration_s, samples=samples
+        )
+
+    # --- zero / no stimulus ---
+
+    def test_1_zero_and_absent_stimulus_report_no_evidence(self):
+        from biological_brain.dynamics.sensory_trigger import (
+            GFTriggerCandidate, SensoryTriggerError, SensoryTriggerStatus,
+        )
+
+        # A window entirely inside the 3.0D-8H prehistory has no defined
+        # stimulus, so every component and the drive are EXACTLY zero. This is
+        # the threshold-free way to say "no stimulus": 8H's own in_prehistory
+        # flag, not a comparison against a number.
+        absent = self._candidate(duration_s=5e-5, samples=3)
+        assert absent.looming_stimulus_present is False
+        assert absent.status is SensoryTriggerStatus.NO_STIMULUS_EVIDENCE
+        assert absent.components_mV() == {
+            "lc4": 0.0, "lplc2": 0.0, "inhibitory_component_1": 0.0,
+            "inhibitory_component_2": 0.0,
+        }
+        assert absent.total_phenomenological_gf_drive_mV == 0.0
+        assert absent.peak_time_s in absent.times_s
+        assert "SENSORY EVIDENCE: none" in absent.summary()
+        # The boundary flags hold even in the empty case.
+        assert absent.is_a_detected_gf_action_potential is False
+        assert absent.is_a_spike is False
+        assert absent.is_a_probability_of_escape is False
+        with pytest.raises(Exception):
+            absent.couple_to_live_gf()
+
+        # A stimulus present but with NO angular velocity gives an exactly zero
+        # LC4 term and a full LPLC2 term, which is the LC4-is-velocity fact
+        # from 3.0D-8H carried through rather than re-derived.
+        from biological_brain.dynamics.gf_sensory_drive import (
+            CallableLoomingStimulus,
+        )
+        from biological_brain.dynamics.sensory_trigger import (
+            gf_trigger_candidate_from_stimulus,
+        )
+
+        stationary = gf_trigger_candidate_from_stimulus(
+            CallableLoomingStimulus(
+                q_fn=lambda t: 42.0, q_dot_fn=lambda t: 0.0
+            ),
+            duration_s=0.5, samples=11,
+        )
+        assert stationary.looming_stimulus_present is True
+        assert stationary.peak_lc4_component_mV == 0.0
+        assert stationary.peak_lplc2_component_mV == pytest.approx(1.7, rel=1e-12)
+
+        # Status and presence may not contradict each other.
+        for bad in (
+            {"looming_stimulus_present": True},
+            {"status": SensoryTriggerStatus.EVIDENCE_PRESENT},
+        ):
+            kwargs = {
+                "looming_stimulus_present": False,
+                "status": SensoryTriggerStatus.NO_STIMULUS_EVIDENCE,
+                "peak_lc4_component_mV": 0.0,
+                "peak_lplc2_component_mV": 0.0,
+                "peak_inhibitory_component_1_mV": 0.0,
+                "peak_inhibitory_component_2_mV": 0.0,
+                "total_phenomenological_gf_drive_mV": 0.0,
+                "peak_time_s": 0.0, "times_s": (0.0,),
+                "samples": absent.samples, "stimulus_description": "d",
+            }
+            kwargs.update(bad)
+            with pytest.raises(SensoryTriggerError):
+                GFTriggerCandidate(**kwargs)
+
+    # --- the known 3.0D-8H numerical fixture ---
+
+    def test_2_known_8h_numerical_fixture(self):
+        candidate = self._candidate()
+        assert candidate.looming_stimulus_present is True
+        # LPLC2 reaching ~C2 = 1.7 mV means the log-Gaussian peaked at its own
+        # centre q = 42 deg. One number exercises the geometry, the delays, the
+        # log-Gaussian and the weighting. The value is not EXACTLY 1.7 because
+        # the uniform time grid does not land on q = 42 deg, so the peak is the
+        # sample nearest the centre, about 3.8e-8 relative below it.
+        assert candidate.peak_lplc2_component_mV == pytest.approx(
+            1.7, rel=1e-6
+        )
+        assert candidate.peak_lplc2_component_mV <= 1.7
+        # The sample where LPLC2 alone peaks carries the peak coefficient. Its
+        # reported q_deg is 3.0D-8I's REPORTED stimulus feature at the earliest
+        # delayed sample, which is not the q the component itself was evaluated
+        # at, so the angular size is deliberately not asserted here.
+        lplc2_peak = max(
+            candidate.samples, key=lambda s: s.lplc2_component_mV
+        )
+        assert lplc2_peak.lplc2_component_mV == pytest.approx(1.7, rel=1e-6)
+        # LC4 = C1 * q_dot, and C1 = 0.0002567 mV per deg/s.
+        assert candidate.peak_lc4_component_mV == pytest.approx(
+            0.121748, rel=1e-5
+        )
+        assert candidate.peak_lc4_component_mV < 1.7
+        # The weighted total, preserved from 3.0D-8H.
+        assert candidate.total_phenomenological_gf_drive_mV == pytest.approx(
+            2.510896, rel=1e-5
+        )
+        best = max(
+            candidate.samples, key=lambda s: s.weighted_gf_drive_mV
+        )
+        assert best.weighted_gf_drive_mV == pytest.approx(
+            candidate.total_phenomenological_gf_drive_mV, rel=1e-15
+        )
+        assert best.t_s == candidate.peak_time_s
+        # The TOTAL drive peaks LATER than LPLC2 does, at a larger angular
+        # size, because LC4 keeps rising as the object closes. So the drive peak
+        # is not the LPLC2 peak, and reporting the former as though it were the
+        # size-threshold response would be wrong. This is the published
+        # velocity-plus-size integration, visible in the sample times.
+        assert best.t_s > lplc2_peak.t_s
+        assert best.q_deg > lplc2_peak.q_deg
+        # The stimulus description is the real geometry, not a placeholder.
+        assert "arctan" in candidate.stimulus_description
+        assert "r/v" in candidate.stimulus_description
+
+    # --- component preservation ---
+
+    def test_3_components_are_preserved_from_8h_verbatim(self):
+        candidate = self._candidate()
+        components = candidate.components_mV()
+        assert set(components) == {
+            "lc4", "lplc2", "inhibitory_component_1", "inhibitory_component_2",
+        }
+        # Each reported peak is exactly the maximum of the corresponding
+        # 3.0D-8H field across the preserved samples. Nothing is rescaled,
+        # normalised, clipped or rounded.
+        assert components["lc4"] == max(
+            s.lc4_component_mV for s in candidate.samples
+        )
+        assert components["lplc2"] == max(
+            s.lplc2_component_mV for s in candidate.samples
+        )
+        assert components["inhibitory_component_1"] == max(
+            s.inhibitory_component_1_mV for s in candidate.samples
+        )
+        assert components["inhibitory_component_2"] == max(
+            s.inhibitory_component_2_mV for s in candidate.samples
+        )
+        # The underlying 3.0D-8H records are carried, so the evidence is
+        # auditable rather than summarised away.
+        assert len(candidate.samples) == 2001
+        assert len(candidate.times_s) == 2001
+        from biological_brain.dynamics.gf_sensory_drive import (
+            SensoryDriveSample,
+        )
+
+        assert all(
+            isinstance(sample, SensoryDriveSample)
+            for sample in candidate.samples
+        )
+        # The signed components survive, including the negative inhibitory one.
+        # Note the PEAK of a signed quantity is its maximum, not its magnitude,
+        # so a strongly inhibitory component can legitimately peak at or below
+        # zero. That is a fidelity property, not a bug.
+        assert candidate.peak_inhibitory_component_2_mV <= 0.0
+        assert candidate.peak_inhibitory_component_2_mV > -0.52
+        assert candidate.peak_inhibitory_component_1_mV == pytest.approx(
+            0.057549, rel=1e-5
+        )
+        # And the weighted contributions are still available on the samples.
+        assert any(
+            abs(sample.weighted_lc2 if False else sample.weighted_lplc2_mV)
+            > 0.0
+            for sample in candidate.samples
+        )
+
+    # --- peak-time preservation ---
+
+    def test_4_peak_time_is_preserved_not_interpolated(self):
+        candidate = self._candidate()
+        # The peak time is one of the evaluated sample times, exactly.
+        assert candidate.peak_time_s in candidate.times_s
+        # And it is the sample time of the maximum drive.
+        best = max(
+            candidate.samples, key=lambda s: s.weighted_gf_drive_mV
+        )
+        assert candidate.peak_time_s == best.t_s
+        assert candidate.times_s[candidate.samples.index(best)] == (
+            candidate.peak_time_s
+        )
+        # The 3.0D-8H delays are why the drive peak trails the stimulus peak:
+        # LPLC2 has a 19 ms delay and inhibitory component 1 has 37.5 ms, so a
+        # drive peak is not the same instant as the stimulus's maximum size.
+        stimulus = _eight_i_stimulus()
+        assert candidate.peak_time_s > 0.5
+        assert candidate.total_phenomenological_gf_drive_mV == pytest.approx(
+            2.510896, rel=1e-5
+        )
+        # A non-sample peak time is refused.
+        from biological_brain.dynamics.sensory_trigger import (
+            GFTriggerCandidate, SensoryTriggerError,
+        )
+
+        with pytest.raises(SensoryTriggerError):
+            GFTriggerCandidate(
+                looming_stimulus_present=True,
+                status=__import__(
+                    "biological_brain.dynamics.sensory_trigger",
+                    fromlist=["SensoryTriggerStatus"],
+                ).SensoryTriggerStatus.EVIDENCE_PRESENT,
+                peak_lc4_component_mV=0.1, peak_lplc2_component_mV=1.7,
+                peak_inhibitory_component_1_mV=0.05,
+                peak_inhibitory_component_2_mV=0.0,
+                total_phenomenological_gf_drive_mV=2.5,
+                peak_time_s=0.123456,  # not a sample time
+                times_s=(0.0, 0.001), samples=candidate.samples[:2],
+                stimulus_description="d",
+            )
+        # And a total that is not the max of the carried samples is refused, so
+        # the value cannot be tampered with between 8H and here.
+        with pytest.raises(SensoryTriggerError):
+            GFTriggerCandidate(
+                looming_stimulus_present=True,
+                status=__import__(
+                    "biological_brain.dynamics.sensory_trigger",
+                    fromlist=["SensoryTriggerStatus"],
+                ).SensoryTriggerStatus.EVIDENCE_PRESENT,
+                peak_lc4_component_mV=0.1, peak_lplc2_component_mV=1.7,
+                peak_inhibitory_component_1_mV=0.05,
+                peak_inhibitory_component_2_mV=0.0,
+                total_phenomenological_gf_drive_mV=99.0,  # not the max
+                peak_time_s=0.0, times_s=(0.0,),
+                samples=candidate.samples[:1], stimulus_description="d",
+            )
+
+    # --- determinism ---
+
+    def test_5_repeated_evaluation_is_deterministic(self):
+        first = self._candidate()
+        second = self._candidate()
+        # A frozen value object, so equality is meaningful.
+        assert first == second
+        assert first.summary() == second.summary()
+        assert first.to_consumer_dict() == second.to_consumer_dict()
+        assert first.samples == second.samples
+        assert first.times_s == second.times_s
+        assert first.peak_time_s == second.peak_time_s
+        # And a fresh 3.0D-8H drive instance gives the identical candidate.
+        from biological_brain.dynamics.gf_sensory_drive import (
+            PhenomenologicalGFDrive, published_ache_gf_coefficients,
+        )
+        from biological_brain.dynamics.sensory_trigger import (
+            gf_trigger_candidate_from_stimulus,
+        )
+
+        drive = PhenomenologicalGFDrive(
+            coefficients=published_ache_gf_coefficients()
+        )
+        stimulus = _eight_i_stimulus()
+        step = 1.9 / 2000
+        times = tuple(i * step for i in range(2001))
+        assert drive.evaluate_series(times, stimulus) == first.samples
+        # No random state was introduced.
+        assert "random" not in _eight_l_source().lower()
+
+    # --- THE BOUNDARY: it cannot be read as a GF AP ---
+
+    def test_6_the_result_cannot_be_interpreted_as_a_gf_ap(self):
+        import ast
+        import inspect
+
+        from biological_brain.dynamics import sensory_trigger
+        from biological_brain.dynamics.gfs_circuit import (
+            GFEventSource, GFSpikeEvent,
+            UnsupportedSensoryBiophysicalCoupling,
+        )
+
+        candidate = self._candidate()
+
+        # (a) It has no spike flag at all. Reading one is an AttributeError,
+        #     not a False, so a consumer cannot branch on it.
+        for absent in (
+            "ap_detected", "gf_ap_detected", "observed", "peak_time_ms",
+            "event_time_s", "source", "provenance", "all_finite",
+        ):
+            assert not hasattr(candidate, absent), absent
+        with pytest.raises(AttributeError):
+            candidate.ap_detected
+
+        # (b) The 3.0D-8I GFSpikeEvent field names are absent, so a candidate
+        #     cannot be passed where a spike event is expected.
+        for field in GFSpikeEvent.__dataclass_fields__:
+            assert not hasattr(candidate, field), field
+
+        # (c) Its own flags say no, in every form a consumer might read.
+        assert candidate.is_a_detected_gf_action_potential is False
+        assert candidate.is_a_spike is False
+        assert candidate.is_sensory_evidence_only is True
+        assert candidate.is_a_probability_of_escape is False
+        payload = candidate.to_consumer_dict()
+        assert payload["gf_ap_detected"] is None
+        assert payload["is_a_detected_gf_action_potential"] is False
+        assert payload["is_a_probability_of_escape"] is False
+        assert payload["kind"] == "gf_trigger_candidate"
+        assert "unresolved" in payload[
+            "unresolved_before_a_real_gf_ap"
+        ].lower()
+
+        # (d) Coupling raises the SAME typed exception 3.0D-8I uses, so the
+        #     seam is one exception type end to end, and the message explains
+        #     why rather than merely refusing.
+        with pytest.raises(UnsupportedSensoryBiophysicalCoupling) as excinfo:
+            candidate.couple_to_live_gf()
+        message = str(excinfo.value).lower()
+        assert "not a detected gf action potential" in message
+        assert "no threshold" in message
+        assert "within the gf" in message
+        assert "75 mohm" in message
+        # And it does NOT go through the 3.0D-8I entry point.
+        with pytest.raises(UnsupportedSensoryBiophysicalCoupling):
+            _eight_i_circuit().run_looming_through_live_circuit(
+                _eight_i_stimulus()
+            )
+
+        # (e) The promotion flags cannot be flipped.
+        for bad in (
+            {"is_a_detected_gf_action_potential": True},
+            {"is_sensory_evidence_only": False},
+            {"is_a_probability_of_escape": True},
+            {"has_evidence": False},
+        ):
+            kwargs = {
+                "looming_stimulus_present": True,
+                "status": sensory_trigger.SensoryTriggerStatus.EVIDENCE_PRESENT,
+                "peak_lc4_component_mV": 0.1, "peak_lplc2_component_mV": 1.7,
+                "peak_inhibitory_component_1_mV": 0.05,
+                "peak_inhibitory_component_2_mV": 0.0,
+                "total_phenomenological_gf_drive_mV": 2.5,
+                "peak_time_s": 0.0, "times_s": (0.0,),
+                "samples": candidate.samples[:1], "stimulus_description": "d",
+            }
+            kwargs.update(bad)
+            with pytest.raises(sensory_trigger.SensoryTriggerError):
+                sensory_trigger.GFTriggerCandidate(**kwargs)
+
+        # (f) NO new numeric biological constant: the module defines no
+        #     threshold, rheobase, probability, gain or conversion constant.
+        tokens = set()
+        for node in ast.walk(ast.parse(inspect.getsource(sensory_trigger))):
+            if isinstance(node, ast.Name):
+                tokens.add(node.id.lower())
+            elif isinstance(node, ast.Attribute):
+                tokens.add(node.attr.lower())
+            elif isinstance(node, ast.arg):
+                tokens.add(node.arg.lower())
+            elif isinstance(
+                node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+            ):
+                tokens.add(node.name.lower())
+            elif isinstance(node, ast.keyword) and node.arg:
+                tokens.add(node.arg.lower())
+        for banned in (
+            "threshold", "rheobase", "probability", "likelihood", "odds",
+            "gain", "coupling_factor", "mv_to_na", "input_resistance",
+            "probability_curve", "escape_probability",
+        ):
+            assert banned not in tokens, banned
+
+        # (g) It imports NO solver, NO circuit, and NO AP detector AT MODULE
+        #     LEVEL. The audit is on top-level statements only, because the
+        #     3.0D-8I import is deliberately made INSIDE the refusal below; a
+        #     whole-tree scan would find that and wrongly fail here.
+        import ast as _ast
+
+        tree = _ast.parse(inspect.getsource(sensory_trigger))
+        module_imports = []
+        for statement in tree.body:
+            if isinstance(statement, _ast.ImportFrom) and statement.module:
+                module_imports.append(statement.module)
+            elif isinstance(statement, _ast.Import):
+                module_imports.extend(a.name for a in statement.names)
+        joined = " ".join(module_imports)
+        assert "gf_sensory_drive" in joined
+        for banned in (
+            "gf_active", "ttmn_active", "psi_active", "dlmn_active",
+            "gfs_circuit", "escape_behavior", "chemical_synapse",
+            "electrical_coupling", "gf_equilibrium", "numpy", "random",
+        ):
+            assert banned not in joined, banned
+        # The 8I import happens only inside the refusal, so the ordinary
+        # sensory path never pulls in the solver stack.
+        couple = next(
+            node for node in _ast.walk(tree)
+            if isinstance(node, _ast.FunctionDef)
+            and node.name == "couple_to_live_gf"
+        )
+        couple_imports = [
+            node.module for node in _ast.walk(couple)
+            if isinstance(node, _ast.ImportFrom) and node.module
+        ]
+        assert couple_imports == ["gfs_circuit"], couple_imports
+
+        # (h) The factory refuses anything that is not a real 3.0D-8H stimulus.
+        for bad in (None, 1.0, "looming", object(), []):
+            with pytest.raises(sensory_trigger.SensoryTriggerError):
+                sensory_trigger.gf_trigger_candidate_from_stimulus(bad)
+        for bad_duration in (0.0, -1.0, float("nan")):
+            with pytest.raises(sensory_trigger.SensoryTriggerError):
+                sensory_trigger.gf_trigger_candidate_from_stimulus(
+                    _eight_i_stimulus(), duration_s=bad_duration
+                )
+        for bad_samples in (1, 0, 2.5, None):
+            with pytest.raises(sensory_trigger.SensoryTriggerError):
+                sensory_trigger.gf_trigger_candidate_from_stimulus(
+                    _eight_i_stimulus(), samples=bad_samples
+                )
+
+    def test_7_sources_are_recorded_and_prior_layers_are_unchanged(self):
+        from biological_brain.dynamics.sensory_trigger import (
+            SOURCE_ACHE_2019, SOURCE_AUGUSTIN_2019_SENSORY,
+            SOURCE_DEVINENI_SCAPLEN_2022, SOURCE_VON_REYN_2017,
+        )
+
+        # von Reyn et al. 2017 is the source that explains WHY the seam is
+        # where it is, and that is recorded with the decisive sentence.
+        assert "28641115" in SOURCE_VON_REYN_2017
+        assert "Neuron 94(6):1190-1204.e6" in SOURCE_VON_REYN_2017
+        assert "WITHIN THE GF" in SOURCE_VON_REYN_2017
+        assert "PROBABILISTIC" in SOURCE_VON_REYN_2017
+        assert "angular expansion velocity" in SOURCE_VON_REYN_2017
+        # Ache 2019 is the source of the components, and the record states it
+        # supplies no threshold.
+        assert "30827912" in SOURCE_ACHE_2019
+        assert "NO universal membrane-voltage threshold" in SOURCE_ACHE_2019
+        assert "PMC8770416" in SOURCE_DEVINENI_SCAPLEN_2022
+        assert "not itself a primary report" in SOURCE_DEVINENI_SCAPLEN_2022
+        assert "PMC6469880" in SOURCE_AUGUSTIN_2019_SENSORY
+        assert "no LC4 or LPLC2 sensory drive" in SOURCE_AUGUSTIN_2019_SENSORY
+        # All four are carried on the candidate.
+        references = self._candidate().source_references()
+        for source in (
+            SOURCE_ACHE_2019, SOURCE_VON_REYN_2017,
+            SOURCE_DEVINENI_SCAPLEN_2022, SOURCE_AUGUSTIN_2019_SENSORY,
+        ):
+            assert source in references, source[:50]
+
+        # 3.0D-8H's equations are untouched, which is where the numbers come
+        # from.
+        from biological_brain.dynamics.gf_sensory_drive import (
+            published_ache_gf_coefficients, published_ache_gf_delays,
+        )
+
+        coefficients = published_ache_gf_coefficients()
+        assert coefficients.c1_mV_per_deg_per_s == 0.0002567
+        assert coefficients.c2_mV == 1.7
+        assert coefficients.c3_deg == 42.0
+        assert published_ache_gf_delays().as_ms() == (19.0, 19.0, 37.5, 11.0)
+
+        # 3.0D-8J AP detection and 3.0D-8K motor semantics are untouched.
+        result = _eight_i_result(gap_ns=135.0)
+        assert result.response_timings["GF"].ap_detected is True
+        from biological_brain.dynamics.escape_behavior import (
+            escape_behavior_from_circuit,
+        )
+
+        behavior = escape_behavior_from_circuit(result)
+        assert behavior.escape_triggered is True
+        assert behavior.behavioral_labels() == (
+            "jump initiated", "wing depression initiated",
+        )
+        # A REAL escape still needs a real AP, and still carries a GF AP peak.
+        # 8L did not create a shortcut around that.
+        assert behavior.gf_ap_peak_time_s is not None
+        assert behavior.gf_ap_peak_time_s == (
+            result.response_timings["GF"].ap_peak_time_s
+        )
+        # And 7U / 8G are unchanged.
+        from biological_brain.source_reconciliation import (
+            get_source_reconciliation_registry,
+        )
+
+        for conflict_id in get_source_reconciliation_registry().unresolved():
+            assert get_source_reconciliation_registry().get(
+                conflict_id
+            ).preferred_side is None
+        from biological_brain.dynamics.chemical_synapse import (
+            PSI_DLMnChemicalSynapse,
+        )
+
+        assert PSI_DLMnChemicalSynapse().mechanism.peak_conductance_uS == (
+            pytest.approx(80.0)
+        )
+
+
+def _eight_l_source() -> str:
+    """The sensory_trigger module's source text, for the random-state audit."""
+    from biological_brain.dynamics import sensory_trigger
+
+    with open(sensory_trigger.__file__, encoding="utf-8") as handle:
+        return handle.read()
