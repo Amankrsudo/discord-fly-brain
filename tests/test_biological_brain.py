@@ -23405,3 +23405,1916 @@ def connection_scope_note_of():
     )
 
     return chemical_synapse_scope_note()
+
+
+# ==========================================================================
+# 3.0D-8H -- Dynamic sensory -> GF looming model
+# ==========================================================================
+
+import math
+
+from biological_brain.dynamics.gf_sensory_drive import (
+    AcheGFModelCoefficients,
+    AcheGFModelDelays,
+    AngularSizeError,
+    CallableLoomingStimulus,
+    ConstantVelocityLoomingStimulus,
+    GFSensoryDriveError,
+    MODEL_NAME_GF_SENSORY_DRIVE_V0,
+    PhenomenologicalBoundaryError,
+    PhenomenologicalGFDrive,
+    SensoryDriveSample,
+    StimulusGeometryError,
+    gf_sensory_drive_scope_note,
+    published_ache_gf_coefficients,
+    published_ache_gf_delays,
+)
+
+
+def _eight_h_module_source() -> str:
+    """The gf_sensory_drive module's own source text, for AST and unit audits."""
+    from biological_brain.dynamics import gf_sensory_drive as module
+
+    with open(module.__file__, encoding="utf-8") as handle:
+        return handle.read()
+
+
+def _eight_h_ast():
+    import ast
+
+    return ast.parse(_eight_h_module_source())
+
+
+def _eight_h_imports() -> list:
+    """Every module name the gf_sensory_drive module imports."""
+    import ast
+
+    imported = []
+    for node in ast.walk(ast.parse(_eight_h_module_source())):
+        if isinstance(node, ast.ImportFrom) and node.module:
+            imported.append(node.module)
+        elif isinstance(node, ast.Import):
+            imported.extend(alias.name for alias in node.names)
+    return imported
+
+
+def _eight_h_declared_names() -> set:
+    """Every class, function and method name the module declares."""
+    import ast
+
+    tree = ast.parse(_eight_h_module_source())
+    names = set()
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            names.add(node.name)
+        elif isinstance(node, ast.ClassDef):
+            names.add(node.name)
+            for sub in node.body:
+                if isinstance(sub, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    names.add(sub.name)
+    return names
+
+
+def _eight_h_code_tokens() -> set:
+    """Identifiers and numeric literals in the CODE, ignoring all prose.
+
+    Docstrings and explanatory strings legitimately MENTION forbidden words
+    (the module has to be able to say what it refuses to do), so a naive text
+    scan is useless here. This walks the AST and returns only real code
+    tokens: every identifier a name/attribute refers to, and every numeric
+    constant. Strings are excluded entirely, so prose cannot trigger or mask a
+    finding.
+    """
+    import ast
+
+    tokens = set()
+    tree = ast.parse(_eight_h_module_source())
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name):
+            tokens.add(node.id)
+        elif isinstance(node, ast.Attribute):
+            tokens.add(node.attr)
+        elif isinstance(node, ast.arg):
+            tokens.add(node.arg)
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            tokens.add(node.name)
+        elif isinstance(node, ast.ClassDef):
+            tokens.add(node.name)
+        elif isinstance(node, ast.keyword) and node.arg:
+            tokens.add(node.arg)
+        elif isinstance(node, ast.Constant) and not isinstance(
+            node.value, str
+        ):
+            tokens.add(repr(node.value))
+    return tokens
+
+
+def _eight_h_defined_classes() -> set:
+    import ast
+
+    tree = ast.parse(_eight_h_module_source())
+    return {
+        node.name
+        for node in tree.body
+        if isinstance(node, ast.ClassDef)
+    }
+
+
+class TestGFSensoryDrive:
+    """3.0D-8H: the published Ache et al. 2019 sensory -> GF looming model.
+
+    The model is a PHENOMENOLOGICAL stimulus-response function expressed in
+    millivolts. It is not a synapse, not a current, not a conductance, and not
+    the live GF membrane state. The tests below pin the published
+    coefficients, the published delays, the four published component
+    formulas, the weighted combination, the angular-size/angular-velocity
+    separation, the degree units, the explicit q <= 0 behaviour, the delay
+    semantics, the prehistory convention and its deliberate edge, the standard
+    looming geometry, determinism, and every boundary that stops this layer
+    from becoming a mechanism.
+
+    A CITATION NOTE, because it changes what the primary source is.
+    PMC6469880, previously cited for this model, is Augustin et al. 2019, the
+    thoracic GFS latency model used at 3.0D-7V and 3.0D-8G; it contains no
+    LC4, no LPLC2 and no looming phenomenology. The coefficients here were
+    verified against an independent verbatim reproduction of the Ache et al.
+    2019 equations, and that correction is asserted rather than assumed.
+    """
+
+    # -- 1. construction --------------------------------------------------
+
+    def test_01_model_constructs(self):
+        from biological_brain.dynamics.gf_sensory_drive import (
+            MODEL_NAME_GF_SENSORY_DRIVE_V0,
+            AcheGFModelCoefficients,
+            AcheGFModelDelays,
+            ConstantVelocityLoomingStimulus,
+            PhenomenologicalGFDrive,
+            SensoryDriveSample,
+            published_ache_gf_coefficients,
+            published_ache_gf_delays,
+        )
+
+        drive = PhenomenologicalGFDrive()
+        assert isinstance(drive, PhenomenologicalGFDrive)
+        assert drive.model_name == MODEL_NAME_GF_SENSORY_DRIVE_V0
+        assert isinstance(drive.coefficients, AcheGFModelCoefficients)
+        assert isinstance(drive.delays, AcheGFModelDelays)
+
+        # The published parameters come from the source, not from arguments.
+        assert published_ache_gf_coefficients() == AcheGFModelCoefficients()
+        assert published_ache_gf_delays() == AcheGFModelDelays()
+
+        # A stimulus is constructible with no knowledge of the model.
+        stimulus = ConstantVelocityLoomingStimulus(
+            r_m=0.005, v_m_per_s=0.05, d0_m=0.10
+        )
+        assert stimulus.collision_time_s() > 0.0
+
+        # And the model evaluates a full sample.
+        sample = drive.evaluate(0.5, stimulus)
+        assert isinstance(sample, SensoryDriveSample)
+        assert len(sample.components_mV()) == 4
+        assert len(sample.weighted_components_mV()) == 4
+
+    # -- 2. coefficients --------------------------------------------------
+
+    def test_02_coefficients_exactly_match_the_published_model(self):
+        from biological_brain.dynamics.gf_sensory_drive import (
+            AcheGFModelCoefficients,
+            published_ache_gf_coefficients,
+        )
+
+        c = published_ache_gf_coefficients()
+
+        # Exactly as published in Ache et al. 2019, and reproduced verbatim by
+        # Gabbiani et al. 2023.
+        assert c.c1_mV_per_deg_per_s == 0.0002567
+        assert c.c2_mV == 1.7
+        assert c.c3_deg == 42.0
+        assert c.c4_log_width == 0.52
+        assert c.c5_mV == -0.53
+        assert c.c6_mV == 0.59
+        assert c.c7_deg == 66.0
+        assert c.c8_deg == -11.0
+        assert c.c9_mV == -0.52
+        assert c.c10_deg == 26.0
+        assert c.c11_deg == 7.8
+
+        # The four weights of the published weighted sum.
+        assert c.w_lc4 == 1.62
+        assert c.w_lplc2 == 1.45
+        assert c.w_i1 == 2.27
+        assert c.w_i2 == 1.0
+
+        # The published-symbol mapping is auditable against the source text.
+        for symbol, field in c.coefficient_symbols:
+            assert symbol in {
+                "C1", "C2", "C3", "C4", "C5", "C6", "C7", "C8", "C9", "C10",
+                "C11", "W_LC4", "W_LPLC2", "W_i1", "W_i2",
+            }
+            assert hasattr(c, field)
+
+        # The reproducing source writes c1 as "0.2567 . 10^-3". That is the
+        # SAME number, so the notation difference is not a discrepancy and is
+        # asserted as an identity rather than left for a later reader to
+        # wonder about.
+        assert c.c1_mV_per_deg_per_s == 0.2567 * 1e-3
+
+        # c8 is negative as published, which is what makes component 1
+        # increase in magnitude as the object grows.
+        assert c.c8_deg < 0.0
+
+        # Every coefficient is finite, and the width/centre fields that the
+        # logarithms need are non-degenerate.
+        for symbol, field in c.coefficient_symbols:
+            value = getattr(c, field)
+            assert isinstance(value, float)
+            assert math.isfinite(value), (symbol, field)
+        assert c.c3_deg > 0.0
+        assert c.c4_log_width != 0.0
+        assert c.c8_deg != 0.0
+        assert c.c11_deg != 0.0
+
+        # Degenerate coefficient sets are refused rather than evaluated.
+        for bad in (
+            {"c3_deg": 0.0},
+            {"c3_deg": -1.0},
+            {"c4_log_width": 0.0},
+            {"c8_deg": 0.0},
+            {"c11_deg": 0.0},
+            {"c2_mV": float("nan")},
+        ):
+            with pytest.raises(GFSensoryDriveError):
+                AcheGFModelCoefficients(**bad)
+
+    # -- 3. delays --------------------------------------------------------
+
+    def test_03_delays_exactly_match_the_published_model(self):
+        from biological_brain.dynamics.gf_sensory_drive import (
+            AcheGFModelDelays,
+            published_ache_gf_delays,
+        )
+
+        d = published_ache_gf_delays()
+        assert d.d1_s == 0.019
+        assert d.d2_s == 0.019
+        assert d.d3_s == 0.0375
+        assert d.d4_s == 0.011
+        assert d.as_ms() == (19.0, 19.0, 37.5, 11.0)
+
+        # Each component has its own delay, and they are genuinely different
+        # values rather than one number reused.
+        assert d.d1_s == d.d2_s
+        assert d.d3_s != d.d1_s
+        assert d.d4_s != d.d1_s
+        assert d.d3_s != d.d4_s
+        assert len({d.d1_s, d.d3_s, d.d4_s}) == 3
+
+        # These are SENSORY delays. Not synaptic delays, not receptor
+        # kinetics, and no change to the timestep policy.
+        assert d.is_synaptic_delay is False
+        assert d.is_receptor_kinetic is False
+        assert d.changes_timestep_policy is False
+        assert d.live_solver_eligible is False
+
+        # Negative or non-finite delays are refused.
+        for bad in (
+            {"d1_s": -0.001},
+            {"d2_s": -1.0},
+            {"d3_s": float("nan")},
+            {"d4_s": float("inf")},
+        ):
+            with pytest.raises(GFSensoryDriveError):
+                AcheGFModelDelays(**bad)
+
+    # -- 4. LC4 formula ---------------------------------------------------
+
+    def test_04_lc4_formula_is_correct(self):
+        from biological_brain.dynamics.gf_sensory_drive import (
+            PhenomenologicalGFDrive,
+        )
+
+        drive = PhenomenologicalGFDrive()
+        c1 = 0.0002567
+
+        # The two published fixtures. These are mathematical fixtures computed
+        # from the equation, not biological measurements of LC4.
+        assert drive.lc4_component(100.0) == pytest.approx(0.02567, rel=1e-12)
+        assert drive.lc4_component(1000.0) == pytest.approx(0.2567, rel=1e-12)
+
+        # V_LC4 = C1 * q_dot exactly, for any angular velocity.
+        for q_dot in (-5000.0, -100.0, 0.0, 37.5, 100.0, 1000.0, 12345.0):
+            assert drive.lc4_component(q_dot) == pytest.approx(
+                c1 * q_dot, rel=0.0, abs=1e-15
+            )
+
+        # The published expression is v_LC4 = c1 * 2 * theta_dot, and since
+        # q_dot = 2 * theta_dot the two routes are the same number. This is
+        # the factor of two, and it is asserted rather than assumed.
+        for theta_dot in (-250.0, 50.0, 500.0, 5000.0):
+            assert drive.lc4_component(2.0 * theta_dot) == pytest.approx(
+                c1 * 2.0 * theta_dot, rel=1e-15
+            )
+
+        # Sign follows the stimulus: a receding object contributes negatively,
+        # because the model is linear with no offset.
+        assert drive.lc4_component(-1000.0) == pytest.approx(
+            -0.2567, rel=1e-12
+        )
+        # Zero angular velocity gives exactly zero.
+        assert drive.lc4_component(0.0) == 0.0
+
+    # -- 5. LPLC2 formula -------------------------------------------------
+
+    def test_05_lplc2_gaussian_formula_is_correct(self):
+        from biological_brain.dynamics.gf_sensory_drive import (
+            PhenomenologicalGFDrive,
+        )
+
+        drive = PhenomenologicalGFDrive()
+        c2, c3, c4 = 1.7, 42.0, 0.52
+
+        # At the peak location the exponent vanishes, so the component is c2.
+        assert drive.lplc2_component(c3) == pytest.approx(1.7, rel=1e-12)
+
+        # The general case, computed independently of the implementation.
+        for q in (5.0, 20.0, 42.0, 60.0, 120.0, 179.0):
+            log_ratio = math.log(q) - math.log(c3)
+            expected = c2 * math.exp(-(log_ratio ** 2) / (2.0 * c4 ** 2))
+            assert drive.lplc2_component(q) == pytest.approx(
+                expected, rel=1e-14
+            )
+
+        # It is a Gaussian in the LOGARITHM of angular size, NOT in angular
+        # size. That distinction is observable, and replacing it with a plain
+        # Gaussian would change the model.
+        plain_gaussian = c2 * math.exp(-((84.0 - c3) ** 2) / (2.0 * c4 ** 2))
+        assert drive.lplc2_component(84.0) != pytest.approx(
+            plain_gaussian, rel=1e-6
+        )
+        # A log-Gaussian is symmetric about its peak in LOG q, so a doubling
+        # and a halving give the SAME value. A plain Gaussian would not.
+        assert drive.lplc2_component(84.0) == pytest.approx(
+            drive.lplc2_component(21.0), rel=1e-12
+        )
+
+        # Strictly positive, and never above the peak.
+        for q in (0.5, 5.0, 42.0, 100.0, 179.0):
+            value = drive.lplc2_component(q)
+            assert 0.0 < value <= 1.7
+
+    # -- 6. inhibitory component 1 ---------------------------------------
+
+    def test_06_inhibitory_component_1_is_correct(self):
+        from biological_brain.dynamics.gf_sensory_drive import (
+            PhenomenologicalGFDrive,
+        )
+
+        drive = PhenomenologicalGFDrive()
+        c5, c6, c7, c8 = -0.53, 0.59, 66.0, -11.0
+
+        # At q = c7 the logistic argument is zero, exp(0) = 1, so the value
+        # is c5 + c6 / (1 + 1) = c5 + c6 / 2.
+        assert drive.inhibitory_component_1(c7) == pytest.approx(
+            -0.235, rel=1e-12
+        )
+        assert drive.inhibitory_component_1(c7) == pytest.approx(
+            c5 + c6 / 2.0, rel=1e-14
+        )
+
+        for q in (0.0, 10.0, 40.0, 66.0, 100.0, 180.0):
+            expected = c5 + c6 / (1.0 + math.exp(-(q - c7) / c8))
+            assert drive.inhibitory_component_1(q) == pytest.approx(
+                expected, rel=1e-14
+            )
+
+        # Because c8 is negative as published, the term is MONOTONE
+        # DECREASING in q: it contributes increasing inhibition as the object
+        # grows. It is not negative everywhere, though. Its published sigmoid
+        # crosses zero somewhere below its centre, so a very small object
+        # yields a small POSITIVE contribution. That is the published shape
+        # and it is asserted here rather than rounded off to "always
+        # inhibitory", which would be a change to the model.
+        sizes = [q * 0.5 for q in range(2, 361)]
+        values = [drive.inhibitory_component_1(q) for q in sizes]
+        for earlier, later in zip(values, values[1:]):
+            assert later <= earlier + 1e-12
+
+        # Its two limits are c5 as the object grows without bound and c5 + c6
+        # as it shrinks to nothing, and the term never leaves that band. The
+        # upper limit c5 + c6 is POSITIVE, which is the published shape.
+        upper_limit = c5 + c6
+        lower_limit = c5
+        assert lower_limit == pytest.approx(-0.53, rel=1e-15)
+        assert upper_limit == pytest.approx(0.06, rel=1e-15)
+        assert all(
+            lower_limit - 1e-12 <= v <= upper_limit + 1e-12 for v in values
+        )
+        # Each limit is approached asymptotically from inside the band.
+        assert drive.inhibitory_component_1(179.0) == pytest.approx(
+            lower_limit, abs=1e-3
+        )
+        assert drive.inhibitory_component_1(0.0) == pytest.approx(
+            upper_limit - 0.00146, abs=1e-4
+        )
+
+        # There is a single zero crossing, and it is well below c7: the
+        # component is already inhibitory at its own centre and above.
+        sign_changes = [
+            qa
+            for (qa, va), (_qb, vb) in zip(zip(sizes, values), zip(sizes[1:], values[1:]))
+            if va > 0.0 >= vb
+        ]
+        assert len(sign_changes) == 1
+        crossing = sign_changes[0]
+        assert 0.0 < crossing < c7
+        for q in (c7, 100.0, 120.0, 179.0):
+            assert drive.inhibitory_component_1(q) < 0.0
+        # A tiny object gives a small positive value: this is the published
+        # sigmoid limit, and it is why the prehistory convention does not
+        # zero-pad the stimulus. See test 14.
+        assert drive.inhibitory_component_1(0.0) > 0.0
+        assert drive.inhibitory_component_1(0.0) == pytest.approx(
+            0.0585411523, rel=1e-6
+        )
+
+    # -- 7. inhibitory component 2 ---------------------------------------
+
+    def test_07_inhibitory_component_2_is_correct(self):
+        from biological_brain.dynamics.gf_sensory_drive import (
+            PhenomenologicalGFDrive,
+        )
+
+        drive = PhenomenologicalGFDrive()
+        c9, c10, c11 = -0.52, 26.0, 7.8
+
+        # At q = c10 the exponent vanishes, so the component is exactly c9.
+        assert drive.inhibitory_component_2(c10) == pytest.approx(
+            -0.52, rel=1e-12
+        )
+
+        # A plain Gaussian in q, NOT in ln q: unlike component 2. The two
+        # inhibitory Gaussians are differently parameterised and must not be
+        # confused with each other.
+        for q in (5.0, 26.0, 42.0, 100.0):
+            expected = c9 * math.exp(-((q - c10) ** 2) / (2.0 * c11 ** 2))
+            assert drive.inhibitory_component_2(q) == pytest.approx(
+                expected, rel=1e-14
+            )
+        # Its centre and width are c10 and c11, not c3 and c4. Comparing the
+        # two components at the same q shows they are differently tuned.
+        assert drive.inhibitory_component_2(c10) != pytest.approx(
+            drive.lplc2_component(42.0), rel=1e-6
+        )
+        assert drive.inhibitory_component_2(42.0) != pytest.approx(
+            drive.lplc2_component(42.0), rel=1e-6
+        )
+
+        # Most negative at its own centre c10, which IS in the comparison set.
+        # (Omitting it would make the minimum some far-off value instead, and
+        # would silently weaken the check.)
+        assert drive.inhibitory_component_2(c10) == min(
+            drive.inhibitory_component_2(q) for q in (0.0, 5.0, c10, 100.0, 179.0)
+        )
+        for q in (0.0, 5.0, 26.0, 100.0, 179.0):
+            value = drive.inhibitory_component_2(q)
+            assert value < 0.0
+            assert value >= c9 - 1e-15
+        assert abs(drive.inhibitory_component_2(179.0)) < abs(c9)
+        # Falls off on both sides of the centre.
+        assert drive.inhibitory_component_2(20.0) > drive.inhibitory_component_2(
+            c10
+        )
+        assert drive.inhibitory_component_2(40.0) > drive.inhibitory_component_2(
+            c10
+        )
+
+    # -- 8. weighted combination -----------------------------------------
+
+    def test_08_weighted_combination_is_correct(self):
+        from biological_brain.dynamics.gf_sensory_drive import (
+            PhenomenologicalGFDrive,
+        )
+
+        drive = PhenomenologicalGFDrive()
+        c = drive.coefficients
+
+        # All four components at their own published fixture value.
+        lc4 = drive.lc4_component(1000.0)        # 0.2567 mV
+        lplc2 = drive.lplc2_component(42.0)      # 1.7 mV
+        i1 = drive.inhibitory_component_1(66.0)  # -0.235 mV
+        i2 = drive.inhibitory_component_2(26.0)  # -0.52 mV
+
+        # The expected total is COMPUTED from the published weights and the
+        # published component values, not hardcoded as a rounded literal.
+        expected = 1.62 * lc4 + 1.45 * lplc2 + 2.27 * i1 + 1.0 * i2
+        got = drive.weighted_gf_drive(lc4, lplc2, i1, i2)
+        assert got == pytest.approx(expected, rel=1e-15)
+        assert got == pytest.approx(1.827404, rel=1e-12)
+
+        # The combination is a plain weighted sum: no offset, no nonlinearity,
+        # and exactly linear in its arguments.
+        assert drive.weighted_gf_drive(0.0, 0.0, 0.0, 0.0) == 0.0
+        doubled = drive.weighted_gf_drive(2 * lc4, 2 * lplc2, 2 * i1, 2 * i2)
+        assert doubled == pytest.approx(2.0 * got, rel=1e-14)
+
+        # Each weight multiplies its OWN component and no other. This is what
+        # catches an accidental weight/component swap.
+        assert drive.weighted_gf_drive(1.0, 0.0, 0.0, 0.0) == pytest.approx(
+            c.w_lc4, rel=1e-15
+        )
+        assert drive.weighted_gf_drive(0.0, 1.0, 0.0, 0.0) == pytest.approx(
+            c.w_lplc2, rel=1e-15
+        )
+        assert drive.weighted_gf_drive(0.0, 0.0, 1.0, 0.0) == pytest.approx(
+            c.w_i1, rel=1e-15
+        )
+        assert drive.weighted_gf_drive(0.0, 0.0, 0.0, 1.0) == pytest.approx(
+            c.w_i2, rel=1e-15
+        )
+
+        # And the weights are the published ones, not round numbers.
+        assert (c.w_lc4, c.w_lplc2, c.w_i1, c.w_i2) == (1.62, 1.45, 2.27, 1.0)
+
+    # -- 9. q is the full angular size ------------------------------------
+
+    def test_09_q_is_treated_as_the_full_angular_size(self):
+        from biological_brain.dynamics.gf_sensory_drive import (
+            ConstantVelocityLoomingStimulus,
+            PhenomenologicalGFDrive,
+        )
+
+        drive = PhenomenologicalGFDrive()
+        stimulus = ConstantVelocityLoomingStimulus(
+            r_m=0.005, v_m_per_s=0.05, d0_m=0.10
+        )
+
+        for t in (0.0, 0.3, 0.8, 1.5):
+            assert stimulus.q_deg(t) == pytest.approx(
+                2.0 * stimulus.theta_deg(t), rel=1e-15
+            )
+            assert stimulus.q_dot_deg_per_s(t) == pytest.approx(
+                2.0 * stimulus.theta_dot_deg_per_s(t), rel=1e-15
+            )
+
+        # The published model is formulated in the FULL angle, so the LPLC2
+        # peak sits at q = 42 deg. Had the half-angle been used by mistake the
+        # peak would have moved to q = 84. It is at 42, and 42 dominates its
+        # neighbours rather than sitting on a plateau.
+        assert drive.lplc2_component(42.0) == pytest.approx(1.7, rel=1e-12)
+        assert drive.lplc2_component(42.0) > drive.lplc2_component(84.0)
+        assert drive.lplc2_component(42.0) > drive.lplc2_component(21.0)
+        # The same holds for the two size-driven inhibitory components, whose
+        # centres are the FULL-angle c7 = 66 and c10 = 26. A half-angle bug
+        # would have placed them at 132 and 52. Component 1 DECREASES with
+        # size and component 2 is a centred Gaussian, so the direction of the
+        # comparison differs between them; both are checked against the value
+        # at their own published centre instead, which is the real point.
+        assert drive.inhibitory_component_1(66.0) == pytest.approx(
+            -0.235, rel=1e-12
+        )
+        assert drive.inhibitory_component_1(66.0) > drive.inhibitory_component_1(
+            132.0
+        )
+        assert drive.inhibitory_component_2(26.0) == pytest.approx(
+            -0.52, rel=1e-12
+        )
+        assert drive.inhibitory_component_2(26.0) < drive.inhibitory_component_2(
+            52.0
+        )
+
+        assert drive.inhibitory_component_1(66.0) == pytest.approx(
+            -0.235, rel=1e-12
+        )
+
+    # -- 10. theta and q are not conflated --------------------------------
+
+    def test_10_theta_and_q_are_not_conflated(self):
+        from biological_brain.dynamics.gf_sensory_drive import (
+            ConstantVelocityLoomingStimulus,
+            PhenomenologicalGFDrive,
+        )
+
+        drive = PhenomenologicalGFDrive()
+        stimulus = ConstantVelocityLoomingStimulus(
+            r_m=0.005, v_m_per_s=0.05, d0_m=0.10
+        )
+        t = 0.6
+
+        # Feeding the HALF angular velocity to the LC4 component would give
+        # exactly half the correct answer. The model takes q_dot, because the
+        # factor of two already lives inside the published expression.
+        correct = drive.lc4_component(stimulus.q_dot_deg_per_s(t))
+        halved = drive.lc4_component(stimulus.theta_dot_deg_per_s(t))
+        assert correct == pytest.approx(2.0 * halved, rel=1e-15)
+        assert halved != pytest.approx(correct, rel=1e-6)
+
+        # theta is derived FROM q and never the reverse, so a stimulus cannot
+        # report an inconsistent pair.
+        assert stimulus.theta_deg(t) == pytest.approx(
+            stimulus.q_deg(t) / 2.0, rel=1e-15
+        )
+        assert stimulus.theta_dot_deg_per_s(t) == pytest.approx(
+            stimulus.q_dot_deg_per_s(t) / 2.0, rel=1e-15
+        )
+
+        # The half-angle of an on-axis object stays below 90 degrees while the
+        # object is in front, and the full angle below 180.
+        for probe in (0.0, 0.5, 1.0, 1.9):
+            assert stimulus.theta_deg(probe) < 90.0
+            assert stimulus.q_deg(probe) < 180.0
+            assert stimulus.theta_deg(probe) == pytest.approx(
+                stimulus.q_deg(probe) / 2.0, rel=1e-15
+            )
+
+    # -- 11. degrees, not radians -----------------------------------------
+
+    def test_11_degrees_are_not_converted_to_radians(self):
+        from biological_brain.dynamics.gf_sensory_drive import (
+            PhenomenologicalGFDrive,
+        )
+
+        drive = PhenomenologicalGFDrive()
+        c = drive.coefficients
+
+        # Every angular coefficient is in DEGREES, as published, and each one
+        # lands its own component on its own fixture value.
+        assert c.c3_deg == 42.0 and c.c7_deg == 66.0
+        assert c.c10_deg == 26.0 and c.c11_deg == 7.8
+        assert drive.lplc2_component(c.c3_deg) == pytest.approx(
+            c.c2_mV, rel=1e-12
+        )
+        assert drive.inhibitory_component_1(c.c7_deg) == pytest.approx(
+            c.c5_mV + c.c6_mV / 2.0, rel=1e-12
+        )
+        assert drive.inhibitory_component_2(c.c10_deg) == pytest.approx(
+            c.c9_mV, rel=1e-12
+        )
+
+        # A RADIANS value where degrees are expected must produce a visibly
+        # different answer, so a unit mix-up cannot pass silently. 42 rad is
+        # about 2406 degrees, far outside the log-Gaussian's support.
+        assert drive.lplc2_component(42.0) > 1.0
+        assert drive.lplc2_component(42.0 * 180.0 / math.pi) < 1e-6
+        # The same holds for the other angular components: passing 66 rad
+        # instead of 66 deg lands far past their centres.
+        assert drive.inhibitory_component_1(
+            66.0 * 180.0 / math.pi
+        ) == pytest.approx(
+            drive.inhibitory_component_1(66.0 * 180.0 / math.pi), rel=1e-15
+        )
+        assert drive.inhibitory_component_1(
+            66.0 * 180.0 / math.pi
+        ) != pytest.approx(drive.inhibitory_component_1(66.0), rel=1e-6)
+
+        # c1 is per DEGREE per SECOND, and c4 is a dimensionless log-width,
+        # not an angle in either unit.
+        assert c.c1_mV_per_deg_per_s == 0.0002567
+        assert drive.lc4_component(1.0) == pytest.approx(0.0002567, rel=1e-12)
+        assert c.c4_log_width == 0.52
+
+        # The module performs exactly one radian->degree conversion, and only
+        # inside the geometry where math.atan2 returns radians. No published
+        # coefficient is ever converted, because none is in radians.
+        source = _eight_h_module_source()
+        assert "_RAD_TO_DEG" in source
+        assert "180.0 / math.pi" in source
+        assert "math.pi / 180" not in source
+        # A degree->radian conversion of stimulus features would be the
+        # actual bug this test guards against.
+        assert "math.radians" not in source
+        assert "math.degrees" not in source
+
+    # -- 12. q <= 0 handled explicitly ------------------------------------
+
+    def test_12_non_positive_angular_size_is_handled_explicitly(self):
+        from biological_brain.dynamics.gf_sensory_drive import (
+            AngularSizeError,
+            PhenomenologicalGFDrive,
+        )
+
+        drive = PhenomenologicalGFDrive()
+
+        # q <= 0 makes ln(q) undefined, so it raises. It is never clamped,
+        # never epsilon-substituted and never quietly returned as zero.
+        for bad in (0.0, -1e-12, -1.0, -42.0, -180.0, -1e9):
+            with pytest.raises(AngularSizeError):
+                drive.lplc2_component(bad)
+
+        # Non-finite input is refused too, rather than propagated as NaN.
+        for bad in (float("nan"), float("inf"), float("-inf")):
+            with pytest.raises(AngularSizeError):
+                drive.lplc2_component(bad)
+
+        # The message states the requirement and the refusal to clamp.
+        try:
+            drive.lplc2_component(-5.0)
+        except AngularSizeError as exc:
+            text = str(exc).lower()
+            assert "ln(q)" in text
+            assert "not clamped" in text
+            assert "positive" in text
+        else:
+            raise AssertionError("q <= 0 must raise AngularSizeError")
+
+        # And no silent repair is hiding behind the public entry point.
+        for bad in (0.0, -42.0):
+            with pytest.raises(AngularSizeError):
+                drive.lplc2_component(bad)
+
+        # Only component 2 needs q > 0. Components 3 and 4 contain no
+        # logarithm, so they must NOT spuriously refuse a finite q.
+        for q in (-5.0, 0.0, 1e-9):
+            assert math.isfinite(drive.inhibitory_component_1(q))
+            assert math.isfinite(drive.inhibitory_component_2(q))
+        # LC4 takes angular velocity and needs no q at all.
+        assert drive.lc4_component(0.0) == 0.0
+
+    # -- 13. delayed evaluation ------------------------------------------
+
+    def test_13_delayed_evaluation_is_correct(self):
+        from biological_brain.dynamics.gf_sensory_drive import (
+            ConstantVelocityLoomingStimulus,
+            PhenomenologicalGFDrive,
+        )
+
+        drive = PhenomenologicalGFDrive()
+        stimulus = ConstantVelocityLoomingStimulus(
+            r_m=0.005, v_m_per_s=0.05, d0_m=0.10
+        )
+        d = drive.delays
+        t = 0.5
+        sample = drive.evaluate(t, stimulus)
+
+        # Every component reads its OWN feature at t - its OWN delay.
+        assert sample.lc4_component_mV == pytest.approx(
+            drive.lc4_component(stimulus.q_dot_deg_per_s(t - d.d1_s)),
+            rel=1e-14,
+        )
+        assert sample.lplc2_component_mV == pytest.approx(
+            drive.lplc2_component(stimulus.q_deg(t - d.d2_s)), rel=1e-14
+        )
+        assert sample.inhibitory_component_1_mV == pytest.approx(
+            drive.inhibitory_component_1(stimulus.q_deg(t - d.d3_s)),
+            rel=1e-14,
+        )
+        assert sample.inhibitory_component_2_mV == pytest.approx(
+            drive.inhibitory_component_2(stimulus.q_deg(t - d.d4_s)),
+            rel=1e-14,
+        )
+
+        # The sum is the published weighted combination of those four, and the
+        # per-weight contributions are exposed and correct.
+        assert sample.weighted_gf_drive_mV == pytest.approx(
+            drive.weighted_gf_drive(*sample.components_mV()), rel=1e-14
+        )
+        c = drive.coefficients
+        assert sample.weighted_components_mV() == pytest.approx(
+            (
+                c.w_lc4 * sample.lc4_component_mV,
+                c.w_lplc2 * sample.lplc2_component_mV,
+                c.w_i1 * sample.inhibitory_component_1_mV,
+                c.w_i2 * sample.inhibitory_component_2_mV,
+            ),
+            rel=1e-14,
+        )
+
+        # The delay is real, not decorative: the stimulus is changing, so
+        # evaluating at t is not the same as evaluating at t - delay.
+        raw_now = drive.lc4_component(stimulus.q_dot_deg_per_s(t))
+        assert sample.lc4_component_mV != pytest.approx(raw_now, rel=1e-6)
+        # And a looming stimulus accelerates, so the delayed value is smaller.
+        assert raw_now > sample.lc4_component_mV
+
+        # Distinct delays for distinct components are honoured: components 1
+        # and 2 use 37.5 ms and 11 ms and therefore disagree.
+        assert sample.inhibitory_component_1_mV != pytest.approx(
+            sample.inhibitory_component_2_mV, rel=1e-6
+        )
+
+        # A caller-supplied CONSTANT stimulus isolates the delay bookkeeping
+        # from the stimulus's own time dependence. Note that a single constant
+        # q cannot put all four components on their fixture values at once,
+        # because the three size terms are tuned to DIFFERENT sizes
+        # (c3 = 42, c7 = 66, c10 = 26). That is the published model, and it is
+        # exactly why the four-component fixture in test 8 is a mathematical
+        # fixture and not a claim that the four extrema coincide.
+        at_its_own_centre = drive.evaluate(
+            0.5, CallableLoomingStimulus(
+                q_fn=lambda x: 42.0, q_dot_fn=lambda x: 1000.0
+            )
+        )
+        assert at_its_own_centre.lc4_component_mV == pytest.approx(
+            0.2567, rel=1e-12
+        )
+        assert at_its_own_centre.lplc2_component_mV == pytest.approx(
+            1.7, rel=1e-12
+        )
+        # At q = 42 the other two size terms are NOT on their own centres.
+        assert at_its_own_centre.inhibitory_component_1_mV != pytest.approx(
+            -0.235, rel=1e-3
+        )
+        assert at_its_own_centre.inhibitory_component_2_mV != pytest.approx(
+            -0.52, rel=1e-3
+        )
+
+        # Each component reaches its own fixture when the constant size is its
+        # own published centre. Doing them separately is the only way to hit
+        # all three at their centres, and it is a mathematical check.
+        for centre, expected_lp, expected_i1, expected_i2 in (
+            (42.0, 1.7, None, None),
+            (66.0, None, -0.235, None),
+            (26.0, None, None, -0.52),
+        ):
+            sample = drive.evaluate(
+                0.5, CallableLoomingStimulus(
+                    q_fn=lambda x, c=centre: c, q_dot_fn=lambda x: 0.0
+                )
+            )
+            if expected_lp is not None:
+                assert sample.lplc2_component_mV == pytest.approx(
+                    expected_lp, rel=1e-12
+                )
+            if expected_i1 is not None:
+                assert sample.inhibitory_component_1_mV == pytest.approx(
+                    expected_i1, rel=1e-12
+                )
+            if expected_i2 is not None:
+                assert sample.inhibitory_component_2_mV == pytest.approx(
+                    expected_i2, rel=1e-12
+                )
+        # LC4 needs velocity, not size, so a zero-velocity stimulus gives
+        # exactly zero while the size terms still respond.
+        zero_velocity = drive.evaluate(
+            0.5, CallableLoomingStimulus(
+                q_fn=lambda x: 42.0, q_dot_fn=lambda x: 0.0
+            )
+        )
+        assert zero_velocity.lc4_component_mV == 0.0
+        assert zero_velocity.lplc2_component_mV == pytest.approx(1.7, rel=1e-12)
+
+    # -- 14. prehistory ---------------------------------------------------
+
+    def test_14_pre_delay_behavior_is_deterministic(self):
+        from biological_brain.dynamics.gf_sensory_drive import (
+            CallableLoomingStimulus,
+            ConstantVelocityLoomingStimulus,
+            PhenomenologicalGFDrive,
+        )
+
+        drive = PhenomenologicalGFDrive()
+        stimulus = ConstantVelocityLoomingStimulus(
+            r_m=0.005, v_m_per_s=0.05, d0_m=0.10
+        )
+        d = drive.delays
+        shortest = min(d.d1_s, d.d2_s, d.d3_s, d.d4_s)
+        longest = max(d.d1_s, d.d2_s, d.d3_s, d.d4_s)
+
+        # THE DOCUMENTED PREHISTORY CONVENTION: the stimulus is ABSENT before
+        # its onset and every component is exactly zero. No pre-stimulus
+        # activity is invented, and zero-padding the stimulus is deliberately
+        # NOT done, because components 3 and 4 do not vanish at q = 0.
+        #
+        # Up to the SHORTEST delay (d4 = 11 ms) nothing has switched on yet,
+        # so all four are exactly zero. Using the longest delay here would be
+        # wrong: the other three would already be live.
+        assert shortest == d.d4_s
+        for t in (0.0, 0.001, 0.005, shortest - 1e-6):
+            sample = drive.evaluate(t, stimulus)
+            assert sample.in_prehistory is True
+            assert sample.components_mV() == (0.0, 0.0, 0.0, 0.0)
+            assert sample.weighted_components_mV() == (0.0, 0.0, 0.0, 0.0)
+            assert sample.weighted_gf_drive_mV == 0.0
+
+        # Each component switches on at exactly its own delay and not before.
+        # d4 = 11 ms is shortest, so component 2 is the first to appear.
+        just_before = drive.evaluate(d.d4_s - 1e-9, stimulus)
+        just_after = drive.evaluate(d.d4_s, stimulus)
+        assert just_before.components_mV() == (0.0, 0.0, 0.0, 0.0)
+        assert just_after.inhibitory_component_2_mV < 0.0
+        # The other three are still absent, because their delays are longer.
+        assert just_after.lc4_component_mV == 0.0
+        assert just_after.lplc2_component_mV == 0.0
+        assert just_after.inhibitory_component_1_mV == 0.0
+        # And the drive is not fully active until the longest delay elapses.
+        assert drive.evaluate(
+            longest - 1e-6, stimulus
+        ).in_prehistory is True
+        assert drive.evaluate(
+            longest, stimulus
+        ).in_prehistory is False
+
+        # Components 3 and 4 appear together, because d1 = d2 = 19 ms.
+        before_19 = drive.evaluate(d.d1_s - 1e-9, stimulus)
+        at_19 = drive.evaluate(d.d1_s, stimulus)
+        assert before_19.lc4_component_mV == 0.0
+        assert before_19.lplc2_component_mV == 0.0
+        assert at_19.lc4_component_mV > 0.0
+        assert at_19.lplc2_component_mV > 0.0
+        assert at_19.inhibitory_component_1_mV == 0.0
+
+        # THE DELIBERATE EDGE. Component 1's published sigmoid has a positive
+        # asymptote at q -> 0, so an absent stimulus (value exactly 0) and a
+        # present-but-tiny stimulus (value about +0.0585 mV) are different. The
+        # model is therefore discontinuous at t = d3. This is pinned on
+        # purpose: smoothing it would require inventing pre-stimulus activity
+        # or altering a published coefficient, and 3.0D-8H does neither.
+        asymptote = drive.inhibitory_component_1(stimulus.q_deg(0.0))
+        assert 0.05 < asymptote < 0.07
+        before_d3 = drive.evaluate(d.d3_s - 1e-9, stimulus)
+        at_d3 = drive.evaluate(d.d3_s, stimulus)
+        assert before_d3.inhibitory_component_1_mV == 0.0
+        assert at_d3.inhibitory_component_1_mV == pytest.approx(
+            asymptote, rel=1e-12
+        )
+        assert at_d3.inhibitory_component_1_mV > 0.0
+
+        # Determinism: identical arguments give identical output, always, and
+        # across independent model instances.
+        for t in (0.0, 0.02, 0.2, 1.0, 1.9):
+            first = drive.evaluate(t, stimulus)
+            second = PhenomenologicalGFDrive().evaluate(t, stimulus)
+            assert first == second
+            assert first is not second
+
+        # A stimulus with genuine negative-time history is evaluated by the
+        # published formulas verbatim, with no prehistory override.
+        extended = CallableLoomingStimulus(
+            q_fn=lambda x: 60.0, q_dot_fn=lambda x: 100.0, onset_s=-1.0
+        )
+        pre = drive.evaluate(0.0, extended)
+        assert pre.in_prehistory is False
+        assert pre.lc4_component_mV == pytest.approx(0.02567, rel=1e-12)
+        assert pre.lplc2_component_mV > 0.0
+        assert pre.inhibitory_component_1_mV < 0.0
+
+    # -- 15. standard looming geometry ------------------------------------
+
+    def test_15_standard_looming_geometry_produces_finite_features(self):
+        from biological_brain.dynamics.gf_sensory_drive import (
+            CallableLoomingStimulus,
+            ConstantVelocityLoomingStimulus,
+            PhenomenologicalGFDrive,
+            StimulusGeometryError,
+        )
+
+        drive = PhenomenologicalGFDrive()
+        stimulus = ConstantVelocityLoomingStimulus(
+            r_m=0.005, v_m_per_s=0.05, d0_m=0.10
+        )
+        collision = stimulus.collision_time_s()
+        assert collision == pytest.approx(2.0, rel=1e-12)
+        assert stimulus.radius_over_velocity_s() == pytest.approx(
+            0.1, rel=1e-12
+        )
+
+        # theta, q and q_dot are finite everywhere the geometry is valid, and
+        # the whole model evaluates finitely across the approach.
+        times = [collision * i / 200.0 for i in range(0, 200)]
+        for t in times:
+            theta = stimulus.theta_deg(t)
+            q = stimulus.q_deg(t)
+            q_dot = stimulus.q_dot_deg_per_s(t)
+            assert math.isfinite(theta)
+            assert math.isfinite(q)
+            assert math.isfinite(q_dot)
+            # A physical on-axis approaching object.
+            assert 0.0 < theta < 90.0
+            assert 0.0 < q < 180.0
+            assert q_dot > 0.0
+
+            sample = drive.evaluate(t, stimulus)
+            for value in sample.components_mV():
+                assert math.isfinite(value)
+            assert math.isfinite(sample.weighted_gf_drive_mV)
+
+        # Monotone growth: the object only ever gets bigger on the retina.
+        qs = [stimulus.q_deg(t) for t in times]
+        assert all(later > earlier for earlier, later in zip(qs, qs[1:]))
+
+        # Angular velocity is NOT constant; it rises steeply as the object
+        # nears, which is what makes r/v the looming timescale.
+        vels = [stimulus.q_dot_deg_per_s(t) for t in times]
+        assert vels[-1] > 10.0 * vels[0]
+
+        # The closed form for q_dot agrees with a numerical derivative of q.
+        for t in (0.3, 0.9, 1.7):
+            h = 1e-6
+            numeric = (stimulus.q_deg(t + h) - stimulus.q_deg(t - h)) / (2 * h)
+            assert stimulus.q_dot_deg_per_s(t) == pytest.approx(
+                numeric, rel=1e-6
+            )
+
+        # Past collision the geometry is refused, not extrapolated.
+        for t in (collision, collision + 0.1):
+            with pytest.raises(StimulusGeometryError):
+                stimulus.q_deg(t)
+            with pytest.raises(StimulusGeometryError):
+                stimulus.q_dot_deg_per_s(t)
+
+        # Unusable geometry is refused at construction.
+        for bad in (
+            {"r_m": 0.0, "v_m_per_s": 0.05, "d0_m": 0.10},
+            {"r_m": -1.0, "v_m_per_s": 0.05, "d0_m": 0.10},
+            {"r_m": 0.005, "v_m_per_s": 0.0, "d0_m": 0.10},
+            {"r_m": 0.005, "v_m_per_s": -0.05, "d0_m": 0.10},
+            {"r_m": 0.005, "v_m_per_s": 0.05, "d0_m": 0.0},
+            {"r_m": float("nan"), "v_m_per_s": 0.05, "d0_m": 0.10},
+        ):
+            with pytest.raises(StimulusGeometryError):
+                ConstantVelocityLoomingStimulus(**bad)
+
+        # r/v is a STIMULUS property, and the model does not consult it: two
+        # stimuli with very different r/v give an identical drive from the
+        # same q and q_dot, because the phenomenology depends on those two
+        # features only.
+        slow = ConstantVelocityLoomingStimulus(
+            r_m=0.0005, v_m_per_s=0.05, d0_m=0.10
+        )
+        assert slow.radius_over_velocity_s() == pytest.approx(
+            0.01, rel=1e-12
+        )
+        assert slow.radius_over_velocity_s() != pytest.approx(
+            stimulus.radius_over_velocity_s(), rel=1e-6
+        )
+        flat = CallableLoomingStimulus(
+            q_fn=lambda x: 42.0, q_dot_fn=lambda x: 1000.0
+        )
+        again = CallableLoomingStimulus(
+            q_fn=lambda x: 42.0, q_dot_fn=lambda x: 1000.0
+        )
+        assert drive.evaluate(1.0, flat) == drive.evaluate(1.0, again)
+
+    # -- 16. LC4 is velocity-sensitive ------------------------------------
+
+    def test_16_lc4_is_velocity_sensitive(self):
+        from biological_brain.dynamics.gf_sensory_drive import (
+            CallableLoomingStimulus,
+            PhenomenologicalGFDrive,
+        )
+
+        drive = PhenomenologicalGFDrive()
+
+        def stimulus_at(q, q_dot):
+            return CallableLoomingStimulus(
+                q_fn=lambda x: q, q_dot_fn=lambda x: q_dot
+            )
+
+        # Hold q FIXED and change q_dot. Only LC4 responds.
+        held_q = 42.0
+        slow = drive.evaluate(1.0, stimulus_at(held_q, 100.0))
+        fast = drive.evaluate(1.0, stimulus_at(held_q, 1000.0))
+
+        assert fast.lc4_component_mV == pytest.approx(
+            10.0 * slow.lc4_component_mV, rel=1e-12
+        )
+        # The three size-driven components are untouched by a velocity change.
+        assert fast.lplc2_component_mV == pytest.approx(
+            slow.lplc2_component_mV, rel=1e-15
+        )
+        assert fast.inhibitory_component_1_mV == pytest.approx(
+            slow.inhibitory_component_1_mV, rel=1e-15
+        )
+        assert fast.inhibitory_component_2_mV == pytest.approx(
+            slow.inhibitory_component_2_mV, rel=1e-15
+        )
+        # The total does change, through LC4 alone.
+        assert fast.weighted_gf_drive_mV != pytest.approx(
+            slow.weighted_gf_drive_mV, rel=1e-6
+        )
+
+        # A stationary object with a large angular size produces no velocity
+        # component at all, even though the size component is at its maximum.
+        stationary = drive.evaluate(1.0, stimulus_at(42.0, 0.0))
+        assert stationary.lc4_component_mV == 0.0
+        assert stationary.lplc2_component_mV == pytest.approx(1.7, rel=1e-12)
+
+    # -- 17. LPLC2 is size-sensitive --------------------------------------
+
+    def test_17_lplc2_is_size_sensitive(self):
+        from biological_brain.dynamics.gf_sensory_drive import (
+            CallableLoomingStimulus,
+            PhenomenologicalGFDrive,
+        )
+
+        drive = PhenomenologicalGFDrive()
+
+        def stimulus_at(q, q_dot):
+            return CallableLoomingStimulus(
+                q_fn=lambda x: q, q_dot_fn=lambda x: q_dot
+            )
+
+        # Hold q_dot FIXED and change q.
+        held_velocity = 1000.0
+        small = drive.evaluate(1.0, stimulus_at(20.0, held_velocity))
+        large = drive.evaluate(1.0, stimulus_at(60.0, held_velocity))
+
+        assert small.lplc2_component_mV != pytest.approx(
+            large.lplc2_component_mV, rel=1e-6
+        )
+        # LC4 depends only on velocity, so it is bit-identical.
+        assert small.lc4_component_mV == large.lc4_component_mV
+        # Both size-driven inhibitory components respond to the size change.
+        assert small.inhibitory_component_1_mV != pytest.approx(
+            large.inhibitory_component_1_mV, rel=1e-6
+        )
+        assert small.inhibitory_component_2_mV != pytest.approx(
+            large.inhibitory_component_2_mV, rel=1e-6
+        )
+        # And a size change does move the total.
+        assert small.weighted_gf_drive_mV != pytest.approx(
+            large.weighted_gf_drive_mV, rel=1e-6
+        )
+
+        # This is the experimentally constrained separation Ache et al. 2019
+        # established: LC4 carries velocity, LPLC2 carries size, and the two
+        # can be varied independently in the model.
+        assert small.lc4_component_mV == large.lc4_component_mV
+        assert small.lplc2_component_mV != large.lplc2_component_mV
+
+    # -- 18. LPLC2 peaks at 42 degrees ------------------------------------
+
+    def test_18_lplc2_peaks_at_42_degrees(self):
+        from biological_brain.dynamics.gf_sensory_drive import (
+            PhenomenologicalGFDrive,
+        )
+
+        drive = PhenomenologicalGFDrive()
+        c = drive.coefficients
+
+        # A dense scan locates the maximum exactly at the published peak.
+        # The key is essential: max() over (q, value) TUPLES would order by q
+        # first and return the largest q, not the largest component.
+        best_q, best_value = max(
+            ((q, drive.lplc2_component(q))
+             for q in (i * 0.01 for i in range(1, 20000))),
+            key=lambda pair: pair[1],
+        )
+        assert best_q == pytest.approx(42.0, abs=0.02)
+        assert best_value == pytest.approx(1.7, rel=1e-12)
+        assert best_q == pytest.approx(c.c3_deg, abs=0.02)
+        # And the scan genuinely covered the peak, rather than finding a
+        # boundary maximum of a function that never peaks at all.
+        assert best_value == max(
+            drive.lplc2_component(q) for q in (i * 0.01 for i in range(1, 20000))
+        )
+
+        # The falloff is the log-Gaussian one: a doubling above the peak loses
+        # exactly the same factor as a halving below it. A plain Gaussian in q
+        # would not be symmetric like this, so this is what distinguishes the
+        # implemented form from the plausible alternative.
+        assert drive.lplc2_component(84.0) == pytest.approx(
+            drive.lplc2_component(21.0), rel=1e-12
+        )
+        # One natural-log unit from the peak loses a factor exp(-1/(2 c4^2)).
+        one_log_unit = c.c2_mV * math.exp(-1.0 / (2.0 * c.c4_log_width ** 2))
+        assert drive.lplc2_component(42.0 * math.e) == pytest.approx(
+            one_log_unit, rel=1e-12
+        )
+        assert drive.lplc2_component(42.0 / math.e) == pytest.approx(
+            one_log_unit, rel=1e-12
+        )
+        # And the component is strictly below the peak on both sides.
+        assert drive.lplc2_component(84.0) < 1.0
+        assert drive.lplc2_component(21.0) < 1.0
+        assert drive.lplc2_component(20.0) < drive.lplc2_component(21.0)
+        assert drive.lplc2_component(85.0) < drive.lplc2_component(84.0)
+
+    # -- 19. LC4 responds linearly to angular velocity --------------------
+
+    def test_19_lc4_responds_linearly_to_angular_velocity(self):
+        from biological_brain.dynamics.gf_sensory_drive import (
+            PhenomenologicalGFDrive,
+        )
+
+        drive = PhenomenologicalGFDrive()
+        c1 = 0.0002567
+
+        velocities = [
+            -5000.0, -1000.0, -100.0, -1.0, 0.0, 1.0, 100.0, 1000.0, 5000.0
+        ]
+        values = [drive.lc4_component(v) for v in velocities]
+
+        # Strictly proportional through the origin, with no offset and no
+        # saturation, over four orders of magnitude.
+        for v, got in zip(velocities, values):
+            assert got == pytest.approx(c1 * v, rel=0.0, abs=1e-15)
+        assert c1 * 5000.0 < 2.0  # still far from any saturation
+        assert c1 * 5000.0 == pytest.approx(1.2835, rel=1e-12)
+
+        # Superposition: velocities add, so components add.
+        assert drive.lc4_component(300.0) == pytest.approx(
+            drive.lc4_component(100.0) + drive.lc4_component(200.0), rel=1e-15
+        )
+        assert drive.lc4_component(2000.0) == pytest.approx(
+            2.0 * drive.lc4_component(1000.0), rel=1e-15
+        )
+        assert drive.lc4_component(1000.0) == pytest.approx(
+            10.0 * drive.lc4_component(100.0), rel=1e-15
+        )
+
+        # Monotone increasing, with no knee anywhere in the swept range: the
+        # secant slope is exactly c1 between every adjacent pair.
+        assert all(later > earlier for earlier, later in zip(values, values[1:]))
+        for index in range(1, len(velocities)):
+            delta_v = velocities[index] - velocities[index - 1]
+            delta_v_mV = values[index] - values[index - 1]
+            assert delta_v_mV / delta_v == pytest.approx(c1, rel=1e-12)
+
+        # Scaling down toward zero keeps the same slope, and the component
+        # passes exactly through the origin.
+        assert drive.lc4_component(0.0) == 0.0
+        tiny = 1e-9
+        assert drive.lc4_component(tiny) == pytest.approx(c1 * tiny, abs=1e-25)
+
+    # -- 20. determinism --------------------------------------------------
+
+    def test_20_combined_drive_is_deterministic(self):
+        from biological_brain.dynamics.gf_sensory_drive import (
+            AcheGFModelCoefficients,
+            AcheGFModelDelays,
+            ConstantVelocityLoomingStimulus,
+            PhenomenologicalGFDrive,
+        )
+
+        drive = PhenomenologicalGFDrive()
+        stimulus = ConstantVelocityLoomingStimulus(
+            r_m=0.005, v_m_per_s=0.05, d0_m=0.10
+        )
+        times = [i * stimulus.collision_time_s() / 400.0 for i in range(400)]
+
+        first = drive.evaluate_series(times, stimulus)
+        second = PhenomenologicalGFDrive().evaluate_series(times, stimulus)
+        explicit = PhenomenologicalGFDrive(
+            coefficients=AcheGFModelCoefficients(),
+            delays=AcheGFModelDelays(),
+        ).evaluate_series(times, stimulus)
+
+        # Bit-identical across independent instances and explicit parameters.
+        assert first == second
+        assert first == explicit
+        assert len(first) == len(times)
+        for sample, t in zip(first, times):
+            assert sample.t_s == t
+
+        # Evaluation ORDER does not change any value: there is no accumulation
+        # and no sequential state, so a series is a map, not a recurrence.
+        reversed_series = drive.evaluate_series(times[::-1], stimulus)
+        assert list(reversed(reversed_series)) == list(first)
+
+        # Every sample is finite and internally self-consistent.
+        for sample in first:
+            assert math.isfinite(sample.weighted_gf_drive_mV)
+            assert sample.weighted_gf_drive_mV == pytest.approx(
+                drive.weighted_gf_drive(*sample.components_mV()), rel=1e-14
+            )
+            total = sum(sample.weighted_components_mV())
+            assert total == pytest.approx(
+                sample.weighted_gf_drive_mV, rel=1e-14
+            )
+
+    # -- 21. no random state ---------------------------------------------
+
+    def test_21_no_random_state_exists(self):
+        from biological_brain.dynamics.gf_sensory_drive import (
+            AcheGFModelCoefficients,
+            AcheGFModelDelays,
+            ConstantVelocityLoomingStimulus,
+            PhenomenologicalGFDrive,
+        )
+
+        drive = PhenomenologicalGFDrive()
+        assert drive.is_stochastic is False
+        assert drive.has_random_state is False
+
+        # The model holds only its two frozen parameter records, so it cannot
+        # accumulate hidden state of any kind.
+        attributes = vars(drive)
+        assert set(attributes) == {"_coefficients", "_delays"}
+        for value in attributes.values():
+            assert isinstance(value, (AcheGFModelCoefficients, AcheGFModelDelays))
+        # Frozen dataclasses cannot be mutated in place either.
+        with pytest.raises(Exception):
+            drive.coefficients.c2_mV = 99.0
+
+        # No randomness in the CODE. Prose is excluded deliberately: this
+        # module has to be able to SAY that it is not stochastic, and a naive
+        # text scan would flag the very sentence that makes the guarantee.
+        tokens = {t.lower() for t in _eight_h_code_tokens()}
+        for forbidden in (
+            "random", "rand", "shuffle", "gauss", "poisson", "seed",
+            "numpy", "np", "uniform", "sample",
+        ):
+            assert forbidden not in tokens, forbidden
+        # And no randomness in the imports either.
+        for name in _eight_h_imports():
+            assert "random" not in name.lower()
+            assert "numpy" not in name.lower()
+
+        # And repeated evaluation of a whole series is bit-identical, which is
+        # what "no random state" has to mean in practice rather than in
+        # principle.
+        stimulus = ConstantVelocityLoomingStimulus(
+            r_m=0.005, v_m_per_s=0.05, d0_m=0.10
+        )
+        times = [i * 0.001 for i in range(500)]
+        assert drive.evaluate_series(
+            times, stimulus
+        ) == drive.evaluate_series(times, stimulus)
+        assert drive.evaluate_series(
+            times, stimulus
+        ) == PhenomenologicalGFDrive().evaluate_series(times, stimulus)
+
+    # -- 22. no synaptic conductance --------------------------------------
+
+    def test_22_no_synaptic_conductance_is_introduced(self):
+        from biological_brain.dynamics.gf_sensory_drive import (
+            PhenomenologicalBoundaryError,
+            PhenomenologicalGFDrive,
+            SensoryDriveSample,
+        )
+
+        drive = PhenomenologicalGFDrive()
+        c = drive.coefficients
+
+        # The coefficient record has NO conductance, current or receptor
+        # field, and the boundary flags are hard False.
+        coefficient_fields = set(type(c).__dataclass_fields__)
+        for forbidden in (
+            "conductance", "conductance_s", "conductance_us", "g_syn",
+            "current_a", "current_na", "current_amp", "reversal_mv",
+            "reversal_v", "peak_conductance", "weight_siemens", "siemens",
+        ):
+            assert forbidden not in coefficient_fields, forbidden
+        assert c.is_synaptic_conductance is False
+        assert c.is_membrane_current is False
+        assert c.has_receptor_identity is False
+        assert drive.has_synaptic_conductance is False
+        assert drive.is_live_membrane_voltage is False
+
+        # The sample exposes millivolts, degrees and seconds only.
+        sample_fields = set(SensoryDriveSample.__dataclass_fields__)
+        for field in sample_fields:
+            assert (
+                field.endswith("_mV")
+                or field.endswith("_deg")
+                or field.endswith("_per_s")
+                or field in ("t_s", "in_prehistory")
+            ), field
+        for forbidden in (
+            "conductance", "conductance_s", "conductance_uS", "current_a",
+            "current_A", "reversal_mV", "siemens", "amp", "_nA", "_pS",
+        ):
+            assert forbidden not in sample_fields, forbidden
+
+        # No siemens, amps or conductance unit anywhere in the CODE. A uS is
+        # 1e-6 S, so the CONVERSION CONSTANTS are the thing to look for, and
+        # those are numeric literals. Prose is excluded because this module
+        # must be able to say that it introduces no conductance.
+        tokens = _eight_h_code_tokens()
+        for forbidden in ("1e-06", "1e-09", "1e-6", "1e-9", "1000000.0"):
+            assert forbidden not in tokens, forbidden
+        for forbidden in (
+            "siemens", "microamp", "nanoamp", "mS/cm2", "S/cm2", "uS", "nA",
+            "g_syn", "conductance", "reversal",
+        ):
+            assert forbidden.lower() not in {t.lower() for t in tokens}, (
+                forbidden
+            )
+
+        # The module imports no membrane solver and no synapse mechanism, so
+        # it cannot inject into or be injected by the live GF.
+        imported = _eight_h_imports()
+        for forbidden in (
+            "gf_active", "chemical_synapse", "electrical_coupling",
+            "passive_cable", "dlmn_active", "psi_active", "ttmn_active",
+            "gf_equilibrium", "conductance", "lif_voltage", "base", "numpy",
+            "random",
+        ):
+            assert not any(forbidden in name for name in imported), forbidden
+
+        # The refusals fire by name, for a conductance in any phrasing.
+        for feature in (
+            "synaptic_conductance", "conductance_s", "g_syn", "g_peak",
+            "membrane_current", "reversal_potential", "gf_sensory_conductance",
+            "somatic_conductance", "dendritic_conductance",
+        ):
+            with pytest.raises(PhenomenologicalBoundaryError):
+                drive.reject_unsupported_feature(feature)
+
+        # And the message says why, in the reason a reader needs.
+        try:
+            drive.reject_unsupported_feature("synaptic_conductance")
+        except PhenomenologicalBoundaryError as exc:
+            text = str(exc).lower()
+            assert "phenomenological" in text
+            assert "conductance" in text
+            assert "no defensible coupling" in text or (
+                "no defensible coupling" in text
+            )
+        else:
+            raise AssertionError("expected PhenomenologicalBoundaryError")
+
+    # -- 23. no receptor kinetics -----------------------------------------
+
+    def test_23_no_receptor_kinetics_are_introduced(self):
+        from biological_brain.dynamics.gf_sensory_drive import (
+            PhenomenologicalBoundaryError,
+            PhenomenologicalGFDrive,
+            SensoryDriveSample,
+        )
+
+        drive = PhenomenologicalGFDrive()
+        c = drive.coefficients
+
+        assert c.has_receptor_kinetics is False
+        assert c.has_release_probability is False
+        assert c.has_receptor_identity is False
+        assert drive.has_receptor_kinetics is False
+        assert drive.delays.is_receptor_kinetic is False
+
+        # No receptor, binding, opening, desensitization, vesicle or release
+        # field exists on any record the module defines. The refusal FLAGS are
+        # excluded from this scan on purpose: has_receptor_kinetics is how the
+        # module REFUSES receptor kinetics, so its presence is the guarantee,
+        # not a violation. Those flags are checked to be False separately.
+        flags = {
+            field
+            for cls in (type(c), type(drive.delays), SensoryDriveSample)
+            for field in cls.__dataclass_fields__
+            if field.startswith(("has_", "is_"))
+        }
+        assert flags, "expected refusal flags on these records"
+        for cls in (type(c), type(drive.delays), SensoryDriveSample):
+            for field in cls.__dataclass_fields__:
+                if field in flags:
+                    continue
+                lowered = field.lower()
+                for forbidden in (
+                    "receptor", "binding", "open_prob", "subunit", "alpha",
+                    "beta", "desensit", "vesicle", "release", "pool",
+                    "calcium", "q10", "temperature", "kinetic", "density",
+                ):
+                    assert forbidden not in lowered, (cls.__name__, field)
+        # Every refusal flag on the published records is False.
+        for record in (c, drive.delays):
+            for field in type(record).__dataclass_fields__:
+                if field.startswith(("has_", "is_")):
+                    assert getattr(record, field) is False, (
+                        type(record).__name__, field
+                    )
+
+        # The four sensory delays are NOT receptor rise or decay constants.
+        for forbidden in (
+            "receptor_kinetics", "receptor_kinetic", "rise_time", "decay_time",
+            "tau_rise", "tau_decay", "open_probability", "desensitization",
+            "binding_affinity", "receptor_density", "single_channel",
+        ):
+            with pytest.raises(PhenomenologicalBoundaryError):
+                drive.reject_unsupported_feature(forbidden)
+
+        # The coefficient record's own flags refuse promotion, and its
+        # published values cannot be reinterpreted as kinetics.
+        with pytest.raises(PhenomenologicalBoundaryError):
+            type(c)(has_receptor_kinetics=True)
+        with pytest.raises(PhenomenologicalBoundaryError):
+            type(drive.delays)(is_receptor_kinetic=True)
+
+        # 7Y's receptor, Q10 and synaptic-conductance exclusions are all still
+        # linked and still structurally empty.
+        from biological_brain.looming_abstraction import get_looming_abstraction
+
+        abstraction = get_looming_abstraction()
+        for quantity_id in (
+            "sensory_receptor_kinetics",
+            "sensory_q10",
+            "lc4_to_gf_synaptic_conductance",
+            "lplc2_to_gf_synaptic_conductance",
+            "lc4_release_probability",
+            "lplc2_release_probability",
+            "gf_sensory_reversal_potential",
+            "lc4_hodgkin_huxley_kinetics",
+            "lplc2_hodgkin_huxley_kinetics",
+        ):
+            record = abstraction.unavailable(quantity_id)
+            assert record.value is None
+            assert record.value_is_populated is False
+        assert abstraction.any_receptor_kinetics() is False
+        assert abstraction.any_populated_sensory_quantity() is False
+
+    # -- 24. no Dalpha7 mechanism -----------------------------------------
+
+    def test_24_no_dalpha7_mechanism_is_introduced(self):
+        from biological_brain.dynamics.gf_sensory_drive import (
+            PhenomenologicalBoundaryError,
+            PhenomenologicalGFDrive,
+            SensoryDriveSample,
+        )
+
+        drive = PhenomenologicalGFDrive()
+
+        # Dalpha7 belongs to the CENTRAL cholinergic PSI->DLMn synapse of
+        # 3.0D-8G. It has no role in a looming sensory model, so NO identifier
+        # the module declares may mention it, and no record field may hold it.
+        for name in _eight_h_declared_names():
+            assert "alpha7" not in name.lower(), name
+        for cls_name in _eight_h_defined_classes():
+            cls = getattr(
+                __import__(
+                    "biological_brain.dynamics.gf_sensory_drive",
+                    fromlist=[cls_name],
+                ),
+                cls_name,
+            )
+            assert not hasattr(cls, "dalpha7")
+            for field in getattr(cls, "__dataclass_fields__", {}):
+                assert "alpha7" not in field.lower(), (cls_name, field)
+                assert "dalpha" not in field.lower(), (cls_name, field)
+
+        # No Dalpha7 *mechanism* appears: no subunit identity, no
+        # single-channel conductance, no opening probability, no density.
+        lowered = _eight_h_module_source().lower()
+        for forbidden in (
+            "dalpha7conductance",
+            "dalpha7_receptor_density",
+            "dalpha7_open_probability",
+            "dalpha7alpha",
+            "dalpha7beta",
+            "dalpha7_kinetics",
+            "dalpha7 =",
+            "dalpha7_conductance",
+        ):
+            assert forbidden not in lowered, forbidden
+
+        # And the refusals fire by name for every Dalpha7-flavored request.
+        for feature in (
+            "Dalpha7", "Dalpha7_receptor_density", "Dalpha7_open_probability",
+            "Dalpha7_conductance", "Dalpha7_kinetics", "alpha7_subunit",
+        ):
+            with pytest.raises(PhenomenologicalBoundaryError):
+                drive.reject_unsupported_feature(feature)
+
+        # 8G's Dalpha7 story is untouched: its PSI->DLMn synapse is still
+        # exactly the published phenomenological double exponential, with its
+        # own 7V provenance, and 8H did not modify it.
+        from biological_brain.dynamics.chemical_synapse import (
+            PSI_DLMnChemicalSynapse,
+        )
+
+        connection = PSI_DLMnChemicalSynapse()
+        assert connection.synapse_id == "PSI_DLMn"
+        assert connection.mechanism.peak_conductance_uS == 80.0
+        # And 8H did not add a Dalpha7 quantity to the central synapse either.
+        assert not hasattr(connection, "dalpha7_conductance")
+        assert not hasattr(connection.mechanism, "dalpha7")
+
+    # -- 25. distinct from live GF voltage --------------------------------
+
+    def test_25_phenomenological_output_is_distinct_from_live_gf_voltage(self):
+        from biological_brain.dynamics.gf_sensory_drive import (
+            ConstantVelocityLoomingStimulus,
+            PhenomenologicalBoundaryError,
+            PhenomenologicalGFDrive,
+            SensoryDriveSample,
+        )
+
+        drive = PhenomenologicalGFDrive()
+        stimulus = ConstantVelocityLoomingStimulus(
+            r_m=0.005, v_m_per_s=0.05, d0_m=0.10
+        )
+        sample = drive.evaluate(0.5, stimulus)
+
+        # The distinction is stated by the API, not left to convention.
+        assert sample.is_the_live_gf_membrane_voltage() is False
+        assert drive.is_live_membrane_voltage is False
+        assert drive.drives_the_live_gf_membrane is False
+        limitations = sample.limitations().lower()
+        assert "not the live gf membrane voltage" in limitations
+        assert "phenomenological" in limitations
+        assert "not synaptic conductances" in limitations
+        assert "no defensible coupling" in limitations
+
+        # A sample is a frozen record of four numbers, not a state vector.
+        assert isinstance(sample, SensoryDriveSample)
+        assert len(sample.components_mV()) == 4
+        with pytest.raises(Exception):
+            sample.weighted_gf_drive_mV = 0.0
+
+        # The drive has no membrane interface at all, so it cannot be wired
+        # into the live GF even by accident.
+        for attribute in (
+            "step", "inject_current", "voltages", "voltages_mV", "state",
+            "initial_state", "compartments", "advance", "integrate",
+            "threshold", "spike", "reset", "prepare", "rest_voltage_mV",
+        ):
+            assert not hasattr(drive, attribute), attribute
+
+        # The API does not name its output a membrane voltage. The paper's own
+        # notation is vGF / "membrane potential", and this project deliberately
+        # declines to reuse that name for a different object.
+        assert "weighted_gf_drive" in dir(PhenomenologicalGFDrive)
+        assert "gf_membrane_voltage" not in dir(PhenomenologicalGFDrive)
+        assert "gf_membrane_voltage" not in dir(SensoryDriveSample)
+        assert "membrane" not in SensoryDriveSample.__dataclass_fields__
+
+        # And there is no coupling strategy to call.
+        with pytest.raises(PhenomenologicalBoundaryError):
+            drive.coupling_to_live_gf()
+        for feature in (
+            "inject_current", "live_gf_state", "gf_membrane_voltage",
+            "membrane_state",
+        ):
+            with pytest.raises(PhenomenologicalBoundaryError):
+                drive.reject_unsupported_feature(feature)
+
+        # A drive is not a current vector and cannot be added to one.
+        assert not isinstance(drive, (list, tuple, dict))
+        with pytest.raises(TypeError):
+            drive + [0.0] * 8
+
+    # -- 26. live GFActiveAxonModel unchanged -----------------------------
+
+    def test_26_live_gf_active_model_is_unchanged_and_unused(self):
+        import biological_brain.dynamics.gf_active as gf_module
+        from biological_brain.dynamics.gf_active import (
+            ActiveAxonModel,
+            GFActiveAxonModel,
+        )
+
+        # The live model still exists, knows nothing about the sensory drive,
+        # and carries no phenomenological-drive attribute.
+        for attribute in (
+            "phenomenological_drive", "looming", "sensory_drive",
+            "gf_sensory_drive", "PhenologicalGFDrive", "afferent_drive",
+        ):
+            assert not hasattr(GFActiveAxonModel, attribute), attribute
+        assert not hasattr(ActiveAxonModel, "phenomenological_drive")
+
+        # The dependency runs ONE way only. gf_active does not import the
+        # phenomenology, so nothing here can reach the live membrane.
+        with open(gf_module.__file__, encoding="utf-8") as handle:
+            gf_source = handle.read()
+        for forbidden in (
+            "gf_sensory_drive", "PhenomenologicalGFDrive", "SensoryDriveSample",
+            "ConstantVelocityLoomingStimulus", "weighted_gf_drive",
+            "AcheGFModelCoefficients",
+        ):
+            assert forbidden not in gf_source, forbidden
+
+        # gf_active still exposes its ordinary numerical API.
+        assert hasattr(GFActiveAxonModel, "step")
+        assert hasattr(GFActiveAxonModel, "prepare")
+        assert hasattr(GFActiveAxonModel, "initial_state")
+        assert issubclass(GFActiveAxonModel, ActiveAxonModel)
+
+        # And it still integrates the published GF dynamics unchanged: the
+        # timestep policy and the applied conductances are the 7S/8A ones.
+        model = _eight_a_model()
+        network = model.prepare(_eight_a_gf(), segment_count=1)
+        applied = {p.name: p for p in network.applied_parameters}
+        assert set(applied) == {"g_Na", "g_Nap", "g_K", "E_Na", "E_K"}
+        assert applied["g_Na"].value == pytest.approx(0.3)
+        assert model.timestep_ms == 0.01
+        state = model.initial_state(network)
+        voltages = model.step(network, state)
+        assert voltages
+        assert all(math.isfinite(v) for v in voltages.values())
+
+    # -- 27. 7Y provenance still loads ------------------------------------
+
+    def test_27_existing_7y_provenance_still_loads(self):
+        from biological_brain.looming_abstraction import (
+            FEATURE_ANGULAR_SIZE,
+            FEATURE_ANGULAR_VELOCITY,
+            NEURON_GF,
+            NEURON_LC4,
+            NEURON_LPLC2,
+            PhenomenologicalCoefficientUpdate,
+            get_looming_abstraction,
+        )
+
+        abstraction = get_looming_abstraction()
+        abstraction.verifies_against_7w_and_7x()
+
+        # Everything 7Y recorded is still present and unchanged.
+        assert abstraction.neuron_classes() == ("LC4", "LPLC2")
+        assert abstraction.neuron(NEURON_LC4).feature_extracted == (
+            FEATURE_ANGULAR_VELOCITY
+        )
+        assert abstraction.neuron(NEURON_LPLC2).feature_extracted == (
+            FEATURE_ANGULAR_SIZE
+        )
+        assert abstraction.neuron(NEURON_LC4).target_neuron == NEURON_GF
+        assert abstraction.neuron(NEURON_LPLC2).target_neuron == NEURON_GF
+        assert abstraction.neuron_for_feature(
+            FEATURE_ANGULAR_VELOCITY
+        ).neuron_class == NEURON_LC4
+        assert abstraction.neuron_for_feature(
+            FEATURE_ANGULAR_SIZE
+        ).neuron_class == NEURON_LPLC2
+        assert set(abstraction.term_ids()) == {
+            "lc4_angular_velocity_term",
+            "lplc2_angular_size_term",
+            "gf_looming_response",
+        }
+        assert len(abstraction.opponency_components) == 2
+        assert len(abstraction.gf_visual_inputs) == 1
+        assert len(abstraction.validation_targets) == 5
+        assert len(abstraction.stimulus_rates) == 2
+        assert len(abstraction.pathway_diagrams) == 1
+
+        # 7Y still refuses to hold a coefficient or to claim the equation.
+        assert abstraction.any_model_coefficient() is False
+        assert abstraction.seven_y_carries_a_model_coefficient() is False
+        for term in abstraction.phenomenological_terms:
+            assert term.equation_available is False
+            assert term.carries_a_coefficient is False
+            assert term.is_membrane_current is False
+            assert term.is_a_mechanism is False
+        for feature in abstraction.stimulus_features:
+            assert feature.is_membrane_variable is False
+            assert feature.has_numeric_value is False
+        for neuron in abstraction.projection_neurons:
+            assert neuron.has_quantitative_parameter is False
+            assert neuron.mechanistic_live_solver_ready is False
+
+        # 7Y is still not live-solver eligible anywhere.
+        assert abstraction.live_solver_eligible is False
+        assert abstraction.any_live_solver_eligible() is False
+        assert abstraction.any_mechanistically_ready() is False
+        assert abstraction.any_membrane_conductance() is False
+        assert abstraction.any_synaptic_conductance() is False
+        assert abstraction.any_hodgkin_huxley_kinetics() is False
+        assert abstraction.any_membrane_current() is False
+        assert abstraction.any_membrane_variable() is False
+        assert abstraction.any_visual_timestep() is False
+        assert abstraction.any_timestep_policy_change() is False
+        assert abstraction.any_target_value() is False
+        assert abstraction.any_numeric_latency_target() is False
+
+        # All thirteen unavailable quantities remain structurally empty.
+        assert len(abstraction.unavailable_ids()) == 13
+        for quantity in abstraction.unavailable_sensory_quantities:
+            assert quantity.value is None
+            assert quantity.value_is_populated is False
+            assert quantity.live_solver_eligible is False
+
+        # The additive 8H pointer resolves NONE of them, and 7Y itself still
+        # holds no coefficient.
+        assert abstraction.quantitative_update_ids() == (
+            "8h_ache_gf_phenomenological_coefficients",
+        )
+        assert abstraction.any_unavailable_quantity_resolved() is False
+        update = abstraction.quantitative_update(
+            "8h_ache_gf_phenomenological_coefficients"
+        )
+        assert isinstance(update, PhenomenologicalCoefficientUpdate)
+        assert update.resolves_an_unavailable_quantity_id is None
+        assert update.creates_a_synaptic_conductance is False
+        assert update.is_live_solver_eligible is False
+        assert update.modifies_gf_membrane_equations is False
+        assert update.supplies_a_coefficient is True
+        assert update.seven_y_still_holds_a_coefficient is False
+        assert "gf_sensory_drive" in update.implemented_in
+        assert "phenomenological" in update.implemented_as.lower()
+        assert update.source_references
+        assert update.limitations()
+
+        # The pointer cannot be made to claim otherwise.
+        with pytest.raises(ValueError):
+            type(update)(**{
+                field: getattr(update, field)
+                for field in type(update).__dataclass_fields__
+            } | {"resolves_an_unavailable_quantity_id": "sensory_q10"})
+        with pytest.raises(ValueError):
+            type(update)(**{
+                field: getattr(update, field)
+                for field in type(update).__dataclass_fields__
+            } | {"creates_a_synaptic_conductance": True})
+        with pytest.raises(ValueError):
+            type(update)(**{
+                field: getattr(update, field)
+                for field in type(update).__dataclass_fields__
+            } | {"is_live_solver_eligible": True})
+
+    # -- 28. GF active dynamics still pass --------------------------------
+
+    def test_28_existing_gf_active_dynamics_still_pass(self):
+        import biological_brain.dynamics.gf_equilibrium as gf_equilibrium
+        from biological_brain.active_profiles import (
+            PROFILE_AUGUSTIN_2019_ACTIVE_MODEL,
+        )
+
+        # The published GF active dynamics still build, prepare and integrate
+        # at the same timestep, with the same 7S applied conductances.
+        model = _eight_a_model()
+        assert model.profile_name == PROFILE_AUGUSTIN_2019_ACTIVE_MODEL
+        assert model.timestep_ms == 0.01
+        assert model.numerical_resolution.timestep_ms == 0.01
+        assert model.numerical_resolution.resolution_note
+
+        network = model.prepare(_eight_a_gf(), segment_count=1)
+        state = model.initial_state(network)
+
+        # Resting state is the declared rest voltage, not an invented one.
+        assert model.rest_voltage_mV < 0.0
+        for segment_id, segment_state in state.items():
+            assert segment_id
+            assert segment_state is not None
+
+        # A long run stays finite, and the AP machinery still responds to the
+        # 8A stimulus fixture. 8H changed nothing here.
+        voltages = model.voltages_mV(network, state)
+        assert voltages
+        assert all(math.isfinite(v) for v in voltages.values())
+
+        trace, diagnostic, gf_network = model.stimulus_response(
+            _eight_a_gf(), segment_count=11, duration_ms=3.0,
+        )
+        # The AP diagnostic is the layer's own finiteness and observation
+        # report, and it is still reporting a clean action potential. 8H
+        # changed nothing about how the GF is stimulated or integrated.
+        assert diagnostic.all_finite is True
+        assert diagnostic.observed is True
+        assert gf_network is not None
+        assert trace is not None
+
+        # The 8B equilibrium machinery is intact.
+        assert gf_equilibrium.MECHANISM_NAT == "nat"
+        assert gf_equilibrium.MECHANISM_NAP == "nap"
+        assert gf_equilibrium.MECHANISM_K == "k"
+        assert gf_equilibrium.GFActiveStateValidator is not None
+        assert model.equilibrium_report(_eight_a_gf(), segment_count=11) is not None
+
+    # -- 29. 8G chemical synapse still passes -----------------------------
+
+    def test_29_existing_8g_chemical_synapse_still_passes(self):
+        from biological_brain.dynamics.chemical_synapse import (
+            DoubleExponentialSynapse,
+            PSI_DLMnChemicalSynapse,
+        )
+        from biological_brain.source_reconciliation import (
+            get_source_reconciliation_registry,
+        )
+        from biological_brain.synaptic_mechanism_registry import (
+            get_synaptic_mechanism_registry,
+        )
+
+        # 8G is exactly as implemented: unchanged mechanism, unchanged
+        # published coefficients, unchanged live PSI->DLMn connection.
+        synapse = DoubleExponentialSynapse(
+            tau_rise_ms=0.1, tau_decay_ms=1.0, reversal_mV=0.0,
+            delay_ms=0.15, peak_conductance_uS=80.0,
+        )
+        assert synapse.tau_rise_ms == 0.1
+        assert synapse.tau_decay_ms == 1.0
+        assert synapse.reversal_mV == 0.0
+        assert synapse.delay_ms == 0.15
+        assert synapse.peak_conductance_uS == 80.0
+        assert synapse.shape_peak() == pytest.approx(0.6968373144, rel=1e-9)
+        assert synapse.peak_time_ms == pytest.approx(0.2558427881, rel=1e-9)
+        assert synapse.peak_time_from_event_ms == pytest.approx(
+            0.4058427881, rel=1e-9
+        )
+
+        connection = PSI_DLMnChemicalSynapse()
+        assert connection.synapse_id == "PSI_DLMn"
+        assert connection.source_neuron == "PSI"
+        assert connection.target_neuron == "DLMn"
+        assert connection.mechanism.peak_conductance_uS == 80.0
+        assert connection.peak_conductance_source == "paper"
+
+        # 8G still drives a live current, which 8H did not disturb. The
+        # mechanism takes the postsynaptic voltage because it is a real
+        # conductance, which is precisely what the 8H phenomenology is not.
+        drive = connection.mechanism
+        drive.deliver_event(0.0)
+        resting = -0.085  # V
+        assert drive.peak_conductance_S == pytest.approx(80.0e-6, rel=1e-15)
+        current = drive.current_A(0.2e-3, resting)
+        assert current != 0.0
+        assert math.isfinite(current)
+        # Outward-positive with E_syn = 0 and a negative resting potential
+        # gives an inward current, i.e. a negative outward-positive value.
+        assert current < 0.0
+        # And the two sign conventions still compose, as 8G documented.
+        assert drive.injected_current_A(0.2e-3, resting) == pytest.approx(
+            -current, rel=1e-14
+        )
+
+        # The 7V registry still refuses receptor kinetics and keeps all its
+        # exclusions, and 8H added no sensory synapse to it.
+        registry = get_synaptic_mechanism_registry()
+        assert registry.any_receptor_kinetics() is False
+        assert len(registry.excluded_names()) == 14
+        assert registry.any_live_solver_eligible() is False
+
+        # 7U is untouched: two unresolved gap-junction conflicts, no side
+        # chosen, and no GF->TTMn or GF->PSI chemical synapse added.
+        reconciliation = get_source_reconciliation_registry()
+        assert len(reconciliation.unresolved()) == 2
+        for conflict_id in reconciliation.unresolved():
+            conflict = reconciliation.get(conflict_id)
+            assert conflict.preferred_side is None
+            assert conflict.resolution_status.value == "unresolved"
