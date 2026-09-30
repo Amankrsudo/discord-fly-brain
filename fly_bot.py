@@ -19,6 +19,7 @@ from discord import app_commands
 from dotenv import load_dotenv
 
 from fly_controller import FlyController
+from biological_brain import BiologicalMode
 from brain_dashboard import render_dashboard
 
 load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), ".env"))
@@ -33,6 +34,22 @@ OVERLOAD_GIF_PATH = os.path.join(
 )
 
 VITALS_EDIT_INTERVAL = 30  # seconds between pinned-message refreshes
+
+#: Product opt-in for the 3.0B biological layer, read the same way DISCORD_TOKEN
+#: is: an environment variable, optionally supplied through the .env file that
+#: load_dotenv() already reads. ABSENT means OFF, so the default product is
+#: byte-for-byte the 2.0 GroupBrain behaviour path.
+#:
+#: This is a COARSE switch. It selects BiologicalMode.BIOLOGICAL_3_0 and turns
+#: on the escape circuit, and it turns on nothing else. Individual circuits are
+#: deliberately not exposed as separate product switches.
+#:
+#: It enables the 3.0B LIF escape circuit ONLY. It does NOT enable, reach, or
+#: imply anything about the 3.0D GFS model, which has no product entry point.
+#: See 3.0_RELEASE_SPEC.md sections 6 and 7.
+ENABLE_BIOLOGICAL_3_0 = os.environ.get(
+    "ENABLE_BIOLOGICAL_3_0", ""
+).strip().lower() in ("1", "true", "yes", "on")
 
 
 def load_config():
@@ -80,7 +97,26 @@ async def on_fly_event(event: dict):
         pass  # don't let a transient Discord error take down the background loop
 
 
-fly = FlyController(WEIGHTS_PATH, CHECKPOINT_PATH, on_event=on_fly_event)
+if ENABLE_BIOLOGICAL_3_0:
+    # Selecting BiologicalMode.BIOLOGICAL_3_0 on its own would be inert:
+    # BiologicalBrain builds no engines while every BIOLOGICAL_CIRCUITS flag is
+    # False, so step() would return {} and /status would show nothing. Turning
+    # on the escape circuit is therefore part of this same explicit opt-in, and
+    # it is the ONLY circuit turned on. BIOLOGICAL_CIRCUITS itself is not
+    # modified: its defaults are unchanged for every other importer.
+    from biological_brain import configuration as _biological_configuration
+    _biological_configuration.BIOLOGICAL_CIRCUITS["escape"] = True
+
+fly = FlyController(
+    WEIGHTS_PATH,
+    CHECKPOINT_PATH,
+    on_event=on_fly_event,
+    biological_mode=(
+        BiologicalMode.BIOLOGICAL_3_0
+        if ENABLE_BIOLOGICAL_3_0
+        else BiologicalMode.LEGACY_2_0
+    ),
+)
 
 SPRITES = {
     "feed": "fed.gif", "burn": "burned.gif", "freeze": "frozen.gif",
@@ -436,6 +472,25 @@ async def cmd_status(interaction: discord.Interaction):
     if hab:
         parts = ", ".join(f"{g} {int(v*100)}%" for g, v in sorted(hab.items(), key=lambda x: -x[1]))
         content += f"\ndesensitized: {parts}"
+    # 3.0B escape-circuit signals, shown only when the biological layer is
+    # actually on. The key is absent otherwise, so the block above is
+    # unchanged when 3.0B is off.
+    #
+    # These are the existing SignalTranslator outputs under their existing
+    # names, read straight from the snapshot. They are normalised 3.0B LIF
+    # escape-circuit outputs: NOT an escape probability, NOT a decision, NOT a
+    # measurement, and NOT the 3.0D GFS model. The threat signal in
+    # particular is nonzero on the first step even with no stimulus, so it is
+    # labelled as a model output rather than a measured threat level.
+    bio = snap.get("biological_signals")
+    if bio:
+        content += (
+            f"\n3.0B escape-circuit signals (model output, 0-1): "
+            f"escape={bio.get('bio_escape_signal', 0.0):.2f} "
+            f"flight={bio.get('bio_flight_signal', 0.0):.2f} "
+            f"threat={bio.get('bio_threat_signal', 0.0):.2f}"
+        )
+        content += "\n  LIF model outputs, not probabilities or measurements"
     files = [dashboard_file(brain_snapshot=snap)]
     if files:
         await interaction.response.send_message(content=content, files=files)

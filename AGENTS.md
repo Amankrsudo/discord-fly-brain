@@ -31,3 +31,33 @@ The escape circuit implements the Drosophila short-mode escape pathway:
 - Visual interneurons (LC4, LPLC2) -> Giant Fiber (GF) -> TTMn (jump) / PSI -> DLMn (wing downstroke)
 - Loaded from `biological_brain/data/escape_circuit.json`
 - Circuit name in `BiologicalBrain.circuits` is `"escape_core"`
+
+### Product opt-in
+
+The bot does **not** enable 3.0B by default; the 2.0 `GroupBrain` behaviour path
+is the product. To run 3.0B alongside it, set one environment variable — read
+the same way `DISCORD_TOKEN` is, so it can come from the `.env` file
+`load_dotenv()` already reads:
+
+```
+ENABLE_BIOLOGICAL_3_0=1
+```
+
+Accepted truthy values: `1`, `true`, `yes`, `on`. Absent or anything else means
+off, which is the default. This coarse switch selects
+`BiologicalMode.BIOLOGICAL_3_0` and enables the escape circuit; it enables
+nothing else, and `BIOLOGICAL_CIRCUITS` defaults are unchanged for every other
+importer.
+
+With it on, `/status` appends the three existing escape-circuit signals under
+their existing names:
+
+```
+3.0B escape-circuit signals (model output, 0-1): escape=0.00 flight=0.00 threat=1.00
+  LIF model outputs, not probabilities or measurements
+```
+
+These are normalised 3.0B LIF escape-circuit outputs — not an escape
+probability, not a decision, not a measurement, and not the 3.0D GFS model.
+The 3.0D GFS model has no Discord entry point; see `3.0_RELEASE_SPEC.md`
+sections 6 and 7.
