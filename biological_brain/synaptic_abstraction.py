@@ -259,6 +259,17 @@ class SynapticConnectionSpec:
     available_parameter_refs: Tuple[str, ...]
     notes: str
     live_solver_eligible: bool = False
+    #: 3.0D-8M EXTENSION, defaulting to False so every pre-existing record is
+    #: byte-identical in behaviour. Set True ONLY for a connection that is
+    #: real and directly established but for which NO source names a chemical
+    #: mechanism and NO source supplies any parameter. In that state the two
+    #: strict requirements below -- name a chemical mechanism, and reference
+    #: available parameters -- are replaced by a requirement to DECLARE the
+    #: absence explicitly, so it is a first-class recorded state rather than a
+    #: loophole. It is strictly weaker than a populated record: such a
+    #: connection can never be live-solver eligible, and 3.0D-8M's own
+    #: ``VisualInputConnection`` then refuses to expose any numeric parameter.
+    mechanism_and_parameters_unresolved: bool = False
 
     def __post_init__(self) -> None:
         if self.live_solver_eligible:
@@ -311,15 +322,34 @@ class SynapticConnectionSpec:
                     f"conflicts rather than restate a conductance."
                 )
         if self.has_chemical_component and not self.chemical_mechanism:
-            raise ValueError(
-                f"Connection '{self.synapse_id}' has a chemical component and "
-                f"must name its mechanism."
-            )
+            if not self.mechanism_and_parameters_unresolved:
+                raise ValueError(
+                    f"Connection '{self.synapse_id}' has a chemical component "
+                    f"and must name its mechanism, or declare "
+                    f"mechanism_and_parameters_unresolved=True if no source "
+                    f"states one."
+                )
         if not self.available_parameter_refs:
-            raise ValueError(
-                f"Connection '{self.synapse_id}' must reference the available "
-                f"parameters a future simulator would read."
-            )
+            if not self.mechanism_and_parameters_unresolved:
+                raise ValueError(
+                    f"Connection '{self.synapse_id}' must reference the "
+                    f"available parameters a future simulator would read, or "
+                    f"declare mechanism_and_parameters_unresolved=True if no "
+                    f"source supplies any."
+                )
+        if self.mechanism_and_parameters_unresolved:
+            # Declaring the absence must never become a route to a solver.
+            if self.live_solver_eligible:
+                raise ValueError(
+                    f"Connection '{self.synapse_id}' declares its mechanism and "
+                    f"parameters unresolved and can never be live-solver "
+                    f"eligible."
+                )
+            if self.electrical_mechanism or self.chemical_mechanism:
+                raise ValueError(
+                    f"Connection '{self.synapse_id}' declares its mechanism "
+                    f"unresolved and must not also name one."
+                )
 
     @property
     def is_mixed(self) -> bool:

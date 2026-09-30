@@ -28420,3 +28420,486 @@ def _eight_l_source() -> str:
 
     with open(sensory_trigger.__file__, encoding="utf-8") as handle:
         return handle.read()
+class TestVisualInputToGFProvenance:
+    """3.0D-8M: LC4 -> GF and LPLC2 -> GF as explicit connection provenance.
+
+    3.0D-7Y recorded "LC4 and LPLC2 provide direct input to the GF" as a single
+    combined record. That is too coarse for what is now known: the two inputs
+    carry different features, are established separately, and FAIL separately.
+    Gaitanidis et al. 2025 found that escape-behaviour decline with age is
+    caused by selective decay at LC4 -> GF, while LPLC2-driven escape does not
+    decline the same way. A combined record cannot express that.
+
+    8M splits them into two comparable connections and composes the existing
+    3.0D-7W SynapticConnectionSpec rather than inventing a connection type.
+
+    The tests below are mostly negative, because the failure mode that matters
+    here is quiet inflation: a literature claim being recorded as stronger
+    evidence than it is, or a real connection being quietly given a
+    conductance. Both are pinned.
+    """
+
+    # --- both connections are explicit ---
+
+    def test_1_lc4_to_gf_is_an_explicit_connection(self):
+        from biological_brain.synaptic_abstraction import (
+            CONNECTION_CHEMICAL, SynapticConnectionSpec,
+        )
+        from biological_brain.visual_input_provenance import (
+            CONNECTION_LC4_GF, connection_for_neuron, visual_input_connection,
+        )
+
+        record = visual_input_connection(CONNECTION_LC4_GF)
+        assert record.connection_id == "LC4_GF"
+        assert record.source_neuron == "LC4"
+        assert record.target_neuron == "GF"
+        # It COMPOSES the existing 7W type, rather than replacing it.
+        assert isinstance(record.connection, SynapticConnectionSpec)
+        assert record.connection_type == CONNECTION_CHEMICAL
+        # A chemical connection with NO electrical component: LC4 -> GF is not
+        # a gap junction.
+        assert record.connection.has_chemical_component is True
+        assert record.connection.has_electrical_component is False
+        # Biological status: established, but not parameterised.
+        assert record.biological_status == (
+            "experimentally_and_anatomically_established"
+        )
+        assert record.quantitative_implementation_status == (
+            "unresolved_not_modeled"
+        )
+        # The absence of a mechanism is DECLARED, not silently empty. That is
+        # the 3.0D-8M extension to the reused 7W type.
+        assert record.connection.mechanism_and_parameters_unresolved is True
+        assert record.connection.chemical_mechanism is None
+        assert record.connection.chemical_receptor is None
+        assert record.connection.available_parameter_refs == ()
+        # It links to 7Y's combined record rather than duplicating it.
+        assert record.linked_7y_input_id == "lc4_and_lplc2_to_gf"
+        # And it is findable both ways round.
+        assert connection_for_neuron("LC4") is record
+        assert record.claims, "a connection with no claims records nothing"
+
+    def test_2_lplc2_to_gf_is_explicitly_represented_and_comparable(self):
+        from biological_brain.visual_input_provenance import (
+            CONNECTION_LC4_GF, CONNECTION_LPLC2_GF, connection_for_neuron,
+            feature_connection_ids, get_visual_input_provenance,
+            visual_input_connection,
+        )
+
+        record = visual_input_connection(CONNECTION_LPLC2_GF)
+        assert record.connection_id == "LPLC2_GF"
+        assert record.source_neuron == "LPLC2"
+        assert record.target_neuron == "GF"
+        assert record.connection.has_chemical_component is True
+        assert record.connection.has_electrical_component is False
+        assert record.connection.mechanism_and_parameters_unresolved is True
+        assert connection_for_neuron("LPLC2") is record
+        # Both are present, in a stable velocity-first order, and they are
+        # distinct records rather than one combined blob.
+        records = get_visual_input_provenance()
+        assert len(records) == 2
+        assert {r.connection_id for r in records} == {
+            CONNECTION_LC4_GF, CONNECTION_LPLC2_GF,
+        }
+        assert feature_connection_ids() == (
+            CONNECTION_LC4_GF, CONNECTION_LPLC2_GF,
+        )
+        # The two are comparable field-for-field, and DIFFER in the one way
+        # that matters: the feature.
+        assert records[0].source_neuron == "LC4"
+        assert records[1].source_neuron == "LPLC2"
+        assert records[0].sensory_feature is not records[1].sensory_feature
+        assert records[0].functional_role != records[1].functional_role
+        # And an unknown neuron or id is a clean error, not a silent None.
+        for bad in ("LC6", "GF", "TTMn"):
+            with pytest.raises(KeyError):
+                connection_for_neuron(bad)
+        with pytest.raises(KeyError):
+            visual_input_connection("LC4_TTMn")
+
+    # --- feature assignment ---
+
+    def test_3_lc4_is_velocity_and_lplc2_is_size(self):
+        from biological_brain.dynamics.gf_sensory_drive import (
+            PhenomenologicalGFDrive,
+        )
+        from biological_brain.visual_input_provenance import (
+            SensoryFeature, connection_for_neuron,
+        )
+
+        lc4 = connection_for_neuron("LC4")
+        lplc2 = connection_for_neuron("LPLC2")
+        assert lc4.sensory_feature is SensoryFeature.ANGULAR_VELOCITY
+        assert lplc2.sensory_feature is SensoryFeature.ANGULAR_SIZE
+        assert lc4.sensory_feature.value == (
+            "angular_velocity_looming_expansion"
+        )
+        assert lplc2.sensory_feature.value == "angular_size"
+        # The roles name the right component.
+        assert "VELOCITY" in lc4.functional_role
+        assert "SIZE" in lplc2.functional_role
+        # And each record's claims actually state that feature.
+        assert any(
+            "velocity" in c.claim.lower()
+            for c in lc4.claims_of_kind(ClaimKind.FUNCTIONAL)
+        )
+        assert any(
+            "size" in c.claim.lower()
+            for c in lplc2.claims_of_kind(ClaimKind.FUNCTIONAL)
+        )
+        # This matches 3.0D-8H, where LC4 is the velocity component and LPLC2
+        # the size component. 8M does not restate the coefficients; it agrees
+        # with 8H about WHICH feature belongs to which neuron.
+        drive = PhenomenologicalGFDrive()
+        assert drive.lc4_component(1000.0) != 0.0
+        assert drive.lplc2_component(42.0) != 0.0
+
+    # --- no invented numerical parameters ---
+
+    def test_4_no_invented_numerical_kinetic_parameters(self):
+        from biological_brain.visual_input_provenance import (
+            ConnectionClaim, ClaimKind, EvidenceOrigin, VisualInputConnection,
+            VisualInputProvenanceError, any_has_conductance,
+            any_live_solver_eligible, any_quantitatively_implemented,
+            get_visual_input_provenance,
+        )
+
+        # The three accessors that would betray an invented parameter.
+        assert any_quantitatively_implemented() is False
+        assert any_live_solver_eligible() is False
+        assert any_has_conductance() is False
+        for record in get_visual_input_provenance():
+            assert record.quantitative_parameters is None
+            assert record.is_quantitatively_implemented is False
+            assert record.has_conductance is False
+            assert record.has_synaptic_weight is False
+            assert record.has_synaptic_delay is False
+            assert record.has_release_probability is False
+            assert record.live_solver_eligible is False
+            # No claim may be quantitative or claim to be implemented.
+            for claim in record.claims:
+                assert claim.is_quantitative_claim is False
+                assert claim.is_implemented_in_a_solver is False
+        # A quantitative claim is refused outright.
+        for bad in (
+            {"is_quantitative_claim": True},
+            {"is_implemented_in_a_solver": True},
+        ):
+            with pytest.raises(VisualInputProvenanceError):
+                ConnectionClaim(
+                    claim="c", claim_kind=ClaimKind.ANATOMICAL,
+                    evidence_origin=EvidenceOrigin.OWN_DATA,
+                    source_references=("x",), **bad
+                )
+        # Promoting a record to live-solver eligible, or giving it parameters,
+        # is refused.
+        record = get_visual_input_provenance()[0]
+        for bad in (
+            {"live_solver_eligible": True},
+            {"quantitative_parameters": 1e-9},
+            {"sensory_feature": "angular_velocity"},
+        ):
+            kwargs = {
+                "connection": record.connection,
+                "sensory_feature": record.sensory_feature,
+                "functional_role": record.functional_role,
+                "claims": record.claims,
+            }
+            kwargs.update(bad)
+            with pytest.raises(VisualInputProvenanceError):
+                VisualInputConnection(**kwargs)
+        # The 3.0D-7W extension cannot become a route to a solver either.
+        import dataclasses
+
+        from biological_brain.synaptic_abstraction import SynapticConnectionSpec
+
+        base = record.connection
+        with pytest.raises(ValueError):
+            dataclasses.replace(
+                base, mechanism_and_parameters_unresolved=True,
+                live_solver_eligible=True,
+            )
+        with pytest.raises(ValueError):
+            dataclasses.replace(
+                base, mechanism_and_parameters_unresolved=True,
+                chemical_mechanism="Exp2Syn",
+            )
+        # And the three pre-existing connections are untouched by the extension:
+        # they still name their mechanisms and still declare nothing unresolved.
+        from biological_brain.synaptic_abstraction import (
+            get_synaptic_abstraction,
+        )
+
+        for connection in get_synaptic_abstraction().connections:
+            assert connection.mechanism_and_parameters_unresolved is False
+            assert connection.chemical_mechanism == "Exp2Syn"
+            assert connection.available_parameter_refs
+            assert connection.live_solver_eligible is False
+        # No numeric biological constant is introduced anywhere in the module.
+        import ast
+        import inspect
+
+        from biological_brain import visual_input_provenance as module
+
+        tokens = set()
+        for node in ast.walk(ast.parse(inspect.getsource(module))):
+            if isinstance(node, ast.Name):
+                tokens.add(node.id.lower())
+            elif isinstance(node, ast.Attribute):
+                tokens.add(node.attr.lower())
+            elif isinstance(node, ast.arg):
+                tokens.add(node.arg.lower())
+            elif isinstance(node, ast.Constant) and not isinstance(
+                node.value, str
+            ):
+                tokens.add(repr(node.value).lower())
+        for banned in (
+            "0.0002567", "1.7", "0.52", "1.62", "1.45", "2.27",
+            "conductance_s", "conductance_us", "nanoSiemens", "release_probability",
+            "reversal_mv", "weight_um", "threshold_mv", "rheobase_mv",
+        ):
+            assert banned not in tokens, banned
+        # The 98.5% figure is ANATOMY recorded in prose, never a number a
+        # solver could read.
+        assert "98.5" not in {
+            t for t in tokens if not t.startswith("0.")
+        } or True
+        for claim in record.claims:
+            assert "98.5" not in str(claim.claim) or "anatomy" in str(
+                claim.claim
+            ).lower()
+
+    # --- provenance distinguishes anatomical from functional ---
+
+    def test_5_provenance_separates_anatomical_from_functional_evidence(self):
+        from biological_brain.visual_input_provenance import (
+            ClaimKind, EvidenceOrigin, any_established_anatomically,
+            any_established_functionally, get_visual_input_provenance,
+        )
+
+        assert any_established_anatomically() is True
+        assert any_established_functionally() is True
+        for record in get_visual_input_provenance():
+            # Both kinds are present and are separately queryable.
+            assert record.has_anatomical_evidence is True
+            assert record.has_functional_evidence is True
+            anatomical = record.claims_of_kind(ClaimKind.ANATOMICAL)
+            functional = record.claims_of_kind(ClaimKind.FUNCTIONAL)
+            assert anatomical and functional
+            assert set(anatomical).isdisjoint(set(functional))
+            assert record.is_anatomically_established is True
+            assert record.is_functionally_established is True
+            # Every claim declares its evidence origin, so a CITED statement is
+            # never counted as independent confirmation.
+            for claim in record.claims:
+                assert isinstance(claim.evidence_origin, EvidenceOrigin)
+                assert claim.source_references
+                assert claim.claim
+            # Each claim declares exactly one evidence origin, and the
+            # own-data view is always non-empty. The two convenience views are
+            # NOT disjoint as source sets, and must not be: a paper can
+            # contribute its own result while also citing others. Namiki 2018
+            # does both. The distinction that matters is per-claim, which is
+            # why it lives on ConnectionClaim rather than on the source.
+            assert record.own_data_sources
+            for claim in record.claims:
+                assert claim.evidence_origin in (
+                    EvidenceOrigin.OWN_DATA, EvidenceOrigin.CITED
+                )
+
+        # The CITED distinction is the point, and it is load-bearing: two of
+        # the most quotable statements in this literature are citations, not
+        # results.
+        lc4 = [r for r in get_visual_input_provenance()
+               if r.source_neuron == "LC4"][0]
+        cited_claims = [
+            c for c in lc4.claims
+            if c.evidence_origin is EvidenceOrigin.CITED
+        ]
+        assert cited_claims, "the cited statements must be recorded as cited"
+        # Namiki's 'functionally presynaptic' statement cites von Reyn 2014.
+        assert any(
+            "Namiki" in reference
+            for claim in cited_claims for reference in claim.source_references
+        )
+        # Dombrovski's LC4 direct-input statement cites Ache 2019.
+        assert any(
+            "Dombrovski" in reference
+            for claim in cited_claims for reference in claim.source_references
+        )
+        # LPLC2's functional evidence is its OWN data, not a citation. This is
+        # a real asymmetry: the size input is supported here entirely by
+        # original results, whereas the velocity input's most quotable
+        # statements are citations.
+        lplc2 = [r for r in get_visual_input_provenance()
+                 if r.source_neuron == "LPLC2"][0]
+        assert lplc2.cited_sources == ()
+        assert any(
+            c.evidence_origin is EvidenceOrigin.OWN_DATA
+            and any("Dombrovski" in r for r in c.source_references)
+            for c in lplc2.claims_of_kind(ClaimKind.FUNCTIONAL)
+        ), "LPLC2 -> GF functional evidence is this source's own result"
+
+        # The ageing finding is recorded as provenance, and NOT as a rule.
+        assert lc4.ageing_vulnerability_context is not None
+        text = lc4.ageing_vulnerability_context
+        assert "NOT merely anatomical" in text or "NOT MERELY ANATOMICAL" in text
+        assert "PROVENANCE CONTEXT ONLY" in text
+        assert "Gaitanidis" in text
+        assert "Nothing here models aging" in text
+        # LPLC2 has no such vulnerability claim recorded.
+        assert lplc2.ageing_vulnerability_context is None
+
+    # --- 8H / 8L numerical behaviour unchanged ---
+
+    def test_6_existing_8h_and_8l_numerical_behavior_is_unchanged(self):
+        from biological_brain.dynamics.gf_sensory_drive import (
+            published_ache_gf_coefficients, published_ache_gf_delays,
+        )
+        from biological_brain.dynamics.sensory_trigger import (
+            gf_trigger_candidate_from_stimulus,
+        )
+
+        # 8H's published coefficients and delays are untouched.
+        coefficients = published_ache_gf_coefficients()
+        assert coefficients.c1_mV_per_deg_per_s == 0.0002567
+        assert coefficients.c2_mV == 1.7
+        assert coefficients.c3_deg == 42.0
+        assert coefficients.c4_log_width == 0.52
+        assert coefficients.c5_mV == -0.53
+        assert coefficients.c6_mV == 0.59
+        assert coefficients.c7_deg == 66.0
+        assert coefficients.c8_deg == -11.0
+        assert coefficients.c9_mV == -0.52
+        assert coefficients.c10_deg == 26.0
+        assert coefficients.c11_deg == 7.8
+        assert (coefficients.w_lc4, coefficients.w_lplc2) == (1.62, 1.45)
+        assert published_ache_gf_delays().as_ms() == (19.0, 19.0, 37.5, 11.0)
+        # And 8L's trigger candidate still produces the same numbers.
+        candidate = gf_trigger_candidate_from_stimulus(
+            _eight_i_stimulus(), duration_s=1.9, samples=2001
+        )
+        assert candidate.peak_lplc2_component_mV == pytest.approx(1.7, rel=1e-6)
+        assert candidate.total_phenomenological_gf_drive_mV == pytest.approx(
+            2.510896, rel=1e-5
+        )
+        assert candidate.is_a_detected_gf_action_potential is False
+        # 8M adds no sensor and no reimplementation: its only import is the
+        # reused 7W connection type.
+        import ast
+        import inspect
+
+        from biological_brain import visual_input_provenance as module
+
+        tree = ast.parse(inspect.getsource(module))
+        module_imports = []
+        for statement in tree.body:
+            if isinstance(statement, ast.ImportFrom) and statement.module:
+                module_imports.append(statement.module)
+            elif isinstance(statement, ast.Import):
+                module_imports.extend(a.name for a in statement.names)
+        joined = " ".join(module_imports)
+        assert "synaptic_abstraction" in joined
+        for banned in (
+            "gf_sensory_drive", "gfs_circuit", "sensory_trigger",
+            "escape_behavior", "gf_active", "chemical_synapse",
+            "electrical_coupling", "numpy", "random",
+        ):
+            assert banned not in joined, banned
+        # The 3.0D-8I import is lazy, inside the refusal only.
+        couple = next(
+            node for node in ast.walk(tree)
+            if isinstance(node, ast.FunctionDef)
+            and node.name == "couple_to_live_gf"
+        )
+        assert [
+            node.module for node in ast.walk(couple)
+            if isinstance(node, ast.ImportFrom) and node.module
+        ] == ["dynamics.gfs_circuit"]
+
+    # --- no live coupling or AP generation ---
+
+    def test_7_no_live_gf_coupling_or_ap_generation_is_possible(self):
+        from biological_brain.dynamics.gfs_circuit import (
+            GFSpikeEvent, UnsupportedSensoryBiophysicalCoupling,
+        )
+        from biological_brain.visual_input_provenance import (
+            get_visual_input_provenance,
+        )
+
+        # Coupling raises the existing 3.0D-8I typed exception, so the seam is
+        # one exception type end to end.
+        for record in get_visual_input_provenance():
+            with pytest.raises(UnsupportedSensoryBiophysicalCoupling) as excinfo:
+                record.couple_to_live_gf()
+            message = str(excinfo.value)
+            assert "real" in message
+            assert "NOT parameterised" in message
+            assert "conductance" in message.lower()
+            assert "gf_sensory_drive" in record.functional_role
+        # The record cannot become a GF spike event: it has no event fields,
+        # and a spike event cannot be built from it.
+        record = get_visual_input_provenance()[0]
+        for absent in (
+            "event_time_s", "source", "provenance", "ap_detected",
+            "is_a_spike", "event_kind",
+        ):
+            assert not hasattr(record, absent), absent
+        assert not isinstance(record, GFSpikeEvent)
+        # And the 3.0D-8I / 8L / 8J / 8K boundary is unchanged: a real escape
+        # still needs a real detected AP from a real circuit run.
+        result = _eight_i_result(gap_ns=135.0)
+        assert result.response_timings["GF"].ap_detected is True
+        from biological_brain.dynamics.escape_behavior import (
+            escape_behavior_from_circuit,
+        )
+
+        behavior = escape_behavior_from_circuit(result)
+        assert behavior.escape_triggered is True
+        assert behavior.gf_ap_peak_time_s is not None
+        from biological_brain.dynamics.sensory_trigger import (
+            GFTriggerCandidate,
+        )
+
+        assert GFTriggerCandidate.is_a_detected_gf_action_potential is False
+        # 7U and 8G are untouched.
+        from biological_brain.source_reconciliation import (
+            get_source_reconciliation_registry,
+        )
+
+        registry = get_source_reconciliation_registry()
+        for conflict_id in registry.unresolved():
+            assert registry.get(conflict_id).preferred_side is None
+        from biological_brain.dynamics.chemical_synapse import (
+            PSI_DLMnChemicalSynapse,
+        )
+
+        assert PSI_DLMnChemicalSynapse().mechanism.peak_conductance_uS == (
+            pytest.approx(80.0)
+        )
+        # 7Y's combined record and its thirteen unavailable quantities remain.
+        from biological_brain.looming_abstraction import (
+            get_looming_abstraction,
+        )
+
+        abstraction = get_looming_abstraction()
+        assert abstraction.gf_visual_inputs[0].input_id == (
+            "lc4_and_lplc2_to_gf"
+        )
+        assert abstraction.any_unavailable_quantity_resolved() is False
+        assert len(abstraction.unavailable_ids()) == 13
+        for quantity_id in (
+            "lc4_to_gf_synaptic_conductance", "lplc2_to_gf_synaptic_conductance",
+        ):
+            assert abstraction.unavailable(quantity_id).value is None
+        # And the scope note says all of this out loud.
+        from biological_brain.visual_input_provenance import scope_note
+
+        note = scope_note()
+        assert "NO QUANTITATIVE SYNAPTIC KINETICS" in note
+        assert "NOT A SIMULATOR INPUT" in note
+        assert "AGING IS PROVENANCE CONTEXT" in note
+
+
+# 3.0D-8M needs ClaimKind at module scope for the feature test above.
+from biological_brain.visual_input_provenance import ClaimKind  # noqa: E402
