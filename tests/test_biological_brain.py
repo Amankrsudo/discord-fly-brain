@@ -27349,3 +27349,558 @@ class TestGFSHonestAPDetection:
             )
 
 
+# ==========================================================================
+# 3.0D-8K -- GF spike -> short-mode escape behavior output
+# ==========================================================================
+
+from biological_brain.dynamics.escape_behavior import (
+    EscapeBehaviorError,
+    EscapeBehaviorOutput,
+    EscapeEventKind,
+    EventTimingBasis,
+    MotorOutputEvent,
+    PublishedTtmDlmInterval,
+    escape_behavior_from_circuit,
+    escape_behavior_scope_note,
+    published_ttm_to_dlm_interval,
+)
+
+
+class TestGFSSpikeToEscapeBehavior:
+    """3.0D-8K: a detected GF action potential -> short-mode escape events.
+
+    This layer sits downstream of the 3.0D-8I/8J circuit and upstream of any
+    consumer. Its whole job is to be THIN: consume the action potentials 8J
+    already detected, name the two motor-output events, and refuse to say
+    anything about muscle force, biomechanics, escape direction or the long
+    takeoff mode.
+
+    The tests below are therefore mostly negative. They pin the four things
+    that could quietly go wrong here: a voltage floor crossing being treated as
+    a trigger, the published 0.4-0.5 ms TTM->DLM interval being turned into a
+    delay, a partial escape being reported as a complete one, and the layer
+    acquiring a solver or a threshold of its own.
+
+    Two source facts are recorded and asserted rather than assumed. The
+    published TTM->DLM separation of ~0.4 ms is the muscle measurement from
+    Allen & Godenschwege 2010. And the short-mode/long-mode distinction is taken
+    from Devineni & Scaplen 2022, which is a REVIEW that cites von Reyn et al.
+    2014, so it is used as a review-level source and not as the primary report.
+    """
+
+    def _behavior(self, gap_ns=135.0):
+        return escape_behavior_from_circuit(_eight_i_result(gap_ns=gap_ns))
+
+    # --- construction and the typed event API ---
+
+    def test_1_escape_behavior_construction_and_event_api(self):
+        from biological_brain.dynamics.escape_behavior import (
+            EscapeBehaviorOutput, EscapeEventKind, EventTimingBasis,
+            MotorOutputEvent,
+        )
+
+        behavior = self._behavior()
+        assert isinstance(behavior, EscapeBehaviorOutput)
+        # The two event kinds are exactly the short-mode motor outputs.
+        assert {kind.value for kind in EscapeEventKind} == {
+            "ttm_jump", "dlm_wing_depression",
+        }
+        assert behavior.escape_triggered is True
+        assert behavior.event_kinds() == ("ttm_jump", "dlm_wing_depression")
+        # A Discord-style consumer can read it with no neural knowledge.
+        payload = behavior.to_consumer_dict()
+        assert payload["escape_triggered"] is True
+        assert payload["jump_initiated"] is True
+        assert payload["wing_depression_initiated"] is True
+        assert payload["not_triggered_reason"] is None
+        assert payload["incomplete_short_mode_reason"] is None
+        assert [e["event"] for e in payload["events"]] == [
+            "ttm_jump", "dlm_wing_depression",
+        ]
+        assert [e["behavioral_label"] for e in payload["events"]] == [
+            "jump initiated", "wing depression initiated",
+        ]
+        # The consumer payload contains no voltage, no conductance and no
+        # compartment: nothing that would force a consumer to know neurons.
+        for event in payload["events"]:
+            assert set(event) == {
+                "event", "behavioral_label", "time_ms", "pathway_muscle",
+                "is_biomechanical_claim",
+            }
+            assert event["is_biomechanical_claim"] is False
+            blob = repr(payload).lower()
+            for banned in ("mv", "sodium", "potential", "conductance", "seg"):
+                assert banned not in blob, banned
+        # Each event is typed and carries the timing basis.
+        for event in behavior.events:
+            assert isinstance(event, MotorOutputEvent)
+            assert event.timing_basis is EventTimingBasis.NEURAL_AP_PEAK
+            assert event.is_biomechanical_claim is False
+            assert event.is_a_muscle_model_output is False
+            assert event.muscle in ("TTM", "DLM")
+        # The muscle identities come from the existing 3.0D-7X records.
+        from biological_brain.motor_output_abstraction import (
+            get_motor_output_abstraction,
+        )
+
+        motor_output = get_motor_output_abstraction()
+        for event in behavior.events:
+            spec = motor_output.output_for_neuron(event.source_neuron)
+            assert event.motor_output_id == spec.output_id
+            assert event.muscle == spec.postsynaptic_muscle
+
+    # --- event ordering: jump before wing ---
+
+    def test_2_event_ordering_is_jump_then_wing(self):
+        from biological_brain.dynamics.escape_behavior import (
+            EscapeBehaviorError, EscapeEventKind, MotorOutputEvent,
+        )
+
+        behavior = self._behavior()
+        jump = behavior.event_of(EscapeEventKind.TTM_JUMP)
+        wing = behavior.event_of(EscapeEventKind.DLM_WING_DEPRESSION)
+        assert jump is not None and wing is not None
+        # THE SHORT-MODE SIGNATURE: the jump precedes the wing downbeat.
+        assert jump.event_time_s < wing.event_time_s
+        assert jump.event_time_s == pytest.approx(5.8e-4, abs=1e-9)
+        assert wing.event_time_s == pytest.approx(7.7e-4, abs=1e-9)
+        # The events are in time order in the tuple itself.
+        times = [event.event_time_s for event in behavior.events]
+        assert times == sorted(times)
+        # Both follow the GF AP.
+        assert behavior.gf_ap_peak_time_s < jump.event_time_s
+        assert behavior.gf_ap_peak_time_s == pytest.approx(3.5e-4, abs=1e-9)
+        # Reversed ordering is rejected rather than silently accepted.
+        with pytest.raises(EscapeBehaviorError):
+            EscapeBehaviorOutput(
+                escape_triggered=True,
+                gf_ap_peak_time_s=0.0, gf_ap_peak_voltage_mV=0.0,
+                events=(wing, jump),
+                ttm_to_dlm_separation_ms=-0.19,
+                ttm_to_dlm_reference=published_ttm_to_dlm_interval(),
+                not_triggered_reason=None,
+            )
+
+    # --- timing preserved, not replaced by a delay ---
+
+    def test_3_measured_neural_timing_is_preserved_not_replaced(self):
+        from biological_brain.dynamics.escape_behavior import (
+            EscapeBehaviorError, EscapeEventKind, EventTimingBasis,
+            MotorOutputEvent,
+        )
+
+        behavior = self._behavior()
+        # Every event time IS the measured AP peak, with nothing added.
+        for event in behavior.events:
+            assert event.event_time_s == event.neural_ap_peak_time_s
+            assert event.timing_basis is EventTimingBasis.NEURAL_AP_PEAK
+        # And they match the 8J records the circuit produced.
+        result = _eight_i_result(gap_ns=135.0)
+        assert behavior.gf_ap_peak_time_s == (
+            result.response_timings["GF"].ap_peak_time_s
+        )
+        assert behavior.event_of(
+            EscapeEventKind.TTM_JUMP
+        ).event_time_s == result.response_timings["TTMn"].ap_peak_time_s
+        assert behavior.event_of(
+            EscapeEventKind.DLM_WING_DEPRESSION
+        ).event_time_s == result.response_timings["DLMn"].ap_peak_time_s
+        # Latencies are measured from the GF AP peak, in ms.
+        assert behavior.event_of(
+            EscapeEventKind.TTM_JUMP
+        ).latency_from_gf_ap_peak_ms == pytest.approx(0.230, abs=1e-6)
+        assert behavior.event_of(
+            EscapeEventKind.DLM_WING_DEPRESSION
+        ).latency_from_gf_ap_peak_ms == pytest.approx(0.420, abs=1e-6)
+        assert behavior.ttm_to_dlm_separation_ms == pytest.approx(
+            0.190, abs=1e-6
+        )
+        # An event whose time differs from its AP peak is refused outright, so
+        # a delay can never be slipped in.
+        with pytest.raises(EscapeBehaviorError):
+            MotorOutputEvent(
+                event_kind=EscapeEventKind.TTM_JUMP,
+                event_time_s=0.0008, source_neuron="TTMn", muscle="TTM",
+                motor_output_id="TTMn_TTM", behavioral_label="jump initiated",
+                timing_basis=EventTimingBasis.NEURAL_AP_PEAK,
+                neural_ap_peak_time_s=0.0005,
+                neural_ap_peak_voltage_mV=61.2,
+                latency_from_gf_ap_peak_ms=0.3,
+            )
+        # And no timing basis other than the AP peak is accepted.
+        with pytest.raises(EscapeBehaviorError):
+            MotorOutputEvent(
+                event_kind=EscapeEventKind.TTM_JUMP,
+                event_time_s=0.0005, source_neuron="TTMn", muscle="TTM",
+                motor_output_id="TTMn_TTM", behavioral_label="jump initiated",
+                timing_basis="published_reference",
+                neural_ap_peak_time_s=0.0005,
+                neural_ap_peak_voltage_mV=61.2,
+                latency_from_gf_ap_peak_ms=0.2,
+            )
+
+    def test_4_the_published_ttm_to_dlm_interval_is_a_reference_not_a_delay(self):
+        reference = published_ttm_to_dlm_interval()
+        # The value, its unit and its provenance are all explicit.
+        assert reference.value_ms == (0.4, 0.5)
+        assert reference.unit == "ms"
+        assert "~0.4 ms" in reference.verbatim_statement
+        assert reference.measured_observable == (
+            "separation between TTM and DLM muscle responses"
+        )
+        assert reference.recording_site == "TTM and DLM muscle fibres"
+        assert reference.measurement_level == "end_to_end_GFS_output"
+        assert reference.source_references
+        assert reference.verbatim_statement in reference.limitations()
+        # It is explicitly NOT a delay, NOT derived here, and NOT an NMJ
+        # parameter, and it cannot be made any of those.
+        assert reference.is_used_as_a_delay is False
+        assert reference.is_derived_from_this_model is False
+        assert reference.is_an_nmj_parameter is False
+        from biological_brain.dynamics.escape_behavior import (
+            EscapeBehaviorError, PublishedTtmDlmInterval,
+        )
+
+        for bad in (
+            {"is_used_as_a_delay": True},
+            {"is_derived_from_this_model": True},
+            {"is_an_nmj_parameter": True},
+            {"unit": "s"},
+            {"value_ms": (0.5, 0.4)},
+            {"value_ms": (0.0, 0.5)},
+        ):
+            with pytest.raises(EscapeBehaviorError):
+                PublishedTtmDlmInterval(**bad)
+        # A comparison helper exists and is honest about a missing value.
+        assert reference.contains(0.45) is True
+        assert reference.contains(0.19) is False
+        assert reference.contains(None) is None
+        # And the circuit reports the measured value next to the reference
+        # without equating them.
+        behavior = self._behavior()
+        assert behavior.ttm_to_dlm_reference is not None
+        assert behavior.ttm_to_dlm_reference.value_ms == (0.4, 0.5)
+        assert behavior.ttm_to_dlm_separation_ms == pytest.approx(
+            0.190, abs=1e-6
+        )
+        assert behavior.ttm_to_dlm_reference.contains(
+            behavior.ttm_to_dlm_separation_ms
+        ) is False
+        summary = behavior.summary()
+        assert "CONTEXT ONLY" in summary
+        assert "never applied as a delay" in summary
+        assert "not the same quantity" in summary
+
+    # --- no GF spike: no behavior ---
+
+    def test_5_no_gf_spike_produces_no_behavior(self):
+        from biological_brain.dynamics.escape_behavior import (
+            EscapeBehaviorError, EscapeBehaviorOutput, MotorOutputEvent,
+        )
+
+        # A floor-crossing-only GF is NOT a trigger. The 1 nS circuit run
+        # gives a real AP, so build the untriggered case directly instead: an
+        # output with no GF AP must be empty, and must say why.
+        not_triggered = EscapeBehaviorOutput(
+            escape_triggered=False,
+            gf_ap_peak_time_s=None, gf_ap_peak_voltage_mV=None,
+            events=(), ttm_to_dlm_separation_ms=None,
+            ttm_to_dlm_reference=published_ttm_to_dlm_interval(),
+            not_triggered_reason="No action potential was detected in the GF.",
+        )
+        assert not_triggered.escape_triggered is False
+        assert not_triggered.events == ()
+        assert not_triggered.jump_initiated is False
+        assert not_triggered.wing_depression_initiated is False
+        assert not_triggered.ttm_to_dlm_separation_ms is None
+        assert "NO ESCAPE TRIGGERED" in not_triggered.summary()
+        assert not_triggered.to_consumer_dict()["jump_initiated"] is False
+        # An untriggered escape cannot carry events, a GF time, or omit its
+        # reason. The event used here is a VALID one, so the test exercises the
+        # untriggered invariant rather than tripping an earlier validation.
+        valid_event = MotorOutputEvent(
+            event_kind=EscapeEventKind.TTM_JUMP,
+            event_time_s=1e-4, source_neuron="TTMn", muscle="TTM",
+            motor_output_id="TTMn_TTM", behavioral_label="jump initiated",
+            timing_basis=EventTimingBasis.NEURAL_AP_PEAK,
+            neural_ap_peak_time_s=1e-4, neural_ap_peak_voltage_mV=61.2,
+            latency_from_gf_ap_peak_ms=0.1,
+        )
+        for bad in (
+            {"events": (valid_event,)},
+            {"not_triggered_reason": None},
+            {"gf_ap_peak_time_s": 0.0001},
+        ):
+            kwargs = {
+                "escape_triggered": False, "gf_ap_peak_time_s": None,
+                "gf_ap_peak_voltage_mV": None, "events": (),
+                "ttm_to_dlm_separation_ms": None,
+                "ttm_to_dlm_reference": published_ttm_to_dlm_interval(),
+                "not_triggered_reason": "because",
+            }
+            kwargs.update(bad)
+            with pytest.raises(EscapeBehaviorError):
+                EscapeBehaviorOutput(**kwargs)
+        # A non-circuit input is refused outright: this layer never detects a
+        # spike itself.
+        for bad in (None, "gf spiked", {"GF": "spike"}, 42, []):
+            with pytest.raises(EscapeBehaviorError):
+                escape_behavior_from_circuit(bad)
+
+    def test_6_a_partial_escape_is_reported_as_incomplete(self):
+        # At 1 nS the TTMn is subthreshold while the DLMn still fires, so the
+        # result is "wing depression, no jump". That is a real outcome and must
+        # be reported as incomplete rather than raised or reordered.
+        behavior = self._behavior(gap_ns=1.0)
+        assert behavior.escape_triggered is True
+        assert behavior.jump_initiated is False
+        assert behavior.wing_depression_initiated is True
+        assert behavior.event_kinds() == ("dlm_wing_depression",)
+        assert behavior.ttm_to_dlm_separation_ms is None
+        reason = behavior.incomplete_short_mode_reason
+        assert reason is not None
+        assert "NOT A COMPLETE SHORT-MODE ESCAPE" in reason
+        assert "TTMn" in reason
+        assert "NOT used to synthesise" in reason
+        # The published interval was NOT used to invent the missing jump.
+        assert behavior.ttm_to_dlm_reference.value_ms == (0.4, 0.5)
+        assert "not available" in behavior.summary()
+        assert "NOT used to fill the gap" in behavior.summary()
+        # And the consumer surface shows the partial state honestly.
+        payload = behavior.to_consumer_dict()
+        assert payload["jump_initiated"] is False
+        assert payload["wing_depression_initiated"] is True
+        assert payload["ttm_to_dlm_separation_ms"] is None
+        assert payload["incomplete_short_mode_reason"] is not None
+
+    # --- determinism ---
+
+    def test_7_the_output_is_deterministic(self):
+        from biological_brain.dynamics.escape_behavior import (
+            escape_behavior_from_circuit,
+        )
+
+        # A frozen value object, so equality is meaningful.
+        first = self._behavior()
+        second = self._behavior()
+        assert first == second
+        assert first.summary() == second.summary()
+        assert first.to_consumer_dict() == second.to_consumer_dict()
+        # Rebuilding from the same circuit result gives an identical object,
+        # and a fresh circuit run gives the same behavior.
+        result = _eight_i_result(gap_ns=135.0)
+        again = escape_behavior_from_circuit(result)
+        assert again.events == first.events
+        circuit = _escape_k_circuit(gap_ns=135.0)
+        fresh = escape_behavior_from_circuit(
+            circuit.run_live_circuit(
+                _eight_i_event(), duration_ms=2.0, settle_ms=50.0
+            )
+        )
+        assert fresh.events == first.events
+        assert fresh.ttm_to_dlm_separation_ms == first.ttm_to_dlm_separation_ms
+
+    # --- no new mechanism, and nothing else moved ---
+
+    def test_8_no_new_solver_detector_threshold_or_biomechanics(self):
+        import inspect
+
+        from biological_brain.dynamics import escape_behavior
+
+        source = inspect.getsource(escape_behavior)
+        # NO new spike detector and no new solver.
+        for banned in (
+            "def ap_diagnostic", "def _is_spike", "def detect_spike",
+            "def step", "def initial_state", "def voltages_mV", "def prepare",
+            "ActiveAxonModel", "map_placement_to_segment",
+        ):
+            assert banned not in source, banned
+        # It imports only the two existing layers it consumes.
+        imported = []
+        for node in _eight_h_ast_escape_behavior():
+            if isinstance(node, __import__("ast").ImportFrom) and node.module:
+                imported.append(node.module)
+            elif isinstance(node, __import__("ast").Import):
+                imported.extend(a.name for a in node.names)
+        joined = " ".join(imported)
+        for required in ("gfs_circuit", "motor_output_abstraction"):
+            assert required in joined, required
+        for banned in (
+            "gf_active", "ttmn_active", "psi_active", "dlmn_active",
+            "chemical_synapse", "electrical_coupling", "gf_sensory_drive",
+            "looming_abstraction", "gf_equilibrium", "numpy", "random",
+        ):
+            assert banned not in joined, banned
+        # No behavioural threshold, and no threshold vocabulary in the CODE.
+        # The scan is on identifiers and literals, not on raw text, because
+        # this module has to be able to SAY that it has no threshold and that
+        # it models no probability, and a text scan would flag the very
+        # sentences that document the guarantee.
+        import ast
+        import inspect
+
+        tokens = set()
+        for node in ast.walk(ast.parse(inspect.getsource(escape_behavior))):
+            if isinstance(node, ast.Name):
+                tokens.add(node.id.lower())
+            elif isinstance(node, ast.Attribute):
+                tokens.add(node.attr.lower())
+            elif isinstance(node, ast.arg):
+                tokens.add(node.arg.lower())
+            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                tokens.add(node.name.lower())
+            elif isinstance(node, ast.ClassDef):
+                tokens.add(node.name.lower())
+            elif isinstance(node, ast.keyword) and node.arg:
+                tokens.add(node.arg.lower())
+            elif isinstance(node, ast.Constant) and not isinstance(
+                node.value, str
+            ):
+                tokens.add(repr(node.value).lower())
+        for banned in (
+            "r_over_v_threshold", "escape_threshold", "probability",
+            "spike_threshold", "amplitude_threshold", "refractory",
+            "muscle_force", "joint_angle", "aerodynamics", "escape_direction",
+            "takeoff_velocity", "flight_dynamics", "delay_ms",
+        ):
+            assert banned not in tokens, banned
+        # The public surface has no biomechanics.
+        for cls in (escape_behavior,):
+            for attribute in (
+                "muscle", "force", "joint_angle", "aerodynamics", "direction",
+                "takeoff_velocity", "flight_dynamics", "nmj", "threshold",
+            ):
+                assert not hasattr(cls, attribute), attribute
+        # The layer's own constants carry no threshold and no delay.
+        assert escape_behavior.MODEL_NAME_ESCAPE_BEHAVIOR_V0
+        # And it states the three boundaries it will not cross.
+        note = escape_behavior.escape_behavior_scope_note()
+        assert "NO BIOMECHANICS" in note
+        assert "NO BEHAVIOURAL THRESHOLD" in note
+        assert "SHORT-MODE" in note
+        assert "REFERENCE, NOT A DELAY" in note
+        assert "3.0D-7U" in note and "3.0D-8G" in note and "3.0D-8I" in note
+
+    def test_9_the_source_corrections_and_prior_layers_are_recorded(self):
+        from biological_brain.dynamics.escape_behavior import (
+            SOURCE_ALLEN_GODENSCHWEGE_2010, SOURCE_AUGUSTIN_2019_ESCAPE,
+            SOURCE_CHEONG_2026_MANC, SOURCE_DEVINENI_SCAPLEN_2022,
+            SOURCE_VON_REYN_2014_CITED,
+        )
+
+        # The two sources that were actually read say so precisely.
+        assert "PMC2946074" in SOURCE_ALLEN_GODENSCHWEGE_2010
+        assert "jump always occurs before the wing downbeat" in (
+            SOURCE_ALLEN_GODENSCHWEGE_2010
+        )
+        assert "delay between the TTM and DLM response is always ~0.4 ms" in (
+            SOURCE_ALLEN_GODENSCHWEGE_2010
+        )
+        assert "not a spike" not in SOURCE_ALLEN_GODENSCHWEGE_2010.lower()
+        # The citation correction is recorded rather than hidden: PMC8770416
+        # is a REVIEW that cites von Reyn 2014, not a von Reyn paper.
+        assert "PMC8770416" in SOURCE_DEVINENI_SCAPLEN_2022
+        assert "it is not itself a von Reyn paper" in SOURCE_DEVINENI_SCAPLEN_2022
+        assert "mediate short but not long takeoffs" in (
+            SOURCE_DEVINENI_SCAPLEN_2022
+        )
+        assert "does NOT claim to have read von Reyn et al. 2014 directly" in (
+            SOURCE_VON_REYN_2014_CITED
+        )
+        # The connectome source is marked as structural context with no timing.
+        assert "PMC13384506" in SOURCE_CHEONG_2026_MANC
+        assert "STRUCTURAL and MOTOR-SYSTEM context only" in (
+            SOURCE_CHEONG_2026_MANC
+        )
+        assert "jump-starts the power muscles" in SOURCE_CHEONG_2026_MANC
+        # Augustin 2019 supports the AP-peak-only timing convention.
+        assert "AP peak" in SOURCE_AUGUSTIN_2019_ESCAPE
+        assert "0.35 ms" in SOURCE_AUGUSTIN_2019_ESCAPE
+        # All four are carried on the output.
+        references = self._behavior().source_references()
+        for source in (
+            SOURCE_ALLEN_GODENSCHWEGE_2010, SOURCE_AUGUSTIN_2019_ESCAPE,
+            SOURCE_DEVINENI_SCAPLEN_2022, SOURCE_CHEONG_2026_MANC,
+            SOURCE_VON_REYN_2014_CITED,
+        ):
+            assert source in references, source[:60]
+
+        # 3.0D-7X is untouched and still refuses to be a live solver.
+        from biological_brain.motor_output_abstraction import (
+            get_motor_output_abstraction,
+        )
+
+        motor_output = get_motor_output_abstraction()
+        assert motor_output.output_ids() == ("TTMn_TTM", "DLMn_DLM")
+        assert motor_output.live_solver_eligible is False
+        assert motor_output.any_live_solver_eligible() is False
+        assert len(motor_output.unavailable_ids()) == 14
+        # 3.0D-8J's AP detection and 3.0D-8I's boundary are both unchanged.
+        from biological_brain.dynamics.gfs_circuit import (
+            GFEventSource, GFSCircuit, UnsupportedSensoryBiophysicalCoupling,
+        )
+
+        result = _eight_i_result(gap_ns=135.0)
+        assert result.response_timings["GF"].ap_detected is True
+        assert result.response_timings["TTMn"].ap_detected is True
+        assert result.response_timings["DLMn"].ap_detected is True
+        circuit = _eight_i_circuit()
+        with pytest.raises(UnsupportedSensoryBiophysicalCoupling):
+            circuit.coupling_to_live_gf() if False else circuit.run_looming_through_live_circuit(
+                _eight_i_stimulus()
+            )
+        # 3.0D-7U is still unresolved, and 3.0D-8G unchanged.
+        from biological_brain.source_reconciliation import (
+            get_source_reconciliation_registry,
+        )
+
+        reconciliation = get_source_reconciliation_registry()
+        for conflict_id in reconciliation.unresolved():
+            assert reconciliation.get(conflict_id).preferred_side is None
+        from biological_brain.dynamics.chemical_synapse import (
+            PSI_DLMnChemicalSynapse,
+        )
+
+        assert PSI_DLMnChemicalSynapse().mechanism.peak_conductance_uS == (
+            pytest.approx(80.0)
+        )
+        # 3.0D-8H's phenomenology is untouched.
+        from biological_brain.dynamics.gf_sensory_drive import (
+            published_ache_gf_coefficients,
+        )
+
+        assert published_ache_gf_coefficients().c1_mV_per_deg_per_s == 0.0002567
+
+
+def _escape_k_circuit(gap_ns=135.0):
+    """A 3.0D-8I circuit with an explicit numerical gap-conductance fixture.
+
+    3.0D-7U is an unresolved factor-1000 unit conflict and 3.0D-8K does not
+    resolve it or prefer either side, so the conductance is always stated and
+    always supplied by the caller. 135 nS is used here because it is the value
+    at which the TTMn actually fires, which the TTM jump event needs.
+    """
+    from biological_brain.dynamics.electrical_coupling import (
+        explicit_conductance,
+    )
+    from biological_brain.dynamics.gfs_circuit import GFSCircuit
+
+    return GFSCircuit(
+        gap_conductance=explicit_conductance(
+            gap_ns, "nS",
+            "3.0D-8K NUMERICAL FIXTURE, NOT a biological g_gap value. "
+            "3.0D-7U is an unresolved factor-1000 unit conflict and 8K does "
+            "not resolve it or prefer either side.",
+        ),
+        psi_dlmn_peak_conductance_source="source_weight_as_written",
+    )
+
+
+def _eight_h_ast_escape_behavior():
+    """The escape_behavior module's AST, for the import audit."""
+    import ast
+    import inspect
+
+    from biological_brain.dynamics import escape_behavior
+
+    return ast.walk(ast.parse(inspect.getsource(escape_behavior)))
