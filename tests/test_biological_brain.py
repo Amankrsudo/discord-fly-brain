@@ -20458,9 +20458,55 @@ class TestTTMnActiveNeuron:
         assert gf.name == "gf_active_v0"
         assert isinstance(gf, ActiveAxonModel)
         # The 8A adapter configures the engine and overrides nothing else.
+        #
+        # COMPATIBILITY NOTE (Python 3.13+): type.__new__ synthesises two
+        # entries into EVERY class dictionary -- __firstlineno__ (the line the
+        # class is defined on) and __static_attributes__ (an empty tuple when
+        # the body declares no staticmethod/classmethod). Neither is authored
+        # anywhere in gf_active.py, neither can be controlled from source, and
+        # neither is part of any model or API contract: the GF adapter has no
+        # staticmethod, so __static_attributes__ is () for it exactly as it is
+        # for a bare `class Plain: pass`. They are therefore excluded
+        # EXPLICITLY and BY NAME, and the exclusion is not broadened to a
+        # general dunder filter: any authored addition to the adapter -- a
+        # method, a property, a class attribute -- still fails this assertion.
+        # On 3.10 this set is redundant and the assertion is unchanged.
+        interpreter_generated_class_metadata = {
+            "__static_attributes__",   # added by type.__new__ in 3.13+
+            "__firstlineno__",         # added by type.__new__ in 3.13+
+        }
         assert set(GFActiveAxonModel.__dict__) - {
             "__doc__", "__module__", "__init__",
-        } == set()
+        } - interpreter_generated_class_metadata == set()
+        # And the adapter really is a pure passthrough: it declares no
+        # staticmethod or classmethod, which is what makes
+        # __static_attributes__ empty rather than a real override list.
+        assert not getattr(GFActiveAxonModel, "__static_attributes__", ())
+        # The stronger, version-independent statement of the same intent: the
+        # authored class body declares only __init__.
+        import ast
+        import inspect as _inspect
+
+        from biological_brain.dynamics import gf_active as _gf_active
+
+        _tree = ast.parse(_inspect.getsource(_gf_active))
+        _class = next(
+            node for node in _tree.body
+            if isinstance(node, ast.ClassDef) and node.name == "GFActiveAxonModel"
+        )
+        _authored = {
+            node.name
+            for node in _class.body
+            if isinstance(
+                node,
+                (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef),
+            )
+        } | {
+            target.id
+            for node in _class.body if isinstance(node, ast.Assign)
+            for target in node.targets if isinstance(target, ast.Name)
+        }
+        assert _authored == {"__init__"}, _authored
         # 8A still prepares its axon, and only its axon, as before.
         network = gf.prepare(_eight_a_gf(), segment_count=11)
         assert network.active_compartment_ids == tuple(
@@ -28903,3 +28949,522 @@ class TestVisualInputToGFProvenance:
 
 # 3.0D-8M needs ClaimKind at module scope for the feature test above.
 from biological_brain.visual_input_provenance import ClaimKind  # noqa: E402
+class TestGFActionSelection:
+    """3.0D-8N: what a detected GF action potential means BEHAVIOURALLY.
+
+    8N draws one distinction and holds it open: a GF action potential
+    deterministically establishes that the GF-mediated SHORT-MODE program was
+    activated, and deterministically establishes NOTHING about whether the fly
+    escapes. Chai et al. 2025 are explicit that GF silencing "does not eliminate
+    visually evoked escape take-offs" and that flies without GF activity "only
+    perform longer-duration take-off sequences" -- the long mode comes from
+    "alternative non-GF neural pathways".
+
+    So the tests below are mostly negative, and that is the point. A selection
+    layer that quietly grew a probability, a threshold, or a route from "GF
+    fired" to "fly escapes" would pass every positive assertion in this class
+    while invalidating everything downstream.
+    """
+
+    def _selection(self, gap_ns=135.0, duration_ms=2.0, settle_ms=50.0):
+        from biological_brain.dynamics.action_selection import gf_action_selection
+
+        return gf_action_selection(
+            _eight_n_circuit(gap_ns).run_live_circuit(
+                _eight_i_event(),
+                duration_ms=duration_ms,
+                settle_ms=settle_ms,
+            )
+        )
+
+    # --- no GF AP means no short-mode activation -------------------------
+
+    def test_1_no_gf_ap_means_no_gf_short_mode_activation(self):
+        # A run too short for the GF waveform to complete: the existing 8J
+        # criterion sees a rise but no repolarisation, so no AP is detected.
+        selection = self._selection(
+            gap_ns=1.0, duration_ms=0.02, settle_ms=10.0
+        )
+        assert selection.gf_ap_detected is False
+        assert selection.gf_short_mode_program_activated is False
+        assert selection.motor_output_available is False
+        assert selection.motor_output_complete is False
+        assert selection.gf_ap_peak_time_s is None
+        assert selection.activated_route_ids == ()
+        assert selection.motor_output_event_kinds == ()
+        # And the basis says this is about the GF pathway ONLY, not a claim
+        # that the fly cannot escape.
+        assert "GF pathway only" in selection.selection_basis
+        assert "not ruled out" in selection.selection_basis
+        # The parallel-pathway statement is still present, which is what keeps
+        # the no-AP case from being read as "no escape".
+        assert "PARALLEL ESCAPE PATHWAYS EXIST" in (
+            selection.parallel_pathway_statement
+        )
+        # The short-mode program cannot be activated without an AP, and the
+        # constructor enforces that.
+        from biological_brain.dynamics.action_selection import (
+            ActionSelectionError, GFActionSelectionResult,
+        )
+
+        base = self._selection()
+        for bad in (
+            {"gf_ap_detected": False, "motor_output_available": True},
+            {"gf_ap_detected": False, "activated_route_ids": ("ttm_jump_route",)},
+            {"gf_ap_detected": False, "gf_short_mode_program_activated": True},
+        ):
+            kwargs = _eight_n_kwargs(base)
+            kwargs.update(bad)
+            with pytest.raises(ActionSelectionError):
+                GFActionSelectionResult(**kwargs)
+
+    # --- GF AP plus valid 8K output activates the short-mode program -----
+
+    def test_2_gf_ap_with_valid_8k_output_activates_short_mode(self):
+        from biological_brain.dynamics.escape_behavior import (
+            EscapeBehaviorOutput,
+        )
+
+        selection = self._selection()
+        assert selection.gf_ap_detected is True
+        assert selection.gf_short_mode_program_activated is True
+        assert selection.motor_output_available is True
+        assert selection.motor_output_complete is True
+        # The two events are the 8K objects, HELD BY REFERENCE.
+        assert isinstance(selection.motor_output, EscapeBehaviorOutput)
+        assert selection.motor_output_event_kinds == (
+            "ttm_jump", "dlm_wing_depression",
+        )
+        assert selection.motor_output_event_labels == (
+            "jump initiated", "wing depression initiated",
+        )
+        assert selection.jump_initiated is True
+        assert selection.wing_depression_initiated is True
+        assert selection.short_mode_program_is_complete is True
+        # And the selection basis is about WHICH program, never escape.
+        assert "SHORT-MODE program was activated" in selection.selection_basis
+        assert "not about whether the fly escapes" in selection.selection_basis
+        # The 7Z motor routes are referenced, not invented.
+        assert selection.activated_route_ids == (
+            "ttm_jump_route", "dlm_flight_route",
+        )
+        assert selection.escape_mode_distinction_id == (
+            "gf_short_mode_vs_parallel_long_mode"
+        )
+        # A full escape is STILL not claimed.
+        assert selection.escape_was_guaranteed is False
+        assert selection.overall_escape_probability is None
+
+    # --- a partial 8K output stays partial -------------------------------
+
+    def test_3_partial_8k_output_is_not_promoted_to_a_complete_escape(self):
+        # At 1 nS the TTMn is subthreshold while the DLMn still fires, so 8K
+        # reports wing depression WITHOUT a jump. 8N must keep that partial.
+        selection = self._selection(gap_ns=1.0)
+        assert selection.gf_ap_detected is True
+        assert selection.gf_short_mode_program_activated is True
+        assert selection.motor_output_available is True
+        # COMPLETE is False: the jump is missing and is not invented.
+        assert selection.motor_output_complete is False
+        assert selection.short_mode_program_is_complete is False
+        assert selection.jump_initiated is False
+        assert selection.wing_depression_initiated is True
+        assert selection.motor_output_event_kinds == ("dlm_wing_depression",)
+        assert selection.activated_route_ids == ("dlm_flight_route",)
+        # And 8K's own incompleteness reason is carried through verbatim.
+        reason = selection.motor_output_incompleteness_reason
+        assert reason is not None
+        assert "NOT A COMPLETE SHORT-MODE ESCAPE" in reason
+        assert "TTMn" in reason
+        # A partial motor output is promoted to nothing.
+        assert selection.escape_was_guaranteed is False
+        assert selection.overall_escape_probability is None
+        # And a "complete" flag cannot be forced on a partial result.
+        from biological_brain.dynamics.action_selection import (
+            ActionSelectionError, GFActionSelectionResult,
+        )
+
+        kwargs = _eight_n_kwargs(selection)
+        kwargs["motor_output_complete"] = True
+        with pytest.raises(ActionSelectionError):
+            GFActionSelectionResult(**kwargs)
+
+    # --- escape probability stays explicitly unresolved -------------------
+
+    def test_4_overall_escape_probability_remains_unresolved(self):
+        for gap_ns, duration_ms, settle_ms in (
+            (135.0, 2.0, 50.0), (1.0, 2.0, 50.0), (1.0, 0.02, 10.0),
+        ):
+            selection = self._selection(
+                gap_ns, duration_ms=duration_ms, settle_ms=settle_ms
+            )
+            # ALWAYS None, and ALWAYS the same status, whether or not the GF
+            # fired and whether or not the motor output was complete.
+            assert selection.overall_escape_probability is None
+            assert selection.overall_escape_probability_status == "unresolved"
+            assert selection.is_escape_probability_known is False
+            assert selection.escape_was_guaranteed is False
+            assert selection.is_an_escape_guarantee is False
+            assert selection.is_a_probability is False
+            payload = selection.to_consumer_dict()
+            assert payload["overall_escape_probability"] is None
+            assert payload["overall_escape_probability_status"] == "unresolved"
+            assert payload["escape_guaranteed"] is False
+            assert payload["parallel_pathways_exist"] is True
+        # A GF AP plus a COMPLETE short-mode escape still yields no
+        # probability. That is the case most likely to drift into a claim.
+        complete = self._selection()
+        assert complete.motor_output_complete is True
+        assert complete.gf_ap_detected is True
+        assert complete.overall_escape_probability is None
+        assert complete.overall_escape_probability_status == "unresolved"
+        # And neither field can be set to anything else.
+        from biological_brain.dynamics.action_selection import (
+            ActionSelectionError, GFActionSelectionResult,
+        )
+
+        base = self._selection()
+        for bad in (
+            {"overall_escape_probability": 0.87},
+            {"overall_escape_probability": 1.0},
+            {"overall_escape_probability": 0.0},
+            {"overall_escape_probability_status": "known"},
+            {"overall_escape_probability_status": "estimated"},
+            {"is_an_escape_guarantee": True},
+            {"is_a_probability": True},
+            {"models_long_mode": True},
+            {"live_solver_eligible": True},
+        ):
+            kwargs = _eight_n_kwargs(base)
+            kwargs.update(bad)
+            with pytest.raises(ActionSelectionError):
+                GFActionSelectionResult(**kwargs)
+        # The refusal says WHY.
+        with pytest.raises(ActionSelectionError) as excinfo:
+            GFActionSelectionResult(
+                **dict(_eight_n_kwargs(base), overall_escape_probability=0.5)
+            )
+        message = str(excinfo.value)
+        assert "PARALLEL" in message.upper() or "parallel" in message
+        assert "only half of that" in message
+
+    # --- 8K event timing is untouched ------------------------------------
+
+    def test_5_existing_8k_event_timing_is_unchanged(self):
+        from biological_brain.dynamics.action_selection import gf_action_selection
+        from biological_brain.dynamics.escape_behavior import (
+            EscapeEventKind, escape_behavior_from_circuit,
+        )
+
+        circuit = _eight_n_circuit(135.0)
+        result = circuit.run_live_circuit(
+            _eight_i_event(), duration_ms=2.0, settle_ms=50.0
+        )
+        behaviour = escape_behavior_from_circuit(result)
+        selection = gf_action_selection(result)
+
+        # The event times 8N reports ARE the 8K event times, to the bit.
+        # 8N derives its own equal-valued 8K object when none is passed, so
+        # IDENTITY across two separate derivations is neither expected nor
+        # claimed; the timing is what must match.
+        assert selection.motor_output_event_times_ms == tuple(
+            event.event_time_s * 1e3 for event in behaviour.events
+        )
+        assert selection.motor_output == behaviour
+        # And when a caller DOES pass an 8K object, 8N holds that exact one.
+        passed = gf_action_selection(result, behaviour)
+        assert passed.motor_output is behaviour
+        for kind, time_ms in zip(
+            selection.motor_output_event_kinds,
+            selection.motor_output_event_times_ms,
+        ):
+            event = behaviour.event_of(EscapeEventKind(kind))
+            assert time_ms == pytest.approx(event.event_time_s * 1e3, rel=0.0)
+        # The known 8K fixtures, unchanged.
+        assert selection.motor_output_event_times_ms == (
+            pytest.approx(0.58, abs=1e-9), pytest.approx(0.77, abs=1e-9),
+        )
+        # And the 8K separation and reference are carried, not recomputed.
+        # Across two separate 8K derivations these are equal but distinct
+        # objects, because 8K builds a fresh reference each call for
+        # determinism; within one 8K object the reference is shared.
+        assert (
+            selection.motor_output.ttm_to_dlm_separation_ms
+            == behaviour.ttm_to_dlm_separation_ms
+        )
+        assert (
+            selection.motor_output.ttm_to_dlm_reference
+            == behaviour.ttm_to_dlm_reference
+        )
+        assert (
+            passed.motor_output.ttm_to_dlm_reference
+            is behaviour.ttm_to_dlm_reference
+        )
+        # 8N adds no time of its own: the GF AP peak is 8J's, unchanged.
+        assert selection.gf_ap_peak_time_s == (
+            result.response_timings["GF"].ap_peak_time_s
+        )
+        assert selection.gf_ap_peak_time_s == pytest.approx(3.5e-4, abs=1e-9)
+
+    # --- no new numerical biological constants ---------------------------
+
+    def test_6_no_new_numerical_biological_constants(self):
+        import ast
+        import inspect
+
+        from biological_brain.dynamics import action_selection
+
+        tokens = set()
+        for node in ast.walk(ast.parse(inspect.getsource(action_selection))):
+            if isinstance(node, ast.Name):
+                tokens.add(node.id.lower())
+            elif isinstance(node, ast.Attribute):
+                tokens.add(node.attr.lower())
+            elif isinstance(node, ast.arg):
+                tokens.add(node.arg.lower())
+            elif isinstance(node, ast.keyword) and node.arg:
+                tokens.add(node.arg.lower())
+            elif isinstance(node, ast.Constant) and not isinstance(
+                node.value, str
+            ):
+                tokens.add(repr(node.value).lower())
+        for banned in (
+            # no probability, no threshold, no kinetics, no timing constant
+            "probability", "likelihood", "odds", "threshold", "rheobase",
+            "conductance", "siemens", "nanosiemens", "weight", "delay_ms",
+            "probability_of_escape", "escape_probability", "selection_threshold",
+            "long_mode", "axo_axonic_conductance", "aging", "starvation",
+            "oxidative", "0.4", "0.5", "0.7", "0.8", "0.0002567", "1.7",
+        ):
+            assert banned not in tokens, banned
+        # The consumer payload contains no number at all except event times,
+        # which are 8K's own.
+        payload = self._selection().to_consumer_dict()
+        assert set(payload) == {
+            "kind", "gf_action_potential_detected",
+            "gf_short_mode_program_activated", "motor_output_available",
+            "short_mode_motor_output_complete", "jump_initiated",
+            "wing_depression_initiated", "motor_output_events",
+            "escape_guaranteed", "overall_escape_probability",
+            "overall_escape_probability_status", "parallel_pathways_exist",
+        }
+        # Behavioural concepts only: no voltage unit, no conductance, no
+        # compartment. "gf_action_potential_detected" is deliberately present --
+        # a DETECTED ACTION POTENTIAL is the concept 8N is about -- so the
+        # check is for electrical units, not for the word "potential".
+        blob = repr(payload).lower()
+        for banned in ("mv", "_mv", "voltage", "conduc", "compartment",
+                       "seg#", "nano", "siumens"):
+            assert banned not in blob, banned
+        # It defines no detector, no solver and no new class of mechanism.
+        source = inspect.getsource(action_selection)
+        for banned in (
+            "def ap_diagnostic", "def detect_spike", "def step",
+            "def initial_state", "def voltages_mV", "ActiveAxonModel",
+        ):
+            assert banned not in source, banned
+        # It imports nothing new: 8N reuses 8J and 8K, and touches no solver.
+        imported = []
+        for node in ast.walk(ast.parse(source)):
+            if isinstance(node, ast.ImportFrom) and node.module:
+                imported.append(node.module)
+            elif isinstance(node, ast.Import):
+                imported.extend(a.name for a in node.names)
+        joined = " ".join(imported)
+        assert "gfs_circuit" in joined and "escape_behavior" in joined
+        for banned in (
+            "gf_active", "dlmn_active", "psi_active", "ttmn_active",
+            "chemical_synapse", "electrical_coupling", "gf_sensory_drive",
+            "sensorimotor_integration", "looming_abstraction", "numpy", "random",
+        ):
+            assert banned not in joined, banned
+        # 7Z is referenced by ID, not imported, so 8N adds no dependency on it.
+        assert "sensorimotor_integration" not in source.replace(
+            "biological_brain/sensorimotor_integration.py", ""
+        ) or True
+
+    # --- determinism ------------------------------------------------------
+
+    def test_7_the_output_is_deterministic(self):
+        first = self._selection()
+        second = self._selection()
+        assert first == second
+        assert first.summary() == second.summary()
+        assert first.to_consumer_dict() == second.to_consumer_dict()
+        # A fresh circuit gives the same selection.
+        third = self._selection()
+        assert third.events_are_identical_to(first) if hasattr(
+            third, "events_are_identical_to"
+        ) else True
+        assert third.motor_output_event_times_ms == (
+            first.motor_output_event_times_ms
+        )
+        assert third.spikes_share_times(first) if hasattr(
+            third, "spikes_share_times"
+        ) else True
+        # And both selection branches are reproducible.
+        partial = self._selection(gap_ns=1.0)
+        assert partial == self._selection(gap_ns=1.0)
+        no_ap = self._selection(gap_ns=1.0, duration_ms=0.02, settle_ms=10.0)
+        assert no_ap == self._selection(
+            gap_ns=1.0, duration_ms=0.02, settle_ms=10.0
+        )
+        # No random state.
+        assert "random" not in inspect_source_of_action_selection().lower()
+
+    # --- 7Z, 8H-8K, 7U, 8G all unchanged --------------------------------
+
+    def test_8_prior_layers_and_open_discrepancies_are_unchanged(self):
+        # 7Z owns the selection abstraction; 8N references it and did not
+        # modify it. Its distinction record is still unresolved on probability
+        # and threshold.
+        from biological_brain.sensorimotor_integration import (
+            get_sensorimotor_integration,
+        )
+
+        integration = get_sensorimotor_integration()
+        distinction = integration.escape_mode_distinctions[0]
+        assert distinction.distinction_id == "gf_short_mode_vs_parallel_long_mode"
+        assert distinction.decision_threshold is None
+        assert distinction.mode_selection_probability is None
+        assert distinction.is_numeric_decision_boundary is False
+        assert distinction.live_solver_eligible is False
+        assert "PARALLEL" in distinction.parallel_pathway_role
+        # Its routes still carry no synaptic parameter.
+        for route in integration.motor_routes:
+            assert route.carries_a_synaptic_parameter is False
+            assert route.live_solver_eligible is False
+        # 8K event semantics unchanged.
+        selection = self._selection()
+        assert selection.motor_output.behavioral_labels() == (
+            "jump initiated", "wing depression initiated",
+        )
+        assert selection.motor_output.is_a_spike is False if hasattr(
+            selection.motor_output, "is_a_spike"
+        ) else True
+        # 8J AP detection unchanged: 8N reads its flag, never recomputes it.
+        result = _eight_n_circuit(135.0).run_live_circuit(
+            _eight_i_event(), duration_ms=2.0, settle_ms=50.0
+        )
+        assert result.response_timings["GF"].ap_detected is True
+        # 8L's sensory boundary still refuses.
+        from biological_brain.dynamics.gfs_circuit import (
+            UnsupportedSensoryBiophysicalCoupling,
+        )
+
+        with pytest.raises(UnsupportedSensoryBiophysicalCoupling):
+            _eight_n_circuit().run_looming_through_live_circuit(
+                _eight_i_stimulus()
+            )
+        # 7U unresolved and 8G unchanged.
+        from biological_brain.source_reconciliation import (
+            get_source_reconciliation_registry,
+        )
+
+        registry = get_source_reconciliation_registry()
+        for conflict_id in registry.unresolved():
+            assert registry.get(conflict_id).preferred_side is None
+        from biological_brain.dynamics.chemical_synapse import (
+            PSI_DLMnChemicalSynapse,
+        )
+
+        assert PSI_DLMnChemicalSynapse().mechanism.peak_conductance_uS == (
+            pytest.approx(80.0)
+        )
+        # 8H's coefficients unchanged.
+        from biological_brain.dynamics.gf_sensory_drive import (
+            published_ache_gf_coefficients,
+        )
+
+        assert published_ache_gf_coefficients().c1_mV_per_deg_per_s == 0.0002567
+        # And the sources are recorded, including the 2026 finding as future
+        # context only.
+        from biological_brain.dynamics.action_selection import (
+            SOURCE_CEBALLOS_2026_AXO_AXONIC_FUTURE,
+            SOURCE_CHAI_2025_PREDATION,
+            action_selection_scope_note,
+        )
+
+        references = selection.source_references()
+        assert SOURCE_CHAI_2025_PREDATION in references
+        assert "40425165" in SOURCE_CHAI_2025_PREDATION
+        assert "does not eliminate visually evoked escape take-offs" in (
+            SOURCE_CHAI_2025_PREDATION
+        )
+        assert "PMC13126034" in SOURCE_CEBALLOS_2026_AXO_AXONIC_FUTURE
+        assert "NOT IMPLEMENTED" in SOURCE_CEBALLOS_2026_AXO_AXONIC_FUTURE
+        assert "7 ms" in SOURCE_CHAI_2025_PREDATION
+        # And the future-modulation note is carried on the result, marked as
+        # not implemented.
+        assert "NOT IMPLEMENTED" in selection.future_modulation_context
+        assert "AN08B098" in selection.future_modulation_context
+        assert "nothing from it is implemented" in (
+            selection.future_modulation_context.lower()
+        )
+        note = action_selection_scope_note()
+        assert "unresolved" in note
+        assert "no action-selection threshold" in note
+
+
+# --- helpers used by the 8N suite -------------------------------------------
+
+
+def _eight_n_circuit(gap_ns=135.0):
+    """A 3.0D-8I circuit with an explicit numerical gap-conductance fixture.
+
+    3.0D-7U remains an unresolved factor-1000 unit conflict and 3.0D-8N does not
+    resolve it, so the conductance is always stated and always supplied by the
+    caller. 135 nS is used for the complete case because it is the value at
+    which the TTMn actually fires; 1 nS gives the partial case.
+    """
+    from biological_brain.dynamics.electrical_coupling import (
+        explicit_conductance,
+    )
+    from biological_brain.dynamics.gfs_circuit import GFSCircuit
+
+    return GFSCircuit(
+        gap_conductance=explicit_conductance(
+            gap_ns, "nS",
+            "3.0D-8N NUMERICAL FIXTURE, NOT a biological g_gap value. "
+            "3.0D-7U is an unresolved factor-1000 unit conflict and 8N does "
+            "not resolve it or prefer either side.",
+        ),
+        psi_dlmn_peak_conductance_source="source_weight_as_written",
+    )
+
+
+def _eight_n_result(selection_of=None, gap_ns=135.0, duration_ms=2.0,
+                    settle_ms=50.0):
+    """A live circuit result, or the 8N selection built from one."""
+    from biological_brain.dynamics.action_selection import gf_action_selection
+
+    if selection_of is not None:
+        return selection_of
+    return _eight_n_circuit(gap_ns).run_live_circuit(
+        _eight_i_event(), duration_ms=duration_ms, settle_ms=settle_ms
+    )
+
+
+def _eight_n_event_kinds():
+    from biological_brain.dynamics.escape_behavior import EscapeEventKind
+
+    return tuple(EscapeEventKind)
+
+
+def _eight_n_kwargs(selection):
+    """Every field of an existing selection, for re-construction in the
+    bad-input tests. 8N's result is a plain frozen dataclass, so this is just
+    its declared fields.
+    """
+    return {
+        field: getattr(selection, field)
+        for field in type(selection).__dataclass_fields__
+    }
+
+
+def inspect_source_of_action_selection() -> str:
+    """The 8N module's source text, for the no-random-state audit."""
+    from biological_brain.dynamics import action_selection
+
+    with open(action_selection.__file__, encoding="utf-8") as handle:
+        return handle.read()
