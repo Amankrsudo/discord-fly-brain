@@ -24,6 +24,7 @@ from group_brain import GroupBrain
 from social_simulation import MultiFlySimulation
 from experiment_runner import ExperimentRunner
 from biological_brain import BiologicalBrain, BiologicalMode
+from biological_brain.configuration import GFSNumericalDemonstrationConfig
 
 BACKGROUND_TICK_INTERVAL = 2.0   # seconds between idle background ticks
 COMMAND_TICKS = 6                # ticks run immediately after a command fires
@@ -32,14 +33,23 @@ SAVE_EVERY_N_TICKS = 15          # ~30s at the default interval
 
 class FlyController:
     def __init__(self, weights_path="group_weights.json", checkpoint_path="fly_state.json",
-                 on_event=None, biological_mode: BiologicalMode = BiologicalMode.LEGACY_2_0):
+                 on_event=None, biological_mode: BiologicalMode = BiologicalMode.LEGACY_2_0,
+                 gfs_demonstration_config: GFSNumericalDemonstrationConfig = None):
         """on_event: optional async callback(event: dict), called OUTSIDE the
-        lock whenever something notable happens on its own, unprompted --
-        this is what powers ambient posts. Kept decoupled from Discord on
+        lock whenever something notable happens on its own, unprompted -- this
+        is what powers ambient posts. Kept decoupled from Discord on
         purpose: this file doesn't know discord.py exists.
-        
+
         biological_mode: Operating mode for the biological layer (3.0).
-        Defaults to LEGACY_2_0 for full backward compatibility."""
+        Defaults to LEGACY_2_0 for full backward compatibility.
+
+        gfs_demonstration_config: opt-in, explicitly-labelled 3.0D GFS
+        NUMERICAL DEMONSTRATION. Retained for a developer/research surface
+        (see gfs_demonstration.py); it is deliberately NOT consulted by any
+        behaviour command. /scare and every other behaviour path run the 2.0
+        brain exactly as before, whether this is None (the default) or an
+        enabled configuration. It is a numerical solver demonstration driven
+        by an explicit GF event, NOT a sensory or visual prediction."""
         self.checkpoint_path = checkpoint_path
         self.brain = GroupBrain.load(weights_path, checkpoint_path)
         self.social_simulation = MultiFlySimulation(weights_path)
@@ -48,9 +58,30 @@ class FlyController:
         self.lock = asyncio.Lock()
         self._ticks_since_save = 0
         self.on_event = on_event
-        
+
         # 3.0 Biological layer (runs alongside 2.0, disabled by default)
         self.biological_brain = BiologicalBrain(mode=biological_mode)
+
+        # 3.0D GFS numerical demonstration configuration (opt-in, off by
+        # default). STORED BUT DELIBERATELY NOT CONSUMED HERE. No behaviour
+        # command calls the adapter: the GFS circuit is a ~30 s solve driven
+        # by a declared numerical fixture, it depends on the unresolved 3.0D-7U
+        # gap-junction conductance and on 3.0D-8G's unresolved 80 uS vs 0.08 uS
+        # conflict, and under 8G's own default branch it produces no finite
+        # DLMn motor event. Wiring it into a behaviour command would present a
+        # fixture as a response to a user action, which is exactly what the
+        # provenance guards forbid.
+        self.gfs_demonstration_config = (
+            gfs_demonstration_config
+            if gfs_demonstration_config is not None
+            else GFSNumericalDemonstrationConfig(
+                gap_conductance_value=None,
+                gap_conductance_unit=None,
+                gap_conductance_provenance=None,
+            )
+        )
+
+
 
     async def background_loop(self):
         while True:
@@ -118,7 +149,8 @@ class FlyController:
                 if not arc or arc[-1] != b:
                     arc.append(b)
             self.brain.save(self.checkpoint_path)
-            return self._snapshot(all_fired=all_fired, arc=arc, biological_signals=biological_signals)
+            snapshot = self._snapshot(all_fired=all_fired, arc=arc, biological_signals=biological_signals)
+            return snapshot
 
     async def stimulate_flag(self, **flags):
         """Set real stimulate-dict flags, run a burst of ticks so they
