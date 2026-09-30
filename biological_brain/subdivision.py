@@ -30,7 +30,7 @@ reproduction experiment; that would be a modelling choice, not a
 biological one.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from math import floor
 from typing import Dict, Optional, Tuple
 
@@ -59,8 +59,10 @@ class SectionSubdivision:
 
     section_id: str
     segment_count: int = DEFAULT_SEGMENT_COUNT
-    provenance: ProvenanceRecord = ProvenanceRecord(
-        ParameterProvenance.UNKNOWN, _SOURCE_NUMERICAL
+    provenance: ProvenanceRecord = field(
+        default_factory=lambda: ProvenanceRecord(
+            ParameterProvenance.UNKNOWN, _SOURCE_NUMERICAL
+        )
     )
     derivation: str = "numerical subdivision of the source section"
 
