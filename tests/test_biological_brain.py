@@ -26081,10 +26081,12 @@ class TestGFSCircuitIntegration:
         assert "neuromuscular junction" in report.lower()
         assert "No agreement or disagreement is claimed" in report
         # It also states the metric's own limitation: a floor crossing is not a
-        # spike, and shrinks as the coupling grows.
+        # spike, and shrinks as the coupling grows. 3.0D-8J superseded this
+        # caveat with a real AP-peak latency, but the floor-crossing warning
+        # stays, because the floor-crossing number is still reported.
         assert "OBSERVATION FLOOR" in report
         assert "FLOOR-CROSSING LATENCIES" in report
-        assert "not spike latencies" in report
+        assert "NOT SPIKE LATENCIES" in report
 
     # -- 9, 10, 11. the existing pathways are the ones used --------------
 
@@ -26556,12 +26558,15 @@ class TestGFSCircuitIntegration:
         for record in raised.spikes.values():
             assert record.observation_floor_mV == pytest.approx(5.0)
         # GFSpikeRecord itself declares the floor is not a threshold, and says
-        # which reference it is measured against.
+        # which reference it is measured against. It must not describe the
+        # floor's default as 0.0, which roundoff at a fixed point would cross
+        # immediately.
         assert GFSpikeRecord.__doc__ is not None
         assert "TEST OBSERVATION LEVEL" in GFSpikeRecord.__doc__
         assert "not a spike" in GFSpikeRecord.__doc__.lower()
         assert "settled numerical fixed point" in GFSpikeRecord.__doc__
-        assert "0.0" not in GFSpikeRecord.__doc__
+        assert "observation_floor_mV = 0.0" not in GFSpikeRecord.__doc__
+        assert "defaults to 1.0 mV" in GFSpikeRecord.__doc__
 
     def test_24_no_behavioral_decision_is_introduced(self):
         from biological_brain.dynamics import gfs_circuit
@@ -26868,3 +26873,479 @@ def circuit_conductance_is_a_fixture(circuit) -> bool:
         circuit.gap_conductance.provenance == FIXTURE_I_GAP_PROVENANCE
         and "NOT A BIOLOGICAL" in circuit.gap_conductance.provenance
     )
+class TestGFSHonestAPDetection:
+    """3.0D-8J: honest action-potential detection and circuit timing.
+
+    3.0D-8I found that its single per-neuron time was a 1.0 mV FLOOR CROSSING
+    and could be reported as if it were a spike latency. At a 135 nS gap
+    conductance the TTMn crossed that floor at 0.03 ms while merely being
+    depolarised, and its real action potential occurred near 0.58 ms: 8I's
+    number understated the latency roughly twenty-fold and called it a response
+    onset.
+
+    8J fixes that by REUSING the existing 3.0D-8A ``ap_diagnostic`` waveform
+    criterion rather than writing a second detector. That criterion requires a
+    trace to depolarise by at least the floor AND subsequently repolarise by at
+    least the floor, which is what separates a real action potential from a
+    steady subthreshold displacement.
+
+    Four quantities are now kept apart, and the tests below pin each: a floor
+    crossing (numerical), an AP detection (real), an AP peak (the published
+    measurement), and a muscle/NMJ latency (never computed here).
+    """
+
+    def _circuit(self, gap_ns=1.0):
+        from biological_brain.dynamics.electrical_coupling import (
+            explicit_conductance,
+        )
+        from biological_brain.dynamics.gfs_circuit import GFSCircuit
+
+        return GFSCircuit(
+            gap_conductance=explicit_conductance(
+                gap_ns, "nS",
+                "3.0D-8J NUMERICAL FIXTURE, NOT a biological g_gap value. "
+                "3.0D-7U is an unresolved factor-1000 unit conflict and 8J "
+                "does not resolve it or prefer either side.",
+            ),
+            psi_dlmn_peak_conductance_source="source_weight_as_written",
+        )
+
+    def _result(self, gap_ns=1.0):
+        # The 1 nS entry is already cached by the 3.0D-8I suite. A 135 nS run
+        # is needed too, because that is the case that actually produces APs
+        # downstream. A live run is several seconds, so both are cached.
+        return _eight_i_result(gap_ns=gap_ns)
+
+    # --- the reused criterion, checked directly ---
+
+    def test_1_the_reused_ap_diagnostic_criterion_is_used_verbatim(self):
+        """No second detector: 8J calls 3.0D-8A's ap_diagnostic directly."""
+        import inspect
+
+        from biological_brain.dynamics import gfs_circuit
+        from biological_brain.dynamics.gf_active import (
+            ActiveAxonModel, GFActiveAxonModel,
+        )
+
+        # 8I/8J must not define a criterion of its own.
+        source = inspect.getsource(gfs_circuit)
+        assert "ap_diagnostic(" in source
+        for banned in (
+            "def detect_spike", "def _spike_criterion", "def ap_detected",
+            "def _is_spike", "def detect_ap",
+        ):
+            assert banned not in source, banned
+        # It is the shared engine's method, inherited by every neuron adapter.
+        assert "ap_diagnostic" in vars(ActiveAxonModel)
+        assert (
+            GFActiveAxonModel.ap_diagnostic is ActiveAxonModel.ap_diagnostic
+        ), "8J must reuse the shared criterion, not a per-neuron copy"
+        # And the criterion string reported by 8J is the existing one, verbatim.
+        model = GFActiveAxonModel()
+        for timing in self._result().response_timings.values():
+            expected = model.ap_diagnostic(
+                (0.0,), 0.01, timing.segment_id, 1.0, timing.settled_voltage_mV
+            ).observation_criterion
+            assert timing.criterion == expected
+            assert "WAVEFORM-DERIVED TEST OBSERVATION" in timing.criterion
+            assert "NOT A BIOLOGICAL GF THRESHOLD" in timing.criterion
+
+    # --- a stationary fixed point is not a spike ---
+
+    def test_2_a_stationary_fixed_point_produces_no_spike(self):
+        """A trace that never moves cannot be an action potential."""
+        from biological_brain.dynamics.gf_active import GFActiveAxonModel
+
+        model = GFActiveAxonModel()
+        settled = -74.6696
+        flat = (settled,) * 200
+        diagnostic = model.ap_diagnostic(
+            flat, 0.01, "GF_axon#seg0", 1.0, settled
+        )
+        assert diagnostic.observed is False
+        assert diagnostic.depolarization_mV == pytest.approx(0.0, abs=1e-12)
+
+        # A stationary record reports as stationary, never as a spike.
+        from biological_brain.dynamics.gfs_circuit import NeuronResponseTiming
+
+        timing = NeuronResponseTiming(
+            neuron_id="TTMn", segment_id="TTMn_axon#seg0",
+            floor_crossing_time_s=None, ap_detected=False, ap_peak_time_s=None,
+            ap_peak_voltage_mV=None, depolarization_mV=0.0,
+            settled_voltage_mV=settled, observation_floor_mV=1.0,
+            criterion="c", all_finite=True,
+        )
+        assert timing.is_stationary is True
+        assert timing.is_a_spike is False
+        assert timing.is_floor_crossing_only is False
+        assert timing.as_named_latency_ms(0.0) is None
+        assert "STATIONARY" in timing.describe()
+
+        # No neuron in either live run is stationary: all four crossed the
+        # floor, and that is a statement about the floor, not about spiking.
+        for gap_ns in (1.0, 135.0):
+            result = self._result(gap_ns=gap_ns)
+            stationary = [
+                n for n, t in result.response_timings.items() if t.is_stationary
+            ]
+            assert stationary == [], gap_ns
+            # At 1 nS only the GF and the DLMn actually fire.
+            fired = sorted(
+                n for n, t in result.response_timings.items() if t.ap_detected
+            )
+            assert fired == (["DLMn", "GF"] if gap_ns == 1.0
+                             else ["DLMn", "GF", "PSI", "TTMn"]), gap_ns
+
+    # --- a floor crossing is not a spike ---
+
+    def test_3_a_one_millivolt_floor_crossing_is_not_a_spike(self):
+        """The 8I bug, pinned: a subthreshold displacement is not an AP."""
+        from biological_brain.dynamics.gf_active import GFActiveAxonModel
+        from biological_brain.dynamics.gfs_circuit import NeuronResponseTiming
+
+        # A trace that rises exactly one floor above the reference and STAYS
+        # there satisfies the depolarisation half and fails the repolarisation
+        # half, so the existing criterion refuses it. This is precisely the
+        # 8I 135 nS TTMn shape.
+        model = GFActiveAxonModel()
+        settled = -75.86
+        subthreshold = tuple(settled + 1.0 for _ in range(200))
+        diagnostic = model.ap_diagnostic(
+            subthreshold, 0.01, "TTMn_axon#seg0", 1.0, settled
+        )
+        assert diagnostic.depolarization_mV == pytest.approx(1.0, rel=1e-9)
+        assert diagnostic.observed is False, (
+            "a steady 1 mV displacement must not be classified as a spike"
+        )
+
+        # In the live 1 nS run the TTMn and PSI are exactly this case: they
+        # crossed the floor, they are NOT spikes, and no AP peak exists.
+        result = self._result()
+        assert result.observation_floor_mV == pytest.approx(1.0)
+        for neuron_id in ("TTMn", "PSI"):
+            timing = result.response_timings[neuron_id]
+            assert timing.floor_crossing_time_s is not None
+            assert timing.depolarization_mV >= 1.0
+            assert timing.ap_detected is False, neuron_id
+            assert timing.is_a_spike is False
+            assert timing.is_floor_crossing_only is True
+            assert timing.ap_peak_time_s is None
+            assert timing.ap_peak_voltage_mV is None
+            assert "NOT A SPIKE" in timing.describe()
+            # No AP latency can be produced from a subthreshold response.
+            assert timing.as_named_latency_ms(0.0) is None
+            # The 8I floor-crossing record still exists and still refuses to
+            # be called a spike.
+            record = result.spikes[neuron_id]
+            assert record.is_a_spike is False
+            assert record.is_a_floor_crossing_only is True
+            assert record.is_a_biological_threshold is False
+
+        # A synthetic record with the same shape reports the same way.
+        timing = NeuronResponseTiming(
+            neuron_id="TTMn", segment_id="TTMn_axon#seg0",
+            floor_crossing_time_s=0.03, ap_detected=False, ap_peak_time_s=None,
+            ap_peak_voltage_mV=None, depolarization_mV=1.0,
+            settled_voltage_mV=-75.86, observation_floor_mV=1.0,
+            criterion="c", all_finite=True,
+        )
+        assert timing.is_a_spike is False
+        assert timing.is_floor_crossing_only is True
+        assert timing.is_stationary is False
+        assert timing.ap_peak_time_s is None
+        assert timing.floor_crossing_latency_ms(0.0) == pytest.approx(30.0)
+
+    # --- a real AP is detected, and its peak is its own quantity ---
+
+    def test_4_a_known_ap_fixture_is_classified_as_a_spike(self):
+        """The existing validated GF AP fixture must still be a spike."""
+        from biological_brain.dynamics.gf_active import GFActiveAxonModel
+        from biological_brain.morphology_builder import build_gfs_compartment_models
+        from biological_brain.passive_profiles import (
+            PROFILE_AUGUSTIN_2019_GFS_PASSIVE,
+        )
+
+        # 3.0D-8A's own validated fixture: the GF direct-stimulation response.
+        # 8J must not have broken the thing it is meant to describe.
+        model = GFActiveAxonModel()
+        morphology = build_gfs_compartment_models()["GF"]
+        morphology.passive_profile_name = PROFILE_AUGUSTIN_2019_GFS_PASSIVE
+        trace, diagnostic, _network = model.stimulus_response(
+            morphology, segment_count=11, duration_ms=3.0,
+        )
+        assert diagnostic.observed is True
+        assert diagnostic.peak_voltage_mV > 0.0
+        assert diagnostic.peak_time_ms > 0.0
+        # The criterion genuinely needs both halves: a trace cut off at its
+        # peak contains the depolarisation but not the repolarisation, so it
+        # must NOT be observed. This is why 8J reports the run length
+        # alongside the result rather than assuming a spike.
+        floor = diagnostic.depolarization_mV
+        peak_voltage = max(trace)
+        peak_index = trace.index(peak_voltage)
+        assert model.ap_diagnostic(
+            tuple(trace[: peak_index + 1]), 0.01, "GF_axon#seg0", 1.0,
+            diagnostic.rest_voltage_mV,
+        ).observed is False
+        # Once the trace has actually fallen by a floor from the peak, the
+        # same criterion observes it.
+        repolarised_index = next(
+            index for index in range(peak_index + 1, len(trace))
+            if trace[index] <= peak_voltage - 1.0
+        )
+        assert model.ap_diagnostic(
+            tuple(trace[: repolarised_index + 1]), 0.01, "GF_axon#seg0", 1.0,
+            diagnostic.rest_voltage_mV,
+        ).observed is True
+        assert floor > 0.0
+
+        # And in the live circuit the GF is a detected AP with a real peak.
+        gf = self._result().response_timings["GF"]
+        assert gf.ap_detected is True
+        assert gf.is_a_spike is True
+        assert gf.is_floor_crossing_only is False
+        assert gf.ap_peak_time_s is not None
+        assert gf.ap_peak_voltage_mV > 0.0
+        assert gf.depolarization_mV > 50.0
+        assert gf.all_finite is True
+        assert "ACTION POTENTIAL detected" in gf.describe()
+
+    def test_5_ap_peak_is_distinct_from_the_floor_crossing_time(self):
+        """The two times must be different quantities, and they are."""
+        # At 135 nS every neuron fires, so peak and floor crossing are both
+        # defined and the gap between them is large.
+        strong = self._result(gap_ns=135.0)
+        for neuron_id in ("GF", "TTMn", "PSI", "DLMn"):
+            timing = strong.response_timings[neuron_id]
+            assert timing.ap_detected is True, neuron_id
+            assert timing.floor_crossing_time_s is not None, neuron_id
+            assert timing.ap_peak_time_s is not None, neuron_id
+            # A peak cannot precede the rise that produced it.
+            assert timing.ap_peak_time_s > timing.floor_crossing_time_s
+            # And the separation is the whole point: quoting the floor
+            # crossing as a spike latency would be badly wrong. Times are in
+            # SECONDS, so 3e-4 s is 0.3 ms, just below the observed
+            # 0.35-0.66 ms separations.
+            assert (
+                timing.ap_peak_time_s - timing.floor_crossing_time_s
+            ) > 3e-4, neuron_id
+
+        # THE 8I BUG, WITH ITS ACTUAL NUMBERS. The TTMn floor crossing is at
+        # 0.030 ms and its AP peak at 0.580 ms, so 8I's reported latency
+        # understated the real one by a factor of about nineteen. Times on
+        # the record are in SECONDS, so 0.030 ms is 3e-5 s.
+        ttmn = strong.response_timings["TTMn"]
+        assert ttmn.floor_crossing_time_s == pytest.approx(3e-5, abs=1e-9)
+        assert ttmn.ap_peak_time_s == pytest.approx(5.8e-4, abs=1e-9)
+        assert strong.floor_crossing_latency_ms("GF", "TTMn") == pytest.approx(
+            0.030, abs=1e-6
+        )
+        assert strong.ap_peak_latency_ms("GF", "TTMn") == pytest.approx(
+            0.230, abs=1e-6
+        )
+
+        # The two latencies differ, and only the peak one is an AP latency.
+        floor_ms = strong.floor_crossing_latency_ms("GF", "TTMn")
+        peak_ms = strong.ap_peak_latency_ms("GF", "TTMn")
+        assert floor_ms is not None and peak_ms is not None
+        assert peak_ms > floor_ms
+        assert floor_ms == strong.latency_ms("GF", "TTMn")
+        assert peak_ms > 0.1
+
+        # At 1 nS the TTMn and PSI never fire, so no AP-peak latency is
+        # available for the two monosynaptic paths while the floor crossing is
+        # still reported. This is the 8I error, now impossible to commit.
+        weak = self._result()
+        assert weak.floor_crossing_latency_ms("GF", "TTMn") is not None
+        assert weak.ap_peak_latency_ms("GF", "TTMn") is None
+        assert weak.ap_peak_latency_ms("GF", "PSI") is None
+        # The DISYNAPTIC path is different, and correctly so: the 8G chemical
+        # synapse drives the DLMn once PSI's floor crossing triggers it, so the
+        # DLMn fires and its AP-peak latency IS available even though the
+        # monosynaptic targets never do.
+        assert weak.response_timings["GF"].ap_detected is True
+        assert weak.response_timings["DLMn"].ap_detected is True
+        dlmn_peak = weak.ap_peak_latency_ms("GF", "DLMn")
+        assert dlmn_peak is not None
+        assert dlmn_peak > 0.5
+        # And the same criterion governs it, so it is a real AP latency rather
+        # than a floor crossing wearing a spike label.
+        assert dlmn_peak != pytest.approx(
+            weak.floor_crossing_latency_ms("GF", "DLMn"), abs=1e-9
+        )
+
+    # --- the report separates neuronal AP timing from muscle latency ---
+
+    def test_6_reports_separate_neuronal_ap_timing_from_muscle_latency(self):
+        from biological_brain.dynamics.gfs_circuit import (
+            ExperimentalLatencyContext,
+        )
+
+        for gap_ns in (1.0, 135.0):
+            result = self._result(gap_ns=gap_ns)
+            report = result.timing_report()
+            # All four quantities are named and distinguished.
+            assert "FLOOR CROSSING" in report
+            assert "AP DETECTED" in report
+            assert "AP PEAK" in report
+            assert "MUSCLE / NMJ" in report
+            assert "NOT COMPUTED" in report
+            assert "NOT SPIKE LATENCIES" in report
+            assert "not spike latencies" in report.lower()
+            # Muscle latency is refused with a reason, not silently absent.
+            assert "excluded the muscles" in report
+            assert "0.35 ms" in report
+            assert "is_nmj_delay_applied=False" in report
+            # The published offset is recorded and explicitly NOT applied.
+            context = result.latency_context
+            assert context.published_nmj_delay_ms == pytest.approx(0.35)
+            assert context.is_nmj_delay_applied is False
+            assert context.is_a_tuning_target is False
+            assert context.published_muscle_targets_ms == (
+                ("TTM", 0.93), ("DLM", 1.44),
+            )
+            assert result.muscle_response_latency_ms("GF", "TTMn") is None
+            # The context cannot be coerced into a tuning target or an
+            # applied NMJ delay.
+            for bad in (
+                {"is_a_tuning_target": True},
+                {"is_nmj_delay_applied": True},
+            ):
+                with pytest.raises(Exception):
+                    ExperimentalLatencyContext(**bad)
+
+        # A subthreshold run says so in plain words, per neuron.
+        assert "SUBTHRESHOLD RESPONSE, NOT A SPIKE" in self._result().timing_report()
+        # A run with real APs names the peaks.
+        assert "ACTION POTENTIAL detected" in self._result(
+            gap_ns=135.0
+        ).timing_report()
+
+    # --- determinism survives ---
+
+    def test_7_repeated_deterministic_runs_remain_identical(self):
+        from biological_brain.dynamics.gfs_circuit import GFSpikeEvent
+
+        circuit = self._circuit()
+        event = _eight_i_event()
+        first = circuit.run_live_circuit(
+            event, duration_ms=2.0, settle_ms=50.0
+        )
+        second = circuit.run_live_circuit(
+            event, duration_ms=2.0, settle_ms=50.0
+        )
+        # The new AP detection must be as deterministic as everything else.
+        assert first.response_timings == second.response_timings
+        assert first.timing_report() == second.timing_report()
+        assert first.spikes == second.spikes
+        assert first.voltages_mV == second.voltages_mV
+        assert first.ap_peak_latency_ms("GF", "TTMn") == (
+            second.ap_peak_latency_ms("GF", "TTMn")
+        )
+        # A fresh circuit agrees too.
+        third = self._circuit().run_live_circuit(
+            event, duration_ms=2.0, settle_ms=50.0
+        )
+        assert third.response_timings == first.response_timings
+        # And 8J added no random state.
+        assert circuit.has_random_state() is False
+        assert isinstance(event, GFSpikeEvent)
+
+    # --- 7U, 8G, 8H and the 8I boundary are untouched ---
+
+    def test_8_8u_8g_8h_and_the_8i_boundary_are_unchanged(self):
+        # 7U is still an unresolved factor-1000 conflict with no preferred
+        # side, and 8C still refuses to supply the project conductance.
+        from biological_brain.dynamics.electrical_coupling import (
+            ElectricalCouplingUnresolvedValueError,
+            from_unresolved_project_conductance,
+        )
+        from biological_brain.source_reconciliation import (
+            get_source_reconciliation_registry,
+        )
+
+        reconciliation = get_source_reconciliation_registry()
+        assert reconciliation.unresolved() == (
+            "g_gap_young_unit_conflict", "g_gap_old_unit_conflict",
+        )
+        for conflict_id in reconciliation.unresolved():
+            record = reconciliation.get(conflict_id)
+            assert record.preferred_side is None
+            assert record.resolution_status.value == "unresolved"
+            assert record.discrepancy_factor == 1000.0
+        with pytest.raises(ElectricalCouplingUnresolvedValueError):
+            from_unresolved_project_conductance()
+
+        # 8J added no default, and 8I still demands a caller-supplied
+        # conductance with an explicit unit. The 1.0 mV floor is retained as
+        # the declared numerical observation level.
+        import inspect
+
+        from biological_brain.dynamics.gfs_circuit import GFSCircuit
+
+        parameters = inspect.signature(GFSCircuit.__init__).parameters
+        assert parameters["gap_conductance"].default is inspect.Parameter.empty
+        assert parameters["observation_floor_mV"].default == pytest.approx(1.0)
+        with pytest.raises(TypeError):
+            GFSCircuit()
+        result = self._result()
+        assert result.gap_conductance.value == pytest.approx(1.0)
+        assert result.gap_conductance.unit == "nS"
+        assert result.gap_conductance.is_default is False
+
+        # 8G's peak-conductance conflict is untouched.
+        from biological_brain.dynamics.chemical_synapse import (
+            PSI_DLMnChemicalSynapse,
+        )
+
+        paper = PSI_DLMnChemicalSynapse(peak_conductance_source="paper")
+        source = PSI_DLMnChemicalSynapse(
+            peak_conductance_source="source_weight_as_written"
+        )
+        assert paper.mechanism.peak_conductance_uS == pytest.approx(80.0)
+        assert source.mechanism.peak_conductance_uS == pytest.approx(0.08)
+        assert paper.mechanism.shape_peak() == pytest.approx(
+            0.6968373144, rel=1e-9
+        )
+
+        # 8H's phenomenological equations are untouched.
+        from biological_brain.dynamics.gf_sensory_drive import (
+            published_ache_gf_coefficients, published_ache_gf_delays,
+        )
+
+        coefficients = published_ache_gf_coefficients()
+        assert coefficients.c1_mV_per_deg_per_s == 0.0002567
+        assert coefficients.c2_mV == 1.7
+        assert coefficients.c3_deg == 42.0
+        assert (coefficients.w_lc4, coefficients.w_lplc2) == (1.62, 1.45)
+        assert published_ache_gf_delays().as_ms() == (19.0, 19.0, 37.5, 11.0)
+
+        # And 8I's unresolved sensory boundary still refuses to couple.
+        from biological_brain.dynamics.gf_sensory_drive import (
+            ConstantVelocityLoomingStimulus,
+        )
+        from biological_brain.dynamics.gfs_circuit import (
+            UnsupportedSensoryBiophysicalCoupling,
+        )
+
+        circuit = self._circuit()
+        boundary = circuit.boundary(
+            circuit.run_sensory_phenomenology(
+                ConstantVelocityLoomingStimulus(
+                    r_m=0.005, v_m_per_s=0.05, d0_m=0.10
+                )
+            ),
+            result,
+        )
+        assert boundary.coupling_status.value == "unresolved"
+        assert boundary.is_coupled() is False
+        with pytest.raises(UnsupportedSensoryBiophysicalCoupling):
+            boundary.couple_to_live_gf()
+        with pytest.raises(UnsupportedSensoryBiophysicalCoupling):
+            circuit.run_looming_through_live_circuit(
+                ConstantVelocityLoomingStimulus(
+                    r_m=0.005, v_m_per_s=0.05, d0_m=0.10
+                )
+            )
+
+

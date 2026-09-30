@@ -393,20 +393,34 @@ class PhenomenologicalGFDriveTrace:
 
 @dataclass(frozen=True)
 class GFSpikeRecord:
-    """A detected response in one neuron, with the criterion that found it.
+    """A NUMERICAL FLOOR CROSSING in one neuron. 3.0D-8J: NOT a spike.
 
-    ``observation_floor_mV`` is a TEST OBSERVATION LEVEL, not a spike
-    threshold. It is measured against ``reference_voltage_mV``, which is the
-    neuron's OWN settled numerical fixed point for this run, not its declared
-    ``E_leak`` initial value and not a hardcoded voltage. 8I defines no
-    rheobase, no threshold voltage and no spike-initiation mechanism.
+    This record is the 3.0D-8I first-crossing of a declared numerical
+    observation floor. It is retained because a floor crossing is a real,
+    reproducible property of the trace, and it is genuinely useful: it says how
+    soon a postsynaptic neuron began to move away from its settled voltage.
 
-    The floor defaults to 1.0 mV because at a numerical fixed point the
+    It is NOT an action potential and 3.0D-8J refuses to let it be read as one.
+    A neuron driven by a strong electrical coupling crosses the floor within a
+    timestep or two while merely being depolarised, and well before it fires.
+    8I measured exactly that: at a 135 nS gap conductance the TTMn crossed
+    1.0 mV at 0.03 ms while its real action potential occurred near 0.58 ms.
+    Calling the earlier number a spike latency would overstate how fast the
+    pathway responds by more than an order of magnitude.
+
+    The floor itself is a TEST OBSERVATION LEVEL, not a threshold, and
+    ``reference_voltage_mV`` is the neuron's OWN settled numerical fixed point
+    for this run, not its declared E_leak initial value and not a hardcoded
+    voltage. It defaults to 1.0 mV because at a numerical fixed point the
     membrane is stationary only to within solver roundoff, of order 1e-12 mV,
     and a zero floor would be crossed by that roundoff on the first timestep.
     It is a declared numerical level, not a biological quantity, and not a
-    value taken from any source.
+    value taken from any source. 8J does not redefine it.
+
+    For the action potential itself use :class:`NeuronResponseTiming`, which is
+    built from the existing 3.0D-8A ``ap_diagnostic`` waveform criterion.
     """
+
 
     neuron_id: str
     segment_id: str
@@ -423,13 +437,123 @@ class GFSpikeRecord:
 
     @property
     def is_a_spike(self) -> bool:
-        """Always False: this is a floor crossing, not a detected action potential.
+        """Always False. A floor crossing is not a detected action potential.
 
-        A floor crossing can occur while the neuron is merely depolarised, so
-        ``time_s`` is a subthreshold onset and not a spike time. Reading these
-        as spike latencies would overstate how fast the pathway responds.
+        Retained and always False so that no caller can mistake this record for
+        a spike by reading a truthy field. See the class docstring.
         """
         return False
+
+    @property
+    def is_a_floor_crossing_only(self) -> bool:
+        """Always True. This record only ever reports a floor crossing."""
+        return True
+
+
+@dataclass(frozen=True)
+class NeuronResponseTiming:
+    """3.0D-8J: the honest per-neuron response, with the four things separated.
+
+    3.0D-8I reported a single time per neuron, which conflated four distinct
+    quantities. This record separates them:
+
+    ``floor_crossing_time_s``
+        A NUMERICAL OBSERVATION: the first crossing of the declared floor above
+        the neuron's settled voltage. Always defined when the neuron moved at
+        all. It is a floor crossing and nothing more.
+
+    ``ap_detected``
+        Whether an ACTION POTENTIAL was detected, judged by the existing
+        3.0D-8A ``ap_diagnostic`` WAVEFORM criterion: the trace must depolarise
+        by at least the floor AND subsequently repolarise by at least the floor.
+        A stationary fixed point fails both halves, and a subthreshold
+        depolarisation fails the second, so neither is reported as a spike.
+
+    ``ap_peak_time_s`` / ``ap_peak_voltage_mV``
+        The AP PEAK, which is the quantity Augustin et al. 2019 actually
+        measures: their model records "the latency to the AP peak in the TTMn
+        and DLMn". Present only when an AP was detected.
+
+    muscle / NMJ latency
+        NOT REPRESENTED HERE, and never computed. See
+        :data:`_NMJ_NOT_MODELLED` and
+        :meth:`LiveCircuitResult.muscle_response_latency_ms`.
+    """
+
+    neuron_id: str
+    segment_id: str
+    floor_crossing_time_s: Optional[float]
+    ap_detected: bool
+    ap_peak_time_s: Optional[float]
+    ap_peak_voltage_mV: Optional[float]
+    depolarization_mV: float
+    settled_voltage_mV: float
+    observation_floor_mV: float
+    criterion: str
+    all_finite: bool
+
+    @property
+    def is_a_spike(self) -> bool:
+        """True only when the existing waveform criterion found an AP."""
+        return self.ap_detected
+
+    @property
+    def is_floor_crossing_only(self) -> bool:
+        """True when the neuron moved but no AP was detected.
+
+        This is the subthreshold case 3.0D-8I got wrong: a real, reproducible
+        voltage response that is emphatically not a spike.
+        """
+        return (
+            self.floor_crossing_time_s is not None and not self.ap_detected
+        )
+
+    @property
+    def is_stationary(self) -> bool:
+        """True when the neuron never rose above its floor at all."""
+        return self.floor_crossing_time_s is None
+
+    def as_named_latency_ms(self, reference_time_s: float) -> Optional[float]:
+        """AP-PEAK latency from ``reference_time_s``, in ms.
+
+        Returns ``None`` unless a real AP was detected, so a subthreshold
+        response can never be reported as a spike latency. The peak, not the
+        floor crossing, is used because that is the published measurement.
+        """
+        if self.ap_peak_time_s is None:
+            return None
+        return (self.ap_peak_time_s - reference_time_s) * 1e3
+
+    def floor_crossing_latency_ms(self, reference_time_s: float) -> Optional[float]:
+        """NUMERICAL floor-crossing latency in ms, explicitly not a spike."""
+        if self.floor_crossing_time_s is None:
+            return None
+        return (self.floor_crossing_time_s - reference_time_s) * 1e3
+
+    def describe(self) -> str:
+        if self.ap_detected:
+            return (
+                f"{self.neuron_id}: ACTION POTENTIAL detected, peak "
+                f"{self.ap_peak_voltage_mV:.2f} mV at {self.ap_peak_time_s * 1e3:.3f} ms "
+                f"(depolarisation {self.depolarization_mV:.2f} mV above the "
+                f"settled {self.settled_voltage_mV:.2f} mV). Floor crossing at "
+                f"{(self.floor_crossing_time_s or 0.0) * 1e3:.3f} ms."
+            )
+        if self.is_floor_crossing_only:
+            return (
+                f"{self.neuron_id}: SUBTHRESHOLD RESPONSE, NOT A SPIKE. It rose "
+                f"above the {self.observation_floor_mV} mV numerical floor at "
+                f"{self.floor_crossing_time_s * 1e3:.3f} ms but never "
+                f"repolarised, so the waveform criterion does not detect an "
+                f"action potential. No AP peak and therefore no AP latency "
+                f"exists for this neuron."
+            )
+        return (
+            f"{self.neuron_id}: STATIONARY at its settled "
+            f"{self.settled_voltage_mV:.2f} mV. It never rose above the "
+            f"{self.observation_floor_mV} mV numerical floor, so there is no "
+            f"floor crossing, no action potential and no latency of any kind."
+        )
 
 
 @dataclass(frozen=True)
@@ -448,6 +572,24 @@ class SynapticEventRecord:
     def is_synthetic(self) -> bool:
         """Always False. The event is triggered by the live PSI voltage."""
         return False
+
+
+_NMJ_NOT_MODELLED = (
+    "NO MUSCLE AND NO NEUROMUSCULAR JUNCTION IS MODELLED, SO NO MUSCLE LATENCY "
+    "IS COMPUTED HERE. Augustin et al. 2019 is explicit that their model "
+    "'measured the latency to the AP peak in the TTMn and DLMn' and only then "
+    "'added 0.35 ms to this value to account for the neuromuscular junction "
+    "delay', that they 'excluded the muscles (and their respective "
+    "neuromuscular junctions) from the model', and that the delay 'contributes "
+    "a fixed bias to the latency values'. The experimental 0.7-1.2 ms and "
+    "1.3-1.7 ms ranges are measured at the MUSCLE, and Allen and Godenschwege "
+    "2010 states that a TTM recording 'monitor[s] the function of the GF-TTMn "
+    "central synapse along with the neuromuscular junction'. 3.0D-8I is a "
+    "NEURON-ONLY circuit, so its AP-peak latency is the MODEL quantity and is "
+    "NOT directly comparable to a muscle-response latency. 8I does not add the "
+    "0.35 ms offset, does not model an NMJ, and does not synthesise a muscle "
+    "latency; doing any of those would be inventing a mechanism."
+)
 
 
 @dataclass(frozen=True)
@@ -474,10 +616,28 @@ class ExperimentalLatencyContext:
     )
     is_a_tuning_target: bool = False
 
+    #: 3.0D-8J: the published comparison offset, RECORDED AND NOT APPLIED.
+    #: Augustin et al. 2019 adds this to their AP-peak latency to compare with
+    #: muscle measurements. 3.0D-8I does not model an NMJ and therefore does
+    #: not add it; it is kept here so a later checkpoint that DOES model an
+    #: NMJ can use the published value instead of inventing one.
+    published_nmj_delay_ms: float = 0.35
+    is_nmj_delay_applied: bool = False
+    published_muscle_targets_ms: Tuple[Tuple[str, float], ...] = (
+        ("TTM", 0.93), ("DLM", 1.44),
+    )
+
     def __post_init__(self) -> None:
         if self.is_a_tuning_target:
             raise GFSCircuitError(
                 "Experimental latency context must never be a tuning target."
+            )
+        if self.is_nmj_delay_applied:
+            raise GFSCircuitError(
+                "3.0D-8I does not model a neuromuscular junction, so it must "
+                "not apply the published 0.35 ms NMJ delay. That offset belongs "
+                "to a muscle-response comparison, and adding it to a "
+                "neuron-only circuit would invent a mechanism."
             )
 
     def compare(
@@ -517,6 +677,7 @@ class LiveCircuitResult:
     voltages_mV: Dict[str, Tuple[Dict[str, float], ...]]
     final_voltages_mV: Dict[str, Dict[str, float]]
     spikes: Dict[str, GFSpikeRecord]
+    response_timings: Dict[str, NeuronResponseTiming]
     synaptic_events: Tuple[SynapticEventRecord, ...]
     event_timestamps_s: Dict[str, float]
     gap_currents_nA: Dict[str, Tuple[float, ...]]
@@ -525,6 +686,7 @@ class LiveCircuitResult:
     declared_rest_voltages_mV: Dict[str, float]
     settle_ms: float
     gap_conductance: GapJunctionConductance
+    observation_floor_mV: float
     psi_dlmn_peak_conductance_uS: float
     psi_dlmn_peak_conductance_source: str
     latency_context: ExperimentalLatencyContext
@@ -532,11 +694,16 @@ class LiveCircuitResult:
     notes: str
 
     def latency_ms(self, source: str, target: str) -> Optional[float]:
-        """Simulated onset latency from one neuron to another, in ms.
+        """FLOOR-CROSSING latency from one neuron to another, in ms.
 
-        Measured between the two neurons' detected response onsets, NOT
-        manufactured and NOT adjusted. ``None`` when either neuron did not
-        respond within the run.
+        3.0D-8J: this is a NUMERICAL OBSERVATION, not a spike latency. It is
+        the difference between the two neurons' floor-crossing times, it is
+        retained because 3.0D-8I reported it, and it must not be read as a
+        conduction time or a biological latency. Use
+        :meth:`ap_peak_latency_ms` for anything that would be called a spike
+        latency.
+
+        ``None`` when either neuron never rose above its floor.
         """
         first = self.spikes.get(source)
         second = self.spikes.get(target)
@@ -544,44 +711,146 @@ class LiveCircuitResult:
             return None
         return (second.time_s - first.time_s) * 1e3
 
+    def floor_crossing_latency_ms(
+        self, source: str, target: str
+    ) -> Optional[float]:
+        """3.0D-8J: explicit alias of :meth:`latency_ms` as a floor crossing.
+
+        Named so that a reader cannot pick up a numerical observation without
+        also picking up the word that says what it is.
+        """
+        return self.latency_ms(source, target)
+
+    def ap_peak_latency_ms(
+        self, source: str, target: str
+    ) -> Optional[float]:
+        """3.0D-8J: AP-PEAK latency, or ``None`` unless both APs were detected.
+
+        This is the only latency in this module that may be called a neuronal
+        spike latency, and only because the existing 3.0D-8A ``ap_diagnostic``
+        waveform criterion actually detected an action potential in both
+        neurons. It uses the AP PEAK because that is the quantity Augustin et
+        al. 2019 measures.
+
+        A subthreshold response yields ``None``, so a floor crossing can never
+        leak out of here as a spike latency.
+        """
+        first = self.response_timings.get(source)
+        second = self.response_timings.get(target)
+        if first is None or second is None:
+            return None
+        if not (first.ap_detected and second.ap_detected):
+            return None
+        return (second.ap_peak_time_s - first.ap_peak_time_s) * 1e3
+
+    def muscle_response_latency_ms(self, source: str, target: str) -> None:
+        """3.0D-8J: ALWAYS returns ``None``. No NMJ or muscle is modelled.
+
+        Deliberately a function rather than a missing attribute, so that
+        asking the question gets a refusal with a reason instead of an
+        AttributeError. See :data:`_NMJ_NOT_MODELLED`.
+        """
+        return None
+
     def timing_report(self) -> str:
+        reference = self.gf_event.event_time_s
         lines = [
             f"Simulated GFS circuit timing, timestep {self.timestep_ms} ms, "
             f"run length {self.duration_ms} ms, {self.segment_count} "
-            f"subdivisions per axon.",
+            f"subdivisions per axon, reference t = {reference * 1e3:.3f} ms "
+            f"(the GF event).",
             "",
-            "READ THE RESPONSE ONSETS WITH THIS CAVEAT: an onset here is the "
-            "first crossing of a 1.0 mV OBSERVATION FLOOR above each neuron's "
-            "settled voltage, not a spike. Under a strong gap conductance a "
-            "postsynaptic neuron can cross that floor while merely being "
-            "depolarised, well before it fires, so these are FLOOR-CROSSING "
-            "LATENCIES and they shrink as the coupling grows. They are not "
-            "conduction times and not spike latencies.",
+            "3.0D-8J REPORTS FOUR DISTINCT QUANTITIES. They are not "
+            "interchangeable:",
+            "  (1) FLOOR CROSSING  - a numerical OBSERVATION FLOOR crossing: a "
+            f"neuron rose {self.observation_floor_mV} mV above its settled "
+            "voltage. Not a spike, not a threshold crossing, not a conduction "
+            "time.",
+            "  (2) AP DETECTED    - the existing 3.0D-8A ap_diagnostic waveform "
+            "criterion (depolarise by the floor AND repolarise by the floor) "
+            "found an action potential.",
+            "  (3) AP PEAK        - the time of that action potential's peak. "
+            "This is the quantity Augustin et al. 2019 measure.",
+            "  (4) MUSCLE / NMJ   - NOT COMPUTED. No muscle and no "
+            "neuromuscular junction is modelled, so no muscle latency exists "
+            "here and the published 0.35 ms NMJ offset is NOT applied.",
             "",
-            self.latency_context.compare(
-                "GF -> TTMn", self.latency_ms("GF", "TTMn")
-            ),
-            self.latency_context.compare(
-                "GF -> PSI", self.latency_ms("GF", "PSI")
-            ),
-            self.latency_context.compare(
-                "GF -> DLMn (via PSI)", self.latency_ms("GF", "DLMn")
-            ),
+            "PER-NEURON RESPONSE",
         ]
-        for name, record in sorted(self.spikes.items()):
-            lines.append(
-                f"  {name} response at {record.time_s:.3f} ms on "
-                f"{record.segment_id}, {record.voltage_mV:.2f} mV against an "
-                f"observation floor of {record.observation_floor_mV} mV (a "
-                f"test observation level, NOT a biological threshold)."
+        for neuron_id in ("GF", "TTMn", "PSI", "DLMn"):
+            timing = self.response_timings.get(neuron_id)
+            if timing is None:
+                lines.append(f"  {neuron_id}: not tracked in this run.")
+                continue
+            lines.append("  " + timing.describe())
+
+        lines += [
+            "",
+            "PATHWAY LATENCIES",
+            "  (1) FLOOR-CROSSING LATENCIES, NUMERICAL, NOT SPIKE LATENCIES:",
+        ]
+        for name, source, target in (
+            ("GF -> TTMn", "GF", "TTMn"),
+            ("GF -> PSI", "GF", "PSI"),
+            ("GF -> DLMn (via PSI)", "GF", "DLMn"),
+        ):
+            floor_ms = self.floor_crossing_latency_ms(source, target)
+            peak_ms = self.ap_peak_latency_ms(source, target)
+            floor_text = (
+                "not available (a neuron stayed stationary)"
+                if floor_ms is None else f"{floor_ms:.3f} ms"
             )
+            peak_text = (
+                f"{peak_ms:.3f} ms (AP peak, both neurons detected)"
+                if peak_ms is not None
+                else (
+                    "NOT AVAILABLE as a spike latency: no action potential was "
+                    "detected in "
+                    + (
+                        "both"
+                        if not (
+                            self.response_timings[source].ap_detected
+                            and self.response_timings[target].ap_detected
+                        )
+                        else "one of"
+                    )
+                    + " neuron(s)"
+                )
+            )
+            lines.append(f"    {name}: floor crossing {floor_text}")
+            lines.append(f"    {' ' * len(name)}  AP peak      {peak_text}")
+
+        lines += [
+            "",
+            "(4) MUSCLE-RESPONSE LATENCY: not computed, for every pathway. "
+            + _NMJ_NOT_MODELLED,
+            "",
+            "COMPARISON CONTEXT (NOT A TARGET, NOT FITTED): "
+            + self.latency_context.compare(
+                "TTM", self.ap_peak_latency_ms("GF", "TTMn")
+            )
+            + f" The published comparison offset of "
+            f"{self.latency_context.published_nmj_delay_ms} ms NMJ delay is "
+            f"recorded and NOT applied "
+            f"(is_nmj_delay_applied={self.latency_context.is_nmj_delay_applied}).",
+            "",
+            "DISCLAIMER: No agreement or disagreement is claimed between any "
+            "simulated number above and the experimental ranges, and no "
+            "parameter was adjusted to move any of them. The 3.0D-7U "
+            "gap-junction conductance is an UNRESOLVED factor-1000 unit "
+            "conflict with no preferred side, so the coupling strength that "
+            "produced this run was supplied by the caller and is not a "
+            "biological value. These timings are model-reproduction results, "
+            "not measurements.",
+        ]
         if not self.synaptic_events:
             lines.append(
-                "  No PSI->DLMn chemical event was delivered: the PSI axon did "
-                "not reach its response observation level within the run. That "
-                "is a reported outcome, not a suppressed failure."
+                "No PSI->DLMn chemical event was delivered: the live PSI axon "
+                "never reached its response observation level within the run. "
+                "That is a reported outcome, not a suppressed failure."
             )
         return "\n".join(lines)
+
 
     def limitations(self) -> str:
         return (
@@ -1053,6 +1322,7 @@ class GFSCircuit:
         }
         gap_history = {COUPLING_GF_TTMN: [], COUPLING_GF_PSI: []}
         spikes: Dict[str, GFSpikeRecord] = {}
+        response_timings: Dict[str, NeuronResponseTiming] = {}
         synaptic_events = []
         event_times: Dict[str, float] = {
             "gf_event_s": gf_event.event_time_s
@@ -1237,17 +1507,55 @@ class GFSCircuit:
                 ),
                 None,
             )
-            if rise_index is None:
-                continue
-            frame = traces[neuron_id][rise_index]
-            spikes[neuron_id] = GFSpikeRecord(
+            floor_time_s = (
+                None if rise_index is None
+                else rise_index * timestep * 1e-3
+            )
+            if rise_index is not None:
+                frame = traces[neuron_id][rise_index]
+                spikes[neuron_id] = GFSpikeRecord(
+                    neuron_id=neuron_id,
+                    segment_id=segment_id,
+                    time_s=floor_time_s,
+                    voltage_mV=frame[segment_id],
+                    observation_floor_mV=self._observation_floor_mV,
+                    reference_voltage_mV=reference[neuron_id],
+                    criterion=criterion,
+                )
+
+            # 3.0D-8J: the action potential itself, judged by the EXISTING
+            # 3.0D-8A ap_diagnostic waveform criterion. No second detector is
+            # written here: this is a call into the machinery 8A already
+            # validated, on the same recorded trace, with the same declared
+            # floor and the same settled reference.
+            trace = tuple(
+                frame[segment_id] for frame in traces[neuron_id]
+            )
+            diagnostic = adapters[neuron_id].ap_diagnostic(
+                trace,
+                timestep,
+                segment_id,
+                self._observation_floor_mV,
+                reference[neuron_id],
+            )
+            response_timings[neuron_id] = NeuronResponseTiming(
                 neuron_id=neuron_id,
                 segment_id=segment_id,
-                time_s=rise_index * timestep * 1e-3,
-                voltage_mV=frame[segment_id],
+                floor_crossing_time_s=floor_time_s,
+                ap_detected=diagnostic.observed,
+                ap_peak_time_s=(
+                    diagnostic.peak_time_ms * 1e-3
+                    if diagnostic.observed else None
+                ),
+                ap_peak_voltage_mV=(
+                    diagnostic.peak_voltage_mV
+                    if diagnostic.observed else None
+                ),
+                depolarization_mV=diagnostic.depolarization_mV,
+                settled_voltage_mV=reference[neuron_id],
                 observation_floor_mV=self._observation_floor_mV,
-                reference_voltage_mV=reference[neuron_id],
-                criterion=criterion,
+                criterion=diagnostic.observation_criterion,
+                all_finite=diagnostic.all_finite,
             )
 
         for neuron_id, record in sorted(spikes.items()):
@@ -1265,6 +1573,7 @@ class GFSCircuit:
                 neuron_id: values[-1] for neuron_id, values in traces.items()
             },
             spikes=spikes,
+            response_timings=response_timings,
             synaptic_events=tuple(synaptic_events),
             event_timestamps_s=event_times,
             gap_currents_nA={
@@ -1274,6 +1583,7 @@ class GFSCircuit:
                 key: max(values) for key, values in gap_history.items() if values
             },
             gap_conductance=self._gap_conductance,
+            observation_floor_mV=self._observation_floor_mV,
             settled_voltages_mV=reference,
             declared_rest_voltages_mV=declared_rest_mV,
             settle_ms=settle_steps * timestep,
