@@ -1,0 +1,723 @@
+"""Build the frozen model-input inventory.
+
+RESEARCH SCRIPT (not production biological modelling code).
+
+Canonical source of truth for `research/model_input_freeze.csv` and
+`research/model_input_freeze.md`. Both artifacts are generated so they cannot
+drift. Nothing here invents a value: every row either carries a value that
+already exists in the frozen evidence base, or carries value "NONE" and is
+marked blocked.
+
+Provenance vocabulary (exactly the project's five classes):
+    native_experimental_measurement
+    anatomical_measurement
+    literature_derived_passive_parameter
+    model_assumption
+    model_derived_estimate
+
+Safety convention -- exactly one of safe_now / assumption_only / blocked is
+"yes" per row:
+    safe_now=yes        measured with adequate provenance and provenance stated
+    assumption_only=yes usable ONLY if the row stays labelled an assumption
+    blocked=yes         requires an unresolved measurement, or either gate
+
+Rows with value "NONE" are provenance-classified as model_assumption because
+any value for them would be a pure invention. They are always blocked=yes.
+
+Run:
+    python research/scripts/build_model_input_freeze.py
+"""
+from __future__ import annotations
+
+import csv
+import os
+import sys
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+RESEARCH = os.path.normpath(os.path.join(HERE, ".."))
+
+COLUMNS = ["parameter", "symbol", "value", "unit", "object", "source",
+           "source_type", "provenance", "evidence_strength",
+           "direct_or_indirect", "measured_or_modelled", "reproducible",
+           "conflict", "safe_now", "assumption_only", "blocked", "gate",
+           "notes"]
+
+NEM = "native_experimental_measurement"
+AM = "anatomical_measurement"
+LDP = "literature_derived_passive_parameter"
+MA = "model_assumption"
+MDE = "model_derived_estimate"
+
+F06 = "Fayyazuddin+ 2006 PLoS Biol 4(3):e63"
+R09 = "Ryglewski & Duch 2009 J Neurophysiol 102:3673"
+R14 = "Ryglewski, Kilo & Duch 2014 Eur J Neurosci 39:151"
+H13 = "Herrera-Valdez+ 2013 J Comput Neurosci 34:211"
+G15 = "Gunay+ 2015 PLoS Comput Biol 11:e1004189"
+K13 = "Kuehn & Duch 2013 Eur J Neurosci 37:860"
+V10 = "von Hoff & Duch 2010 J Comp Neurol 518:2169"
+H23 = "Hurkey+ 2023 Nature 618:118"
+A19 = "Augustin, Zylbertal & Partridge 2019 eNeuro 6(2) / ModelDB 245415"
+P08 = "Phelan+ 2008 Curr Biol 18:1440"
+O14 = "Orr+ 2014 J Neurosci 34:5416"
+AU20 = "Auger+ 2020 PLoS ONE 15:e0224057"
+MCNS = "MaleCNS v1.0"
+AUDIT = "project audit (research/)"
+NONE_BLK = "no measurement in any accessible primary source"
+
+# (parameter, symbol, value, unit, object, source, source_type, provenance,
+#  strength, D/I, M/Mo, repro, conflict, safe, assum, blocked, gate, notes)
+ROWS = [
+    # ---------- A. MN5 passive electrical behaviour ----------
+    ("MN5 whole-cell capacitance (variant A)", "Cm", "43 +/- 2 (n=22)", "pF",
+     "Drosophila MN5 soma", F06, "primary experiment", NEM, "moderate", "D",
+     "M", "no raw data", "C-01 unresolved (~2.95x)", "no", "yes", "no", "none",
+     "Somatic whole-cell. Contradicted by variant B; using either requires "
+     "assuming which is right. NOT compartment-specific."),
+    ("MN5 whole-cell capacitance (variant B)", "Cm", "127 +/- 16 SD (n not stated)",
+     "pF", "Drosophila MN5 soma", R09, "primary experiment", NEM, "moderate",
+     "D", "M", "no raw data", "C-01 unresolved (~2.95x)", "no", "yes", "no",
+     "none", "Authors flag dendritic space-clamp as a Cm error source. Same "
+     "mean and SD re-reported by " + H13 + "; treat as ONE measurement."),
+    ("MN5 input resistance (set 1)", "Rin", "102 +/- 12 (n=22)", "Mohm",
+     "Drosophila MN5 soma", F06, "primary experiment", NEM, "moderate", "D",
+     "M", "no raw data", "none", "yes", "no", "no", "none",
+     "Genuine native measurement in the right cell. Usable as a measured "
+     "constraint on a passive model."),
+    ("MN5 input resistance (set 2)", "Rin", "97 +/- 31 (n=52)", "Mohm",
+     "Drosophila MN5 soma", H13, "primary experiment", NEM, "moderate", "D",
+     "M", "no raw data", "none", "yes", "no", "no", "none",
+     "Second independent set; broader n. Consistent with set 1."),
+    ("MN5 resting potential", "V_rest", "-67.8 +/- 5.5 SD (n=13)", "mV",
+     "Drosophila MN5 soma", R14, "primary experiment", NEM, "moderate", "D",
+     "M", "no raw data", "none", "yes", "no", "no", "none",
+     "Zero holding current after break-in. Strongest MN5 record."),
+    ("MN5 resting potential (weak, figure caption)", "V_rest", "-59", "mV",
+     "Drosophila MN5 soma", "Ryglewski & Duch 2012 J Vis Exp 66:e3779",
+     "primary experiment", NEM, "weak", "D", "M", "no raw data", "none", "no",
+     "yes", "no", "none", "Representative trace only: no n, no uncertainty. "
+     "Prefer the -67.8 mV record."),
+    ("MN5 spike threshold", "V_th", "-24.1 +/- 8.2 SD (n=11)", "mV",
+     "Drosophila MN5 soma", R14, "primary experiment", NEM, "moderate", "D",
+     "M", "no raw data", "none", "yes", "no", "no", "none",
+     "Steepest slope at AP onset."),
+    ("MN5 action potential amplitude", "AP_amp", "45.5 +/- 8.6 SD (n=13)", "mV",
+     "Drosophila MN5 soma", R14, "primary experiment", NEM, "moderate", "D",
+     "M", "no raw data", "none", "yes", "no", "no", "none", ""),
+    ("MN5 action potential time to peak", "AP_tpeak", "1.20 +/- 0.33 (n=13)",
+     "ms", "Drosophila MN5 soma", R14, "primary experiment", NEM, "moderate",
+     "D", "M", "no raw data", "none", "yes", "no", "no", "none",
+     "Somatic. Relevant to how much of an AP reaches the contact."),
+    ("MN5 action potential 50% width", "AP_width", "0.92 +/- 0.25 (n=13)",
+     "ms", "Drosophila MN5 soma", R14, "primary experiment", NEM, "moderate",
+     "D", "M", "no raw data", "none", "yes", "no", "no", "none", "Somatic."),
+    ("MN5 axoplasmic resistivity (value ever applied)", "Ra", "90", "ohm.cm",
+     "Manduca adopted for Drosophila MN5", R09 + " citing Meseke+ 2009",
+     "literature", LDP, "weak", "I", "Mo", "no", "C-10 species mismatch",
+     "no", "yes", "no", "none",
+     "WRONG SPECIES. Self-described as 'values commonly applied'. Manduca "
+     "MeSH-confirmed. Must remain labelled an adopted default."),
+    ("MN5 axoplasmic resistivity (Drosophila-measured)", "Ra", "NONE", "ohm.cm",
+     "Drosophila MN5", AUDIT, "none", MA, "none", "-", "-", "-", "none", "no",
+     "no", "yes", "transfer",
+     NONE_BLK + ". Hard blocker for any cable computation."),
+    ("MN5 specific membrane resistance", "Rm", "NONE", "ohm.cm2",
+     "Drosophila MN5", AUDIT, "none", MA, "none", "-", "-", "-", "none", "no",
+     "no", "yes", "none", NONE_BLK + ". Rm is not a NEURON variable (leak is "
+     "g_pas). 1/g_pas arithmetic is NOT a measurement."),
+    ("MN5 specific membrane capacitance (adopted)", "Cm_spec", "1.15e-6",
+     "F/cm2", "Manduca adopted for Drosophila MN5", R09 + " citing Meseke+ 2009",
+     "literature", LDP, "weak", "I", "Mo", "no", "C-10", "no", "yes", "no",
+     "none", "Wrong species; adopted by assertion, never fitted."),
+    ("MN5 passive leak conductance density (adopted)", "g_pas",
+     "0.0001667", "S/cm2", "Manduca adopted for Drosophila MN5",
+     R09 + " citing Meseke+ 2009", "literature", LDP, "weak", "I", "Mo", "no",
+     "C-10", "no", "yes", "no", "none", "Wrong species; adopted."),
+    ("MN5 membrane time constant", "tau_m", "NONE", "ms", "Drosophila MN5",
+     AUDIT, "none", MA, "none", "-", "-", "-", "none", "no", "no", "yes",
+     "none", NONE_BLK + ". Rin x Cm arithmetic ignores the arbor and is not "
+     "a measured tau."),
+    ("Drosophila motor-neuron axoplasmic resistivity (only measured value)",
+     "Ra", "212.47 +/- 3.69 (n=5)", "ohm.cm", "Drosophila larval 3rd-instar aCC",
+     G15 + " (ModelDB 152028)", "primary experiment", NEM, "moderate", "D",
+     "M", "yes (ModelDB 152028)", "none", "no", "yes", "no", "none",
+     "Only MEASURED Drosophila motor-neuron Ra. 2.4x the value adopted for "
+     "MN5, which is evidence that 90 ohm.cm is not a Drosophila value. Larval "
+     "aCC, not adult MN5."),
+    ("aCC specific membrane capacitance (for contrast)", "Cm_spec",
+     "0.77 +/- 0.02 (n=5)", "uF/cm2", "Drosophila larval aCC", G15,
+     "primary experiment", NEM, "moderate", "D", "Mo", "yes", "none", "no",
+     "yes", "no", "none", "Fitted passive-model parameter, wrong cell."),
+    # ---------- A2. MN5 active currents ----------
+    ("MN5 transient A-type K+ activation Vhalf", "Vhalf_A_act",
+     "-12.1 +/- 1.4", "mV", "Drosophila MN5", R09, "primary experiment", NEM,
+     "moderate", "D", "M", "no raw data", "none", "yes", "no", "no", "none",
+     "24 C. Authors caveat: not all A-type channels fully activated."),
+    ("MN5 transient A-type K+ inactivation Vhalf", "Vhalf_A_inact",
+     "-40.02 +/- 0.33", "mV", "Drosophila MN5", R09, "primary experiment",
+     NEM, "moderate", "D", "M", "no raw data", "none", "yes", "no", "no",
+     "none", "24 C."),
+    ("MN5 Ca-dependent transient A-type activation Vhalf", "Vhalf_CF_act",
+     "-22.34 +/- 2.02", "mV", "Drosophila MN5", R09, "primary experiment",
+     NEM, "moderate", "D", "M", "no raw data", "none", "yes", "no", "no",
+     "none", "24 C."),
+    ("MN5 Ca-dependent transient A-type inactivation Vhalf",
+     "Vhalf_CF_inact", "-49.33 +/- 0.24", "mV", "Drosophila MN5", R09,
+     "primary experiment", NEM, "moderate", "D", "M", "no raw data", "none",
+     "yes", "no", "no", "none", "24 C."),
+    ("MN5 transient Ca2+ current time to peak", "tpeak_Ca", "0.76 +/- 0.16",
+     "ms", "Drosophila MN5", "Ryglewski+ 2011 J Physiol 589:5567",
+     "primary experiment", NEM, "moderate", "D", "M", "no raw data", "none",
+     "yes", "no", "no", "none", "Abolished by 500 uM Cd2+."),
+    ("MN5 sodium conductance density", "g_Na", "NONE", "mS/cm2",
+     "Drosophila MN5", R09, "none", MA, "none", "-", "-", "-", "none", "no",
+     "no", "yes", "none",
+     NONE_BLK + ". " + R09 + " normalises I-Vs 'to cell size' but never "
+     "states the unit (it is NOT pA/pF)."),
+    ("MN5 potassium conductance density", "g_K", "NONE", "mS/cm2",
+     "Drosophila MN5", R09, "none", MA, "none", "-", "-", "-", "none", "no",
+     "no", "yes", "none", NONE_BLK + ". pA and kinetics exist; densities do not."),
+    ("MN5 Shaker localisation", "none", "predominantly axonal", "-",
+     "Drosophila MN5", R09 + "; " + R14, "primary experiment", AM, "moderate",
+     "D", "Mo", "no", "none", "yes", "no", "no", "none",
+     "Soma and primary neurite lack VGSC label. Anatomical, not electrical."),
+    # ---------- E. membrane geometry ----------
+    ("MN5 surface area (EM mesh)", "A_mesh", "18725.6 (801970) / 19665.4 (801295)",
+     "um2", MCNS + " .ngmesh", AUDIT, "primary dataset", AM, "strong", "D",
+     "M", "yes (SHA-256 recorded)", "none", "yes", "no", "no", "none",
+     "Cross product, Heron-validated to 2e-16 relative. Usable model geometry."),
+    ("MN5 surface area (SWC frustum approximation)", "A_frustum",
+     "24803.7 / 25796.8", "um2", MCNS + " em_*.swc", AUDIT, "primary dataset",
+     MDE, "moderate", "I", "Mo", "yes", "C-07 not a conflict", "yes", "no",
+     "no", "none",
+     "Truncated-cone lateral area of a 1-D skeleton. ~24% LARGER than the mesh "
+     "because it is a different domain. Not interchangeable with A_mesh."),
+    ("MN5 dendritic length (literature)", "L_dend", "~6 mm", "um",
+     "Drosophila MN5", V10 + " (re-cited by " + K13 + ")", "primary experiment",
+     AM, "moderate", "D", "Mo", "no", "none", "yes", "no", "no", "none",
+     "n=11 females, 1 day AEL, 25 C. Exact value is in Fig 1E (an image)."),
+    ("MN5 dendritic branch count", "N_dend_br", "nearly 4000", "count",
+     "Drosophila MN5", V10, "primary experiment", AM, "moderate", "D", "Mo",
+     "no", "none", "yes", "no", "no", "none", ""),
+    ("MN5 mean dendritic diameter", "d_dend", "~0.44", "um",
+     "Drosophila MN5", V10, "primary experiment", AM, "moderate", "D", "Mo",
+     "no", "none", "yes", "no", "no", "none",
+     "Literature text says 0.44 um. An earlier project note of 0.88 um is NOT "
+     "supported."),
+    ("MN5 total cable length (SWC)", "L_cable", "7453.5 / 7190.2", "um",
+     MCNS + " em_*.swc", AUDIT, "primary dataset", AM, "strong", "D", "M",
+     "yes", "none", "yes", "no", "no", "none", "Total, not dendritic."),
+    ("MN5 axonal length", "L_axon", "NONE", "um", "Drosophila MN5", V10,
+     "none", MA, "none", "-", "-", "-", "none", "no", "no", "yes", "none",
+     NONE_BLK + ". V10 analyses dendrites only."),
+    ("MN5 compartment split of cable", "f_axon", "93% kind=0 / 7% kind=2",
+     "fraction", MCNS + " em_*.swc", AUDIT, "primary dataset", AM, "strong",
+     "D", "M", "yes", "C-08 semantics undefined", "no", "yes", "no", "none",
+     "Using kind=2 as the axon is an ASSUMPTION: MaleCNS documents no "
+     "assignment procedure and the official reader discards node_type."),
+    ("MN5 soma node / soma surface", "A_soma", "NONE (no kind=1 node)", "um2",
+     MCNS + " em_*.swc", AUDIT, "primary dataset", MA, "none", "-", "-", "-",
+     "none", "no", "no", "yes", "none",
+     "Zero soma nodes in all 9 MN5/PSI skeletons. Contact->soma path is "
+     "permanently UNRESOLVED."),
+    ("MN5 soma-region proxy radius", "r_proxy", "4.671 (801970) / 5.376 (801295)",
+     "um", MCNS + " + somaLocation annotation", AUDIT, "primary dataset", AM,
+     "strong", "D", "M", "yes", "none", "yes", "no", "no", "none",
+     "Soma-SIZED dilation 1.45-2.10 um from somaLocation. The measurement is "
+     "anatomical; calling it the soma is a separate assumption."),
+    ("MN5 soma-region proxy identification", "soma_proxy", "nearest SWC node",
+     "-", MCNS, AUDIT, "none", MA, "none", "-", "-", "-", "none", "no",
+     "yes", "no", "none",
+     "The proxy node is itself kind=2. No source calls it a soma."),
+    ("MN5 somaLocation annotation", "somaLoc", "(56099,46256,81781) / (43450,45480,81574)",
+     "raw 8nm", MCNS + " body-annotations", AUDIT, "primary dataset", AM,
+     "strong", "D", "Mo", "yes", "none", "yes", "no", "no", "none",
+     "A POINT annotation, not a surface. tosomaLocation and rootSide columns "
+     "exist but are unpopulated."),
+    # ---------- F. synaptic location ----------
+    ("PSI->MN5 contact count", "N_syn", "17 + 26 = 43 (minconf 0.5)", "count",
+     "802401->801970; 903327->801295", MCNS + " syn-partners", "primary dataset",
+     AM, "strong", "D", "Mo", "yes", "none", "yes", "no", "no", "none",
+     "Corroborated independently by the annotation layer (17 and 26). "
+     "ALWAYS quote the minconf threshold."),
+    ("PSI->MN5 official compartment_post", "comp_post", "axon x43", "enum",
+     "all 43 verified contacts",
+     MCNS + " synapse annotation layer", "primary dataset", AM, "strong", "D",
+     "Mo", "yes (retrieval script committed)", "none", "yes", "no", "no",
+     "none",
+     "Official enum string. A LABEL, not a distance and not a voltage. "
+     "Dataset annotation, NOT an electrophysiological measurement."),
+    ("PSI->MN5 official compartment_pre", "comp_pre", "axon x38 / unknown x5",
+     "enum", "all 43 verified contacts",
+     MCNS + " synapse annotation layer", "primary dataset", AM, "strong", "D",
+     "Mo", "yes", "none", "yes", "no", "no", "none",
+     "All 5 unknown values are on body 801295. Preserved, not imputed."),
+    ("PSI->MN5 contact coordinates", "xyz_post", "43 triples", "raw 8nm",
+     "all 43 verified contacts", MCNS + " syn-partners", "primary dataset", AM,
+     "strong", "D", "Mo", "yes", "none", "yes", "no", "no", "none",
+     "Exact integer match to the annotation layer; a non-unique match raises."),
+    ("PSI->MN5 contact -> mesh surface distance", "d_surf",
+     "1.67-80.22 (min-max over 43)", "nm", "all 43 verified contacts",
+     AUDIT, "primary dataset", AM, "strong", "D", "M", "yes", "none", "yes",
+     "no", "no", "none", "Nearest surface TRIANGLE point; vertex distance "
+     "tracked separately and never substituted."),
+    ("PSI->MN5 contact -> SWC-root path length", "L_root",
+     "169.2-267.8", "um", "all 43 verified contacts", AUDIT, "primary dataset",
+     MDE, "strong", "I", "Mo", "yes", "none", "yes", "no", "no", "none",
+     "GEOMETRIC path only. Root is the stalk origin, NOT the soma. NOT an "
+     "electrotonic distance."),
+    ("PSI->MN5 contact -> somaLocation straight line", "d_soma",
+     "110.3-172.9", "um", "all 43 verified contacts", AUDIT, "primary dataset",
+     AM, "strong", "D", "M", "yes", "none", "yes", "no", "no", "none",
+     "A straight line is NOT a path length."),
+    ("PSI->MN5 contact -> soma-proxy tree path", "L_proxy",
+     "154.1-241.6", "um", "all 43 verified contacts", AUDIT, "primary dataset",
+     MDE, "moderate", "I", "Mo", "yes", "none", "no", "yes", "no", "none",
+     "Rests on the soma-proxy assumption. A geometric path, never a voltage."),
+    ("MN5 SIZ distance from soma", "SIZ", "~100", "um", "Drosophila MN5", K13,
+     "literature", LDP, "moderate", "D", "Mo", "no", "C-11 corrected", "no",
+     "yes", "no", "none",
+     "Anti-VGSC IMMUNOCYTOCHEMY, not electrophysiology. Unregistered to "
+     "MaleCNS: no deposit, no dendrite labels, no axis, no transform."),
+    ("MN5 SIZ localisation from dendrite origin", "SIZ_off", "11 +/- 3 (n=7)",
+     "um", "Drosophila MN5", K13, "literature", LDP, "moderate", "D", "Mo",
+     "no", "C-11", "no", "yes", "no", "none",
+     "Measured from the DENDRITE ORIGIN, not the soma. SD-vs-SEM unstated. "
+     "The retracted '88 +/- 15 um' figure does not exist."),
+    # ---------- B. PSI->MN5 synaptic input ----------
+    ("PSI->MN5 EPSP amplitude (WT)", "EPSP", "4.71 +/- 0.35 SEM (n=10)", "mV",
+     "Drosophila MN5 soma", F06, "primary experiment", NEM, "moderate", "D",
+     "M", "no raw data", "none", "no", "yes", "no", "none",
+     "Current clamp at -74 mV ONLY. A FILTERED somatic voltage: the GF was "
+     "stimulated, PSI never directly, and the distal amplitude is unreported."),
+    ("PSI->MN5 EPSP amplitude (gfA1)", "EPSP", "1.5 +/- 0.32 SEM (n=7)", "mV",
+     "Drosophila MN5 soma", F06, "primary experiment", NEM, "moderate", "D",
+     "M", "no raw data", "none", "no", "yes", "no", "none",
+     "Dalpha7 point mutant. Same caveats as WT."),
+    ("PSI->MN5 EPSP latency", "t_lat", "NONE", "ms", "Drosophila MN5", F06,
+     "none", MA, "none", "-", "-", "-", "none", "no", "no", "yes", "none",
+     NONE_BLK + ". F06 explicitly REJECTED a kinetics explanation."),
+    ("PSI->MN5 EPSP rise time", "t_rise", "NONE", "ms", "Drosophila MN5",
+     AUDIT, "none", MA, "none", "-", "-", "-", "none", "no", "no", "yes",
+     "none", NONE_BLK),
+    ("PSI->MN5 EPSP decay time constant", "tau_epsp", "NONE", "ms",
+     "Drosophila MN5", AUDIT, "none", MA, "none", "-", "-", "-", "none", "no",
+     "no", "yes", "none", NONE_BLK),
+    ("PSI->MN5 reversal potential", "E_syn", "NONE", "mV", "Drosophila MN5",
+     AUDIT, "none", MA, "none", "-", "-", "-", "none", "no", "no", "yes",
+     "dalpha7", NONE_BLK + ". Single holding point only; no I-V."),
+    ("PSI->MN5 synaptic conductance", "g_syn", "NONE", "uS", "Drosophila MN5",
+     AUDIT, "none", MA, "none", "-", "-", "-", "C-03", "no", "no", "yes",
+     "dalpha7",
+     NONE_BLK + ". Nothing in the literature derives, estimates or names one. "
+     "This is the prerequisite for any Dalpha7 work."),
+    ("PSI->MN5 synaptic delay", "t_delay", "0.5 (ASSUMED)", "ms",
+     "PSI->DLMn pathway", "Gaitanidis+ 2025 PLoS Biol 23:e3003553", "model",
+     MA, "weak", "I", "Mo", "no", "none", "no", "yes", "no", "none",
+     "Explicitly assumed by that paper, derived from a TTM->DLM MUSCLE offset, "
+     "not an isolated synaptic delay. NEVER measured."),
+    ("PSI->MN5 receptor density", "rho_rec", "NONE", "receptors/um2",
+     "PSI->MN5", AUDIT, "none", MA, "none", "-", "-", "-", "none", "no",
+     "no", "yes", "none",
+     NONE_BLK + ". No quantitative immuno, no alpha-Btx binding density here."),
+    ("PSI->MN5 active zone / release site count", "N_AZ", "NONE", "count",
+     "PSI->MN5", AUDIT, "none", MA, "none", "-", "-", "-", "none", "no",
+     "no", "yes", "none", NONE_BLK + ". No T-bar count at this synapse."),
+    ("PSI->MN5 quantal size", "q", "NONE", "mV", "Drosophila MN5", AUDIT,
+     "none", MA, "none", "-", "-", "-", "none", "no", "no", "yes", "none",
+     NONE_BLK + ". No mEPSP analysis."),
+    ("PSI->MN5 release probability", "p_rel", "NONE", "-", "PSI->MN5",
+     AUDIT, "none", MA, "none", "-", "-", "-", "none", "no", "no", "yes",
+     "none", NONE_BLK),
+    ("PSI->MN5 short-term plasticity", "STP", "NONE", "-", "PSI->MN5",
+     AUDIT, "none", MA, "none", "-", "-", "-", "none", "no", "no", "yes",
+     "none", NONE_BLK + " at the synapse. Kadas 2012 is pathway fidelity only."),
+    ("PSI->MN5 transmitter identity", "NT", "acetylcholine", "-",
+     "PSI->MN5", "Gorczyca & Hall 1984 J Neurogenet 1:289", "primary experiment",
+     AM, "moderate", "D", "Mo", "no", "none", "yes", "no", "no", "none",
+     "Conditional *cha* mutations. Secondary citation; full text not retrieved."),
+    ("PSI->MN5 receptor identity", "R_syn", "Dalpha7 nAChR", "-", "PSI->MN5",
+     F06, "primary experiment", MA, "moderate", "I", "Mo", "no", "none",
+     "no", "yes", "no", "none",
+     "GENETIC INFERENCE only: allele strength correlating with EPSP amplitude. "
+     "Not directly identified. The OK307 rescue driver is NOT localised to MN5."),
+    # ---------- C. Dalpha7 ----------
+    ("Dalpha7 channel conductance", "g_Da7", "NONE", "nS", "PSI->MN5",
+     AUDIT, "none", MA, "none", "-", "-", "-", "none", "no", "no", "yes",
+     "dalpha7", NONE_BLK + ". THIS IS THE GATE. Nothing native exists."),
+    ("Dalpha7 single-channel conductance", "gamma_Da7", "NONE", "pS",
+     "Drosophila Dalpha7", AUDIT, "none", MA, "none", "-", "-", "-", "none",
+     "no", "no", "yes", "dalpha7",
+     NONE_BLK + ". Heterologous chick/rat values MUST NOT be substituted."),
+    ("Dalpha7 reversal potential", "E_Da7", "NONE", "mV", "Drosophila Dalpha7",
+     AUDIT, "none", MA, "none", "-", "-", "-", "none", "no", "no", "yes",
+     "dalpha7",
+     NONE_BLK + ". A 0 mV reversal is explicitly barred from being read back "
+     "as a Dalpha7 property."),
+    ("Dalpha7 activation kinetics", "k_on_Da7", "NONE", "1/ms",
+     "Drosophila Dalpha7", AUDIT, "none", MA, "none", "-", "-", "-", "none",
+     "no", "no", "yes", "dalpha7", NONE_BLK),
+    ("Dalpha7 desensitisation kinetics", "k_off_Da7", "NONE", "1/ms",
+     "Drosophila Dalpha7", AUDIT, "none", MA, "none", "-", "-", "-", "none",
+     "no", "no", "yes", "dalpha7", NONE_BLK),
+    ("Dalpha7 Ca2+ permeability", "P_Ca_Da7", "NONE", "dimensionless",
+     "Drosophila Dalpha7", "Grauso+ 2002 Genetics 160:1519 (cited in " + F06 + ")",
+     "literature", MA, "weak", "I", "Mo", "no", "none", "no", "no", "yes",
+     "dalpha7",
+     NONE_BLK + ". Grauso+ 2002 is a HOMOLOGY INFERENCE from vertebrate alpha7, "
+     "stated as background. Adopting it would be a species assumption, and a "
+     "permeability is needed before any Ca2+-coupled model."),
+    ("Dalpha7 receptor density at PSI->MN5", "rho_Da7", "NONE",
+     "receptors/um2", "PSI->MN5", AUDIT, "none", MA, "none", "-", "-", "-",
+     "none", "no", "no", "yes", "dalpha7", NONE_BLK),
+    ("Dalpha7 subunit stoichiometry", "stoich", "NONE", "-",
+     "Drosophila Dalpha7", AUDIT, "none", MA, "none", "-", "-", "-", "none",
+     "no", "no", "yes", "dalpha7", NONE_BLK),
+    ("Dalpha7 localisation at PSI axon terminals", "loc_Da7_pre",
+     "NOT REPORTED", "-", "PSI terminals", F06, "none", MA, "none", "-", "-",
+     "-", "none", "no", "no", "yes", "dalpha7",
+     "No Dalpha7 immunostaining of PSI terminals exists in any primary source."),
+    ("Dalpha7 localisation at MN5/DLMn axons", "loc_Da7_post",
+     "NOT REPORTED", "-", "MN5 axon", F06, "none", MA, "none", "-", "-", "-",
+     "none", "no", "no", "yes", "dalpha7",
+     "No Dalpha7 immunostaining of the MN5 arbor exists. The MN5 signal was a "
+     "GAL4 REPORTER, not protein."),
+    ("Dalpha7 localisation at GF dendrites", "loc_Da7_gf",
+     "10-100x stronger than elsewhere", "-", "GF dendrites", F06,
+     "primary experiment", AM, "moderate", "D", "Mo", "no", "none", "yes",
+     "no", "no", "none",
+     "Usable, but for a DIFFERENT synapse. Author caveat: the antibody also "
+     "recognises another lamina epitope."),
+    ("Dalpha7 native alpha-bungarotoxin binding", "Btx_Da7",
+     "glycopeptide NNGSCLYVPPGIFK, Asn170", "-", "adult fly head",
+     "Korona+ 2022 eLife 11:e74322", "primary experiment", AM, "strong", "D",
+     "Mo", "yes (per-figure source data)", "none", "yes", "no", "no", "none",
+     "Mass spectrometry on native tissue. Proves Dalpha7 protein exists and "
+     "binds alpha-Btx; says nothing about its density at a synapse."),
+    ("Dalpha7 mutant jump phenotype", "phen_jump", "abolished (4 alleles)",
+     "-", "Drosophila", F06, "primary experiment", AM, "moderate", "D", "Mo",
+     "no", "none", "yes", "no", "no", "none", "Flight, trap, ERG and phototaxis "
+     "were NORMAL."),
+    ("Dalpha7 -> Kir7.1 coupling", "coupling", "CHANNEL ABSENT", "-",
+     "Drosophila", "FlyBase FBgg0000509 (Irk1/2/3 only)", "primary database",
+     AM, "strong", "D", "Mo", "yes", "none", "no", "no", "yes", "dalpha7",
+     "THERE IS NO Kir7.1/KCNJ13 ORTHOLOGUE IN Drosophila. The vertebrate "
+     "alpha7->Kir7.1 mechanism cannot be modelled here."),
+    # ---------- D. GFS electrical coupling ----------
+    ("GF gap-junction conductance (paper value)", "g_gap", "135 (young) / 34.5 (old)",
+     "uS", "GFS GF->TTMn and GF->PSI", A19 + " Table 1", "model", MA, "weak",
+     "I", "Mo", "yes (code public)", "C-02 1000x vs executed", "no", "yes",
+     "no", "none", "Explicitly '(estimated)'. Used as a free fitting parameter "
+     "to reproduce measured latencies."),
+    ("GF gap-junction conductance (as executed)", "g_gap", "135 / 34.5",
+     "nS", "GFS GF->TTMn and GF->PSI", A19 + " ModelDB 245415 gap2.mod",
+     "model code", MA, "weak", "I", "Mo", "yes", "C-02", "no", "no", "yes",
+     "none",
+     "gap2.mod declares nanosiemens. EXACTLY 1000x below Table 1. The model's "
+     "own scan script labels the axis in uS. Intent unrecoverable."),
+    ("GF->PSI native junctional conductance", "g_GF_PSI", "NONE", "nS",
+     "Drosophila GF->PSI", AUDIT, "none", MA, "none", "-", "-", "-", "none",
+     "no", "no", "yes", "none",
+     NONE_BLK + " in native neurons. Only Xenopus-oocyte rectification exists."),
+    ("GF->TTMn native junctional conductance", "g_GF_TTMn", "NONE", "nS",
+     "Drosophila GF->TTMn", AUDIT, "none", MA, "none", "-", "-", "-", "none",
+     "no", "no", "yes", "none", NONE_BLK + " in native neurons."),
+    ("MN1-MN2 / MN3-MN4 coupling coefficient", "CC", "0.023 +/- 0.003 SEM (6 pairs)",
+     "-", "Drosophila MN1-4", H23, "primary experiment", NEM, "strong", "D",
+     "M", "Zenodo 10.5281/zenodo.7737730", "none", "yes", "no", "no", "none",
+     "Real, but NOT MN1->MN5 and not the GFS."),
+    ("other MN1-4 coupling coefficient", "CC", "0.01 +/- 0.0027 SEM (10 pairs)",
+     "-", "Drosophila MN1-4", H23, "primary experiment", NEM, "strong", "D",
+     "M", "Zenodo 10.5281/zenodo.7737730", "none", "yes", "no", "no", "none",
+     "Real, but not MN1->MN5."),
+    ("MN1->MN5 coupling coefficient", "CC_MN1MN5", "NOT REPORTED", "-",
+     "Drosophila MN1->MN5", H23, "none", MA, "none", "-", "-", "-", "C-12",
+     "no", "no", "yes", "none",
+     "H23 reports CC for MN1-4 combinations ONLY. MN5 appears solely via an "
+     "MN4-MN5 synchronisation index (0.56, n=11)."),
+    ("MN5->MN1 coupling", "CC_MN5MN1", "bidirectional, qualitative", "-",
+     "Drosophila MN5<->MN1", H23, "primary experiment", AM, "weak", "D",
+     "Mo", "no", "none", "no", "yes", "no", "none",
+     "Non-rectifying, unlike the GFS. No CC, conductance or latency."),
+    ("ShakB identity", "none", "inx8 (an innexin, NOT Kv1)", "-",
+     "Drosophila GFS", P08 + "; " + AUDIT, "primary experiment", AM,
+     "strong", "D", "Mo", "no", "C-09 premise corrected", "yes", "no", "no",
+     "none", "Corrects a Kv1 conflation. No Kv1 evidence exists at any GFS "
+     "synapse."),
+    ("ShakB isoform asymmetry", "none", "GF ShakB(N+16); TTMn/PSI ShakB(L)",
+     "-", "Drosophila GFS", P08, "primary experiment", AM, "strong", "D",
+     "Mo", "no", "none", "yes", "no", "no", "none",
+     "Makes GF->TTMn and GF->PSI HETEROTYPIC junctions. RNA in-situ verified."),
+    ("ShakB single-channel conductance", "g_ShakB", "NONE", "nS",
+     "Drosophila GFS", P08, "none", MA, "none", "-", "-", "-", "none", "no",
+     "no", "yes", "none",
+     "In P08 Tables S1-S3, which are INACCESSIBLE. No unitary current or Po."),
+    ("GFS rectification index", "Gj_min/Gj_max", "0.21", "-", "GFS-mimic in oocyte",
+     P08, "primary experiment", NEM, "moderate", "D", "M", "Tables S1-S3 "
+     "inaccessible", "none", "no", "yes", "no", "none",
+     "Measured in XENOPUS OOCYTES. Must never be quoted as a GFS value. "
+     "ModelDB's gap2 is linear and cannot reproduce it."),
+    ("GF->TTMn ShakB plaque fraction", "f_ShakB", "14.72 +/- 3.99 SD (n=9)",
+     "% of GF terminal", "Drosophila GF->TTMn", O14, "primary experiment", NEM,
+     "strong", "D", "Mo", "yes (open-access Table 2)", "none", "yes", "no",
+     "no", "none", "fra LOF 3.00 +/- 0.57; Netrin LOF 1.54 +/- 0.48."),
+    ("GF->PSI age dependence of ShakB", "none", "NONE (no decline)", "-",
+     "Drosophila GF->PSI", AU20, "primary experiment", AM, "strong", "D",
+     "Mo", "no", "none", "yes", "no", "no", "none",
+     "The GFS age decline is GF->TTMn-SPECIFIC. A negative result, and a "
+     "useful one."),
+    ("GF->PSI pathway latency", "t_gap", "1.3-1.7 (WT range)", "ms",
+     "Drosophila GFS pathway", "Allen & Murphey 2007; JoVE 2412 (2011)",
+     "primary experiment", NEM, "moderate", "D", "M", "no", "none", "yes",
+     "no", "no", "none", "A PATHWAY latency, not an isolated synapse latency."),
+    ("GF->TTMn pathway latency", "t_gap", "0.93 (young) / 1.22 (old)", "ms",
+     "Drosophila GF->TTMn", A19, "primary experiment", NEM, "strong", "D",
+     "M", "yes (supplementary)", "none", "yes", "no", "no", "none",
+     "25 C, n=8-9 per condition."),
+    # ---------- A3. electrotonic / transfer (blocked) ----------
+    ("MN5 electrotonic distance contact->soma", "L_ele",
+     "NONE (not computed)", "space constants", "MN5", AUDIT, "none", MA,
+     "none", "-", "-", "-", "none", "no", "no", "yes", "transfer",
+     "BLOCKED twice: no Drosophila Ra, and no measured transfer. Never "
+     "computed anywhere in this project."),
+    ("MN5 length constant", "lambda", "NONE (not computed)", "um", "MN5",
+     AUDIT, "none", MA, "none", "-", "-", "-", "none", "no", "no", "yes",
+     "transfer", "BLOCKED: requires Ra and Rm, neither of which is measured "
+     "for Drosophila."),
+    ("MN5 transfer resistance", "R_transfer", "NONE (not computed)", "Mohm",
+     "MN5", AUDIT, "none", MA, "none", "-", "-", "-", "none", "no", "no",
+     "yes", "transfer", "BLOCKED. Never computed in this project."),
+    # ---------- G. simulation timing ----------
+    ("simulation temperature", "T", "25", "C", "GFS model", A19 + " gfpn.py L146",
+     "model code", MA, "weak", "I", "Mo", "yes", "none", "no", "yes", "no",
+     "none", "No Table 1 row. Matches the experimental temperature; still an "
+     "assumption."),
+    ("simulation timestep", "dt", "1", "ms", "project", "project policy",
+     "model", MA, "weak", "I", "Mo", "yes", "none", "no", "yes", "no", "none",
+     "ACCEPTABLE ONLY for reduced LIF/conductance_v0. Must NOT be claimed to "
+     "resolve sub-ms biological kinetics."),
+    ("ModelDB stimulation amplitude / duration", "none", "120 / 0.03",
+     "nA / ms", "GFS model", A19 + " gfpn.py L61,L63", "model code", MA,
+     "weak", "I", "Mo", "yes", "none", "no", "yes", "no", "none",
+     "A model fixture, not a measurement."),
+    ("ModelDB muscle delay", "t_muscle", "0.35", "ms", "GFS model",
+     A19 + " gfpn.py L64", "model code", MA, "weak", "I", "Mo", "yes", "none",
+     "no", "yes", "no", "none", "Points at the paper's Methods; not measured."),
+    ("ModelDB PSI->DLMn synaptic delay", "t_delay", "0.15", "ms", "GFS model",
+     A19 + " gfpn.py L167", "model code", MA, "weak", "I", "Mo", "yes",
+     "C-03 family", "no", "yes", "no", "none",
+     "'(estimated)'. Not a measurement. Distinct from the 0.5 ms assumption "
+     "used elsewhere."),
+    ("ModelDB chemical peak conductance (paper value)", "g_peak", "80", "uS",
+     "PSI->DLMn", A19 + " Table 1", "model", MA, "weak", "I", "Mo", "yes",
+     "C-03 1000x", "no", "yes", "no", "none",
+     "Explicitly '(estimated)'. Not a measurement. Used as a free parameter."),
+    ("ModelDB chemical peak conductance (as executed)", "PSI_DLMn_wt", "0.08",
+     "uS", "PSI->DLMn", A19 + " gfpn.py L52", "model code", MA, "weak", "I",
+     "Mo", "yes", "C-03", "no", "no", "yes", "dalpha7",
+     "EXACTLY 1000x below Table 1. This is the only PSI->DLMn conductance "
+     "figure in existence and it is internally contradictory."),
+    ("ModelDB Ra (never assigned)", "Ra", "35.4", "ohm.cm", "GFS model",
+     A19 + " NEURON built-in default", "model code", MA, "none", "I", "Mo",
+     "yes", "C-06", "no", "yes", "no", "none",
+     "Table 1 lists it as '(estimated)' but the code NEVER SETS it. "
+     "Indistinguishable from the simulator default."),
+    ("ModelDB Cm (never assigned)", "cm", "1.0", "uF/cm2", "GFS model",
+     A19 + " NEURON built-in default", "model code", MA, "none", "I", "Mo",
+     "yes", "C-06", "no", "yes", "no", "none",
+     "Table 1 lists it as '(estimated)' but the code NEVER SETS it."),
+    ("ModelDB leak conductance", "g_pas", "0.03", "mS/cm2", "GFS model",
+     A19 + " gfpn.py L56", "model code", MA, "weak", "I", "Mo", "yes", "none",
+     "no", "yes", "no", "none", "'(estimated)'."),
+    ("ModelDB gnatbar / gnapbar / gkbar", "g_bar", "300e-3 / 110e-6 / 10e-3",
+     "S/cm2", "GFS model", A19 + " gfpn.py L50-51,54", "model code", MA,
+     "weak", "I", "Mo", "yes", "none", "no", "yes", "no", "none",
+     "Attributed to Gunay+ 2015 in Table 1. ZERO source comments in the file. "
+     "gkbar is '(estimated)'."),
+    ("ModelDB GF_TTMn_wt / GF_PSI_wt", "w_chem", "0.00 / 0.00", "uS",
+     "GFS model", A19 + " gfpn.py L165-166", "model code", MA, "weak", "I",
+     "Mo", "yes", "none", "no", "yes", "no", "none",
+     "No Table 1 row. The chemical components of the two 'mixed' synapses are "
+     "effectively switched OFF."),
+]
+
+
+def _normalise_units(rows):
+    """Replace the '-' unit placeholder with an EXPLICIT unit.
+
+    Units must never be blank or a dash, because a dash reads as "unknown"
+    when it usually means "dimensionless". Numeric ratios become
+    ``dimensionless``; string-valued (categorical) quantities become
+    ``categorical``. Nothing else is rewritten.
+    """
+    out = []
+    for r in rows:
+        r = list(r)
+        if len(r) != len(COLUMNS):
+            out.append(r)
+            continue
+        i = COLUMNS.index("unit")
+        value = r[COLUMNS.index("value")]
+        if r[i] == "-":
+            numeric = (value[:1].isdigit() or value[:1] == "-"
+                       or "%" in value)
+            r[i] = "dimensionless" if numeric else "categorical"
+        out.append(tuple(r))
+    return out
+
+
+def _validate(rows):
+    errs = []
+    allowed_prov = {NEM, AM, LDP, MA, MDE}
+    for r in rows:
+        if len(r) != len(COLUMNS):
+            errs.append(f"{r[0]}: {len(r)} fields, expected {len(COLUMNS)}")
+            continue
+        p = dict(zip(COLUMNS, r))
+        if p["provenance"] not in allowed_prov:
+            errs.append(f"{p['parameter']}: provenance {p['provenance']!r}")
+        n_yes = sum(1 for k in ("safe_now", "assumption_only", "blocked")
+                    if p[k] == "yes")
+        if n_yes != 1:
+            errs.append(f"{p['parameter']}: {n_yes} safety flags, expected 1")
+        if p["safe_now"] == "yes" and p["blocked"] == "yes":
+            errs.append(f"{p['parameter']}: both safe and blocked")
+        if p["unit"] in ("", "-", None):
+            errs.append(f"{p['parameter']}: unit must be explicit")
+        if p["value"] == "NONE" and p["blocked"] != "yes":
+            errs.append(f"{p['parameter']}: value NONE but not blocked")
+    return errs
+
+
+def _md(rows):
+    def table(subset):
+        out = ["| parameter | value | unit | provenance | strength | gate | notes |",
+               "| --- | --- | --- | --- | --- | --- | --- |"]
+        for r in subset:
+            p = dict(zip(COLUMNS, r))
+            out.append(f"| {p['parameter']} | {p['value']} | {p['unit']} | "
+                       f"{p['provenance']} | {p['evidence_strength']} | "
+                       f"{p['gate']} | {p['notes']} |")
+        return "\n".join(out)
+
+    safe = [r for r in rows if dict(zip(COLUMNS, r))["safe_now"] == "yes"]
+    asm = [r for r in rows if dict(zip(COLUMNS, r))["assumption_only"] == "yes"]
+    blk = [r for r in rows if dict(zip(COLUMNS, r))["blocked"] == "yes"]
+    conflicts = sorted({dict(zip(COLUMNS, r))["conflict"]
+                        for r in rows
+                        if dict(zip(COLUMNS, r))["conflict"] != "none"})
+
+    return f"""# Model Input Freeze — PSI→MN5 / Dα7
+
+**GENERATED FILE.** Do not edit by hand. Regenerate with:
+`python research/scripts/build_model_input_freeze.py`
+
+Source of truth: `research/model_input_freeze.csv` ({len(rows)} parameters).
+Machine-readable. Provenance vocabulary is exactly the project's five classes.
+
+**PSI→MN5 spatial voltage transfer: NOT AUTHORIZED**
+**Dα7 conductance: NOT AUTHORIZED**
+
+## Counts
+
+| bucket | n |
+| --- | --- |
+| total parameters audited | **{len(rows)}** |
+| **A · SAFE TO USE NOW** | **{len(safe)}** |
+| **B · USABLE ONLY AS EXPLICIT MODEL ASSUMPTIONS** | **{len(asm)}** |
+| **C · BLOCKED / DO NOT USE** | **{len(blk)}** |
+| unresolved conflicts preserved | **{len(conflicts)}** |
+
+Convention: rows with value `NONE` are provenance-classified `model_assumption`
+because any value for them would be a pure invention, and are always blocked.
+Exactly one of `safe_now` / `assumption_only` / `blocked` is `yes` per row, and
+B is never silently promoted into A.
+
+## Unresolved conflicts preserved
+
+{chr(10).join('- ' + c for c in conflicts)}
+
+## A · SAFE TO USE NOW ({len(safe)})
+
+Measured with adequate provenance in the right biological object.
+
+{table(safe)}
+
+## B · USABLE ONLY AS EXPLICIT MODEL ASSUMPTIONS ({len(asm)})
+
+Exploratory use only. Each MUST remain labelled an assumption wherever it
+appears. **Never promote a row from B to A.**
+
+{table(asm)}
+
+## C · BLOCKED / DO NOT USE ({len(blk)})
+
+Requires an unresolved biological measurement, or either scientific gate.
+
+{table(blk)}
+
+## Unresolved conflicts — no winner chosen
+
+| parameter | conflict | why it stays open |
+| --- | --- | --- |
+| MN5 whole-cell capacitance | C-01 | 43 ± 2 pF vs 127 ± 16 pF, same cell, same nominal preparation, ~2.95×. No source reconciles them. Neither may be averaged or preferred. |
+| MN5 Ra provenance | C-10 / new | The only value ever applied (90 Ω·cm) is *Manduca*-derived, adopted by assertion. The only *measured* Drosophila motor-neuron Ra is 212.47 ± 3.69 Ω·cm (larval aCC) — 2.4× larger. |
+| MN5 passive parameter provenance | C-10 | Cm, Ra and g_pas in the sole MN5 model are *Manduca* values, self-described as "commonly applied". |
+| gap-junction conductance | C-02 | 135 / 34.5 µS in Table 1 vs 135 / 34.5 **nS** as executed by `gap2.mod`. Exactly 1000×. The model's own scan script labels the axis in µS. |
+| chemical peak conductance | C-03 | 80 µS in Table 1 vs **0.08 µS** as executed. Exactly 1000×. This is a *different synapse* from C-02 and the two must never be pooled. |
+| MN1→MN5 coupling coefficient | C-12 | Not reported by any source; only MN1–4 coefficients exist. |
+| SWC `kind=2` semantics | C-08 | MaleCNS documents no assignment procedure; the official reader discards `node_type`. Biology UNDEFINED IN AVAILABLE SOURCE. |
+| MN5 dendritic diameter | corrected | Literature text says 0.44 µm; an earlier project note of 0.88 µm is unsupported. |
+| SIZ distance | C-11 | "88 ± 15 µm" does not exist in Kuehn & Duch 2013. Corrected to ~100 µm from soma and 11 ± 3 µm from the dendrite origin. |
+
+## Minimum honest model — what may be simulated today
+
+| capability | possible now? | blocker |
+| --- | --- | --- |
+| 1. anatomy only | **YES** | — |
+| 2. passive MN5 response | **PARTIAL** | needs Ra and Rm (blocked); Cm conflicted. A reduced single-compartment or LIF model is possible using the safe rows, but is not a cable model. |
+| 3. PSI→MN5 synaptic response | **NO** | synaptic conductance never measured (M-01) |
+| 4. spatial transfer contact→soma | **NO** | Ra blocked **and** no measured transfer (M-02) — **GATE 1** |
+| 5. Dα7-mediated conductance | **NO** | no native Dα7 conductance; no Kir7.1 orthologue — **GATE 2** |
+| 6. GFS electrical coupling | **PARTIAL** | no native Gj; 1000× internal conflict; MN1→MN5 CC unreported. Not a gate. |
+
+Nothing in bucket C may be implemented. Buckets A and B may be used, with B
+labelled as assumptions.
+
+## Final statement
+
+{len(rows)} parameters audited. **{len(safe)} SAFE**, **{len(asm)} ASSUMPTION-ONLY**,
+**{len(blk)} BLOCKED**. {len(conflicts)} unresolved conflicts preserved with no
+winner chosen.
+
+**PSI→MN5 spatial voltage transfer: NOT AUTHORIZED**
+**Dα7 conductance: NOT AUTHORIZED**
+"""
+
+
+def main() -> int:
+    rows = _normalise_units(ROWS)
+    errs = _validate(rows)
+    if errs:
+        for e in errs:
+            print("ERROR", e, file=sys.stderr)
+        return 1
+    csv_path = os.path.join(RESEARCH, "model_input_freeze.csv")
+    with open(csv_path, "w", newline="", encoding="utf-8") as fh:
+        w = csv.writer(fh)
+        w.writerow(COLUMNS)
+        w.writerows(rows)          # normalised rows, not the raw literal
+    md_path = os.path.join(RESEARCH, "model_input_freeze.md")
+    with open(md_path, "w", encoding="utf-8") as fh:
+        fh.write(_md(rows))
+    safe = sum(1 for r in rows if r[COLUMNS.index("safe_now")] == "yes")
+    asm = sum(1 for r in rows
+              if r[COLUMNS.index("assumption_only")] == "yes")
+    blk = sum(1 for r in rows if r[COLUMNS.index("blocked")] == "yes")
+    print(f"wrote {csv_path} ({len(ROWS)} rows x {len(COLUMNS)} cols)")
+    print(f"wrote {md_path}")
+    print(f"SAFE={safe} ASSUMPTION_ONLY={asm} BLOCKED={blk}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
