@@ -1,0 +1,360 @@
+"""Regression checks for the repository asset provenance audit."""
+
+import csv
+import hashlib
+import re
+from collections import Counter
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[1]
+LEDGER = ROOT / "research" / "asset_replacement_ledger.csv"
+PLAN = ROOT / "research" / "asset_replacement_plan.md"
+EVIDENCE_REPORT = ROOT / "research" / "asset_evidence_resolution.md"
+
+REQUIRED_COLUMNS = {
+    "asset_id",
+    "asset_name",
+    "asset_path",
+    "asset_type",
+    "provenance",
+    "provenance_source",
+    "biological_claim",
+    "usage_type",
+    "used_by",
+    "ai_generated",
+    "ai_generation_evidence",
+    "biological_evidence",
+    "evidence_strength",
+    "replacement_decision",
+    "replacement_target",
+    "replacement_source",
+    "replacement_source_type",
+    "validation_method",
+    "scientific_gate",
+    "status",
+    "notes",
+}
+PROVENANCE = {
+    "PRIMARY_EXPERIMENTAL",
+    "AUTHORITATIVE_DATA",
+    "PUBLISHED_RECONSTRUCTION",
+    "LITERATURE_DERIVED",
+    "MODEL_DERIVED",
+    "PROCEDURAL_SYNTHETIC",
+    "AI_GENERATED",
+    "PLACEHOLDER",
+    "VISUAL_ONLY",
+    "UNKNOWN",
+}
+DECISIONS = {
+    "KEEP",
+    "REPLACE",
+    "REMOVE",
+    "RESEARCH_REQUIRED",
+    "UNRESOLVED",
+    "VISUAL_ONLY",
+}
+USAGE_TYPES = {
+    "BIOLOGICAL_COMPUTATION",
+    "VISUALIZATION_ONLY",
+    "TEST_FIXTURE",
+    "DOCUMENTATION_ONLY",
+    "UNUSED",
+}
+
+
+def _rows():
+    with LEDGER.open(encoding="utf-8-sig", newline="") as source:
+        reader = csv.DictReader(source)
+        rows = list(reader)
+        assert reader.fieldnames is not None
+        assert REQUIRED_COLUMNS.issubset(reader.fieldnames)
+        return rows
+
+
+def test_asset_replacement_ledger_exists_and_parses():
+    assert LEDGER.is_file()
+    rows = _rows()
+    assert rows
+    assert all(set(row) == set(rows[0]) for row in rows)
+
+
+def test_second_pass_preserves_all_original_inventory_rows():
+    rows = _rows()
+    assert len(rows) == 709
+    assert len({row["asset_id"] for row in rows}) == 709
+
+
+def test_asset_ids_are_unique_and_stable_for_paths():
+    rows = _rows()
+    ids = [row["asset_id"] for row in rows]
+    assert len(ids) == len(set(ids))
+    for row in rows:
+        expected = "ASSET_" + hashlib.sha256(
+            row["asset_path"].encode("utf-8")
+        ).hexdigest()[:12].upper()
+        assert row["asset_id"] == expected
+
+
+def test_repository_assets_have_nonblank_existing_paths():
+    rows = _rows()
+    for row in rows:
+        asset_path = row["asset_path"].strip()
+        assert asset_path
+        assert (ROOT / Path(asset_path)).is_file(), asset_path
+
+
+def test_all_repository_visual_assets_are_inventoried():
+    ignored = {".git", ".venv", "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache"}
+    extensions = {".png", ".gif", ".jpg", ".jpeg", ".webp"}
+    discovered = set()
+    for base, dirs, files in __import__("os").walk(ROOT):
+        dirs[:] = [directory for directory in dirs if directory not in ignored]
+        for filename in files:
+            path = Path(base) / filename
+            if path.suffix.lower() in extensions:
+                discovered.add(path.relative_to(ROOT).as_posix())
+    rows = _rows()
+    inventoried = {
+        row["asset_path"]
+        for row in rows
+        if Path(row["asset_path"]).suffix.lower() in extensions
+    }
+    # A replacement remains traceable through the original row's target field.
+    inventoried.update(
+        row["replacement_target"]
+        for row in rows
+        if Path(row["replacement_target"]).suffix.lower() in extensions
+    )
+    assert inventoried == discovered
+
+
+def test_taxonomy_values_are_controlled():
+    for row in _rows():
+        assert row["provenance"] in PROVENANCE
+        assert row["replacement_decision"] in DECISIONS
+        assert row["usage_type"] in USAGE_TYPES
+
+
+def test_ai_generated_rows_have_explicit_source_and_evidence():
+    for row in _rows():
+        assert row["ai_generated"] in {"YES", "NO"}
+        if row["ai_generated"] == "YES":
+            assert row["provenance"] == "AI_GENERATED"
+            assert row["provenance_source"].strip()
+            assert row["ai_generation_evidence"].strip()
+        if row["provenance"] == "AI_GENERATED":
+            assert row["ai_generated"] == "YES"
+
+
+def test_unknown_is_not_automatically_ai_generated():
+    for row in _rows():
+        if row["provenance"] == "UNKNOWN":
+            assert row["ai_generated"] == "NO"
+
+
+def test_procedural_synthetic_requires_asset_specific_generation_evidence():
+    for row in _rows():
+        if row["provenance"] == "PROCEDURAL_SYNTHETIC":
+            evidence = " ".join(
+                (row["provenance_source"], row["notes"])
+            ).lower()
+            assert row["provenance_source"].strip()
+            assert any(
+                marker in evidence
+                for marker in (
+                    "procedurally generated",
+                    "procedural generation",
+                    "generation script",
+                    "generated by",
+                )
+            )
+
+
+def test_biological_provenance_categories_require_traceable_sources():
+    biological_categories = {
+        "PRIMARY_EXPERIMENTAL",
+        "AUTHORITATIVE_DATA",
+        "PUBLISHED_RECONSTRUCTION",
+        "LITERATURE_DERIVED",
+        "MODEL_DERIVED",
+    }
+    for row in _rows():
+        if row["provenance"] in biological_categories:
+            assert row["provenance_source"].strip()
+
+
+def test_reclassified_visual_only_rows_have_role_evidence_and_notes():
+    rows = _rows()
+    reclassified = [row for row in rows if row["status"] == "RECLASSIFIED_VISUAL_ONLY"]
+    assert len(reclassified) == 650
+    for row in reclassified:
+        assert row["provenance"] == "VISUAL_ONLY"
+        assert row["evidence_strength"] == "SUPPORTED_ROLE_ONLY"
+        assert "Second-pass triage" in row["notes"]
+        assert "generation method remain unknown" in row["notes"]
+
+
+def test_second_pass_preserves_all_mating_rows_and_resolves_decision():
+    rows = _rows()
+    mating = [row for row in rows if "/animations/mate/" in row["asset_path"].replace("\\", "/")]
+    assert len(mating) == 40
+    assert all(row["provenance"] == "UNKNOWN" for row in mating)
+    assert all(row["replacement_decision"] == "RESEARCH_REQUIRED" for row in mating)
+    assert all(row["replacement_source"] == "NONE_IDENTIFIED" for row in mating)
+    active = [row for row in mating if row["usage_type"] == "VISUALIZATION_ONLY"]
+    unused = [row for row in mating if row["usage_type"] == "UNUSED"]
+    assert len(active) == 8
+    assert len(unused) == 32
+
+
+def test_priority_counts_and_remaining_unknown_are_documented():
+    report = EVIDENCE_REPORT.read_text(encoding="utf-8")
+    assert "Starting counts: `UNKNOWN` 41" in report
+    assert "Final `UNKNOWN` 40" in report
+    assert "P1: 8 active mating frames" in report
+    assert "P2: 32 unused mating copies" in report
+
+
+def test_audited_dashboard_assets_are_replaced():
+    rows = _rows()
+    replaced = [row for row in rows if row["replacement_decision"] == "REPLACE"]
+    expected_replacements = {
+        "ASSET_8544FD3D037C": {
+            "asset_path": "dashboard assests/fly_hero_transparent.png",
+            "replacement_target": "dashboard assests/fly_hero_human_commons_ccby.png",
+            "license": "CC BY 4.0",
+        },
+        "ASSET_9C7515694C5B": {
+            "asset_path": "dashboard assests/fly_behavior_assets_codex_v2/effects/fire_overlay.png",
+            "replacement_target": "dashboard assests/fly_behavior_assets_codex_v2/effects/fire_overlay.png",
+            "license": "CC BY 3.0",
+        },
+    }
+    assert len(replaced) == len(expected_replacements)
+    assert {row["asset_id"] for row in replaced} == set(expected_replacements)
+    for row in replaced:
+        expected = expected_replacements[row["asset_id"]]
+        assert row["asset_path"] == expected["asset_path"]
+        assert row["replacement_target"] == expected["replacement_target"]
+        assert row["replacement_source"].startswith(
+            "https://commons.wikimedia.org/wiki/File:"
+        )
+        assert expected["license"] in row["replacement_source_type"]
+        assert row["status"] == "REPLACED_VALIDATED"
+
+
+def test_replacement_decisions_have_consistent_targets():
+    for row in _rows():
+        if row["replacement_decision"] == "REPLACE":
+            assert row["replacement_target"].strip() not in {"", "NONE_IDENTIFIED"}
+            assert row["replacement_source"].strip() not in {"", "NONE_IDENTIFIED"}
+        if row["replacement_decision"] == "UNRESOLVED":
+            assert row["replacement_target"].strip() in {"", "NONE_IDENTIFIED"}
+            assert row["replacement_source"].strip() in {"", "NONE_IDENTIFIED"}
+        if row["replacement_decision"] in {"RESEARCH_REQUIRED", "UNRESOLVED"}:
+            assert row["replacement_target"].strip() in {"", "NONE_IDENTIFIED"}
+            assert row["replacement_source"].strip() in {"", "NONE_IDENTIFIED"}
+
+
+def test_group_weights_is_individually_resolved_as_model_heuristic():
+    rows = _rows()
+    matches = [row for row in rows if row["asset_path"] == "group_weights.json"]
+    assert len(matches) == 1
+    row = matches[0]
+    assert row["provenance"] == "MODEL_DERIVED"
+    assert row["replacement_decision"] == "KEEP"
+    assert row["evidence_strength"] == "REPOSITORY_SUPPORTED_MODEL_HEURISTIC"
+    assert "hand-designed" in row["provenance_source"].lower()
+    assert "not derived" in row["provenance_source"].lower()
+
+
+def test_keep_rows_have_supporting_provenance():
+    for row in _rows():
+        if row["replacement_decision"] == "KEEP":
+            assert row["provenance"] != "UNKNOWN"
+            assert row["provenance_source"].strip()
+            assert row["biological_evidence"].strip()
+
+
+def test_visual_only_rows_do_not_request_biological_replacement():
+    for row in _rows():
+        if row["replacement_decision"] == "VISUAL_ONLY":
+            assert row["replacement_target"] == "NONE_IDENTIFIED"
+            assert row["replacement_source"] == "NONE_IDENTIFIED"
+            assert row["usage_type"] != "BIOLOGICAL_COMPUTATION"
+
+
+def test_plan_counts_match_ledger_taxonomies():
+    rows = _rows()
+    plan = PLAN.read_text(encoding="utf-8")
+    assert f"{len(rows)} data rows" in plan
+    for field in ("provenance", "replacement_decision", "usage_type"):
+        counts = Counter(row[field] for row in rows)
+        for label, count in counts.items():
+            assert re.search(
+                rf"\|\s*{re.escape(label)}\s*\|\s*{count}\s*\|", plan
+            ), (field, label, count)
+
+
+def test_scientific_gates_are_explicitly_preserved():
+    plan = PLAN.read_text(encoding="utf-8")
+    ledger_gates = "\n".join(row["scientific_gate"] for row in _rows())
+    required_phrases = (
+        "PSI\u2192MN5 spatial voltage-transfer mechanism remains **NOT AUTHORIZED**",
+        "D\u03b17 PSI\u2192MN5 conductance remains **NOT AUTHORIZED**",
+        "SIZ coordinate registration remains unresolved",
+        "Local PSI\u2192MN5 synaptic conductance remains unresolved",
+        "80 \u00b5S vs 0.08 \u00b5S",
+        "135/34.5 \u00b5S vs nS",
+        "ShakB absolute GFS conductance remains unresolved",
+        "No parameter is inferred from model stability",
+        "Somatic MN5 measurements are not converted into local axonal parameters",
+        "Model-derived geometry is not presented as experimental anatomy",
+    )
+    assert all(phrase in plan for phrase in required_phrases)
+    required_ledger_gates = (
+        "PSI→MN5 spatial voltage transfer NOT AUTHORIZED",
+        "Dα7 PSI→MN5 conductance NOT AUTHORIZED",
+        "SIZ coordinate registration unresolved",
+        "local PSI→MN5 synaptic conductance unresolved",
+        "80 µS vs 0.08 µS synaptic-weight conflict unresolved",
+        "135/34.5 µS vs nS gap-junction conflict unresolved",
+        "ShakB absolute GFS conductance unresolved",
+        "no parameter inferred from model stability",
+        "no somatic-to-local-axonal parameter conversion",
+        "must not be presented as experimental anatomy",
+    )
+    assert all(gate in ledger_gates for gate in required_ledger_gates)
+
+
+def test_second_pass_did_not_change_group_model_code_or_weight_values():
+    expected = {
+        "group_brain.py": "985689ee53914de174f58707451016dca7772cc1262a94aaeae6b3c321ff8150",
+        "group_weights.json": "7d3b3cfabb30538526897185edf54b4962329169d2868b871e06e88b8bd31300",
+    }
+    for filename, digest in expected.items():
+        assert hashlib.sha256((ROOT / filename).read_bytes()).hexdigest() == digest
+
+
+def test_new_provenance_counts_and_no_ai_or_procedural_classifications():
+    rows = _rows()
+    report = EVIDENCE_REPORT.read_text(encoding="utf-8")
+    assert len(rows) == 709
+    assert sum(row["provenance"] == "UNKNOWN" for row in rows) == 40
+    assert sum(row["provenance"] == "MODEL_DERIVED" for row in rows) == 10
+    assert sum(row["ai_generated"] == "YES" for row in rows) == 0
+    assert sum(row["provenance"] == "PROCEDURAL_SYNTHETIC" for row in rows) == 0
+    assert "hand-designed" in report
+
+
+def test_unsupported_assets_are_not_claimed_biologically_validated():
+    rows = _rows()
+    assert "This is an audit" in PLAN.read_text(encoding="utf-8")
+    for row in rows:
+        if row["evidence_strength"] == "NONE":
+            assert row["replacement_decision"] != "KEEP"
+    assert not any(
+        "biologically validated" in row["notes"].lower() for row in rows
+    )
