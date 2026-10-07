@@ -123,3 +123,15 @@ def test_dashboard_legacy_brain_without_snapshot_still_renders():
     assert image.width == 1400
     assert image.height == 1420
     assert any(image.pixels)
+
+
+def test_dashboard_extends_canvas_for_biological_research():
+    from biological_brain.status_summary import FLY_BRAIN_3_STATUS
+
+    image = brain_dashboard.render_dashboard(
+        _Brain(), biological_research=FLY_BRAIN_3_STATUS,
+    )
+
+    assert image.width == 1400
+    assert image.height == 1760
+    assert any(image.pixels)

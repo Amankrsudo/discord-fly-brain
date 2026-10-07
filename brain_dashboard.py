@@ -1,45 +1,41 @@
-"""Dependency-free, live sci-fi HUD renderer for the Discord fly brain."""
+"""Dependency-light, live Field Notebook renderer for the Discord fly brain."""
 
 import os
 import struct
 import zlib
+
+from PIL import Image, ImageDraw, ImageFont
 
 from dashboard_animation import visual_state
 
 
 WIDTH, HEIGHT = 1400, 1420
 FIRE_THRESHOLD = 22.0
-BG, PANEL, PANEL_ALT = (4, 10, 18), (7, 20, 31), (9, 28, 42)
-CYAN, CYAN_DIM, TEXT, MUTED = (51, 222, 255), (19, 108, 137), (207, 235, 247), (108, 157, 178)
-MAGENTA, ORANGE, GREEN, BLUE, PURPLE = (255, 70, 168), (255, 171, 58), (56, 235, 164), (83, 141, 255), (181, 103, 255)
-HERO_ASSET_PATH = os.path.join(os.path.dirname(__file__), "dashboard assests", "fly_hero_transparent.png")
+
+# Dark Field Notebook presentation tokens. Existing panel positions and
+# dimensions remain unchanged in Phase 1.
+BG = (11, 17, 16)               # #0B1110
+PANEL = (17, 26, 24)            # #111A18
+PANEL_ALT = (21, 33, 30)        # #15211E
+TEXT = (228, 236, 231)          # #E4ECE7
+MUTED = (158, 173, 165)         # #9EADA5
+DIVIDER = (42, 57, 52)           # #2A3934
+GREEN = (95, 175, 143)           # #5FAF8F
+BLUE = (92, 158, 170)            # #5C9EAA
+ORANGE = (211, 154, 82)          # #D39A52
+PURPLE = (164, 119, 155)         # #A4779B
+METER_TRACK = (38, 52, 47)       # #26342F
+CYAN, CYAN_DIM = BLUE, DIVIDER
+MAGENTA = PURPLE
+CORNER_RADIUS = 12
+SPACE_8, SPACE_12, SPACE_16, SPACE_24 = 8, 12, 16, 24
+SPACING_SCALE = (SPACE_8, SPACE_12, SPACE_16, SPACE_24)
+FONT_DIRECTORY = os.path.join(os.path.dirname(__file__), "dashboard assests", "fonts")
+FONT_REGULAR_PATH = os.path.join(FONT_DIRECTORY, "SourceSans3-Regular.ttf")
+FONT_SEMIBOLD_PATH = os.path.join(FONT_DIRECTORY, "SourceSans3-Semibold.ttf")
+HERO_ASSET_PATH = os.path.join(os.path.dirname(__file__), "dashboard assests", "fly_hero_human_commons_ccby.png")
 _HERO_ASSET = None
 
-
-FONT = {
-    "A": ("01110", "10001", "10001", "11111", "10001", "10001", "10001"), "B": ("11110", "10001", "10001", "11110", "10001", "10001", "11110"),
-    "C": ("01111", "10000", "10000", "10000", "10000", "10000", "01111"), "D": ("11110", "10001", "10001", "10001", "10001", "10001", "11110"),
-    "E": ("11111", "10000", "10000", "11110", "10000", "10000", "11111"), "F": ("11111", "10000", "10000", "11110", "10000", "10000", "10000"),
-    "G": ("01111", "10000", "10000", "10111", "10001", "10001", "01110"), "H": ("10001", "10001", "10001", "11111", "10001", "10001", "10001"),
-    "I": ("11111", "00100", "00100", "00100", "00100", "00100", "11111"), "J": ("00111", "00010", "00010", "00010", "10010", "10010", "01100"),
-    "K": ("10001", "10010", "10100", "11000", "10100", "10010", "10001"), "L": ("10000", "10000", "10000", "10000", "10000", "10000", "11111"),
-    "M": ("10001", "11011", "10101", "10101", "10001", "10001", "10001"), "N": ("10001", "11001", "10101", "10011", "10001", "10001", "10001"),
-    "O": ("01110", "10001", "10001", "10001", "10001", "10001", "01110"), "P": ("11110", "10001", "10001", "11110", "10000", "10000", "10000"),
-    "Q": ("01110", "10001", "10001", "10001", "10101", "10010", "01101"), "R": ("11110", "10001", "10001", "11110", "10100", "10010", "10001"),
-    "S": ("01111", "10000", "10000", "01110", "00001", "00001", "11110"), "T": ("11111", "00100", "00100", "00100", "00100", "00100", "00100"),
-    "U": ("10001", "10001", "10001", "10001", "10001", "10001", "01110"), "V": ("10001", "10001", "10001", "10001", "10001", "01010", "00100"),
-    "W": ("10001", "10001", "10001", "10101", "10101", "10101", "01010"), "X": ("10001", "10001", "01010", "00100", "01010", "10001", "10001"),
-    "Y": ("10001", "10001", "01010", "00100", "00100", "00100", "00100"), "Z": ("11111", "00001", "00010", "00100", "01000", "10000", "11111"),
-    "0": ("01110", "10001", "10011", "10101", "11001", "10001", "01110"), "1": ("00100", "01100", "00100", "00100", "00100", "00100", "01110"),
-    "2": ("01110", "10001", "00001", "00010", "00100", "01000", "11111"), "3": ("11110", "00001", "00001", "01110", "00001", "00001", "11110"),
-    "4": ("00010", "00110", "01010", "10010", "11111", "00010", "00010"), "5": ("11111", "10000", "10000", "11110", "00001", "00001", "11110"),
-    "6": ("01110", "10000", "10000", "11110", "10001", "10001", "01110"), "7": ("11111", "00001", "00010", "00100", "01000", "01000", "01000"),
-    "8": ("01110", "10001", "10001", "01110", "10001", "10001", "01110"), "9": ("01110", "10001", "10001", "01111", "00001", "00001", "01110"),
-    "_": ("00000", "00000", "00000", "00000", "00000", "00000", "11111"), "-": ("00000", "00000", "00000", "11111", "00000", "00000", "00000"),
-    ".": ("00000", "00000", "00000", "00000", "00000", "01100", "01100"), ":": ("00000", "01100", "01100", "00000", "01100", "01100", "00000"),
-    "/": ("00001", "00010", "00100", "01000", "10000", "00000", "00000"), ",": ("00000", "00000", "00000", "00000", "01100", "01100", "01000"), "+": ("00000", "00100", "00100", "11111", "00100", "00100", "00000"),
-    " ": ("00000",) * 7,
-}
 
 
 class DashboardImage:
@@ -62,6 +58,27 @@ class DashboardImage:
         for yy in range(y0, y1):
             i = (yy * self.width + x0) * 3
             self.pixels[i:i + len(row)] = row
+
+    def rounded_rectangle(self, x, y, width, height, fill, outline=DIVIDER,
+                          radius=CORNER_RADIUS):
+        x, y, width, height = int(x), int(y), int(width), int(height)
+        if width <= 0 or height <= 0:
+            return
+        radius = max(0, min(int(radius), width // 2, height // 2))
+        card = Image.new("RGB", (width, height), fill)
+        ImageDraw.Draw(card).rounded_rectangle(
+            (0, 0, width - 1, height - 1), radius=radius,
+            fill=fill, outline=outline, width=1,
+        )
+        left, top = max(0, x), max(0, y)
+        right, bottom = min(self.width, x + width), min(self.height, y + height)
+        if left >= right or top >= bottom:
+            return
+        source = card.crop((left - x, top - y, right - x, bottom - y)).tobytes()
+        row_size = (right - left) * 3
+        for row in range(bottom - top):
+            target = ((top + row) * self.width + left) * 3
+            self.pixels[target:target + row_size] = source[row * row_size:(row + 1) * row_size]
 
     def line(self, x0, y0, x1, y1, color, width=1):
         dx, dy = abs(x1 - x0), -abs(y1 - y0)
@@ -107,11 +124,38 @@ class DashboardImage:
                     self.pixels[target + channel] = (rgba[source + channel] * alpha + self.pixels[target + channel] * inverse) // 255
 
     def text(self, x, y, value, color=TEXT, scale=1, limit=None):
-        for index, char in enumerate(str(value).upper()[:limit]):
-            for row, bits in enumerate(FONT.get(char, FONT[" "])):
-                for column, bit in enumerate(bits):
-                    if bit == "1":
-                        self.rectangle(x + index * 6 * scale + column * scale, y + row * scale, scale, scale, color)
+        value = str(value).upper()[:limit]
+        if not value:
+            return
+        font_size = {1: 12, 2: 18, 3: 24}.get(scale, max(12, int(12 * scale)))
+        font_path = FONT_SEMIBOLD_PATH if scale > 1 else FONT_REGULAR_PATH
+        font = ImageFont.truetype(font_path, font_size)
+        digit_advance = max(font.getlength(digit) for digit in "0123456789")
+        advances = [digit_advance if char.isdecimal() else font.getlength(char) for char in value]
+        mask = Image.new("L", (max(1, int(sum(advances)) + 4), font_size + 8), 0)
+        draw = ImageDraw.Draw(mask)
+        cursor = 1
+        for char, advance in zip(value, advances):
+            glyph_advance = font.getlength(char)
+            glyph_x = cursor + (advance - glyph_advance) / 2 if char.isdecimal() else cursor
+            draw.text((glyph_x, 1), char, font=font, fill=255)
+            cursor += advance
+        x, y = int(x), int(y)
+        for mask_y in range(mask.height):
+            target_y = y + mask_y
+            if target_y < 0 or target_y >= self.height:
+                continue
+            for mask_x in range(mask.width):
+                alpha = mask.getpixel((mask_x, mask_y))
+                target_x = x + mask_x
+                if not alpha or target_x < 0 or target_x >= self.width:
+                    continue
+                target = (target_y * self.width + target_x) * 3
+                inverse = 255 - alpha
+                for channel in range(3):
+                    self.pixels[target + channel] = (
+                        color[channel] * alpha + self.pixels[target + channel] * inverse
+                    ) // 255
 
     def save(self, file, format=None):
         if format and format.upper() != "PNG":
@@ -123,13 +167,8 @@ class DashboardImage:
 
 
 def _panel(image, x, y, width, height, title, accent=CYAN):
-    cut = 12
-    image.rectangle(x, y, width, height, PANEL)
-    for a, b, c, d in ((x + cut, y, x + width - cut, y), (x + width, y + cut, x + width, y + height - cut), (x + width - cut, y + height, x + cut, y + height), (x, y + height - cut, x, y + cut)):
-        image.line(a, b, c, d, CYAN_DIM)
-    for a, b, c, d in ((x, y + cut, x + cut, y), (x + width - cut, y, x + width, y + cut), (x + width, y + height - cut, x + width - cut, y + height), (x + cut, y + height, x, y + height - cut)):
-        image.line(a, b, c, d, accent)
-    image.text(x + 18, y + 15, title, accent, 2)
+    image.rounded_rectangle(x, y, width, height, PANEL, DIVIDER, CORNER_RADIUS)
+    image.text(x + SPACE_16, y + SPACE_12, title, accent, 2)
 
 
 def _paeth(left, above, upper_left):
@@ -337,7 +376,7 @@ def _color(group):
     if group.startswith("CX"): return ORANGE
     if group.startswith("MB"): return GREEN
     if group.startswith("SEZ"): return PURPLE
-    if group.startswith("DN") or group.startswith("MN"): return (255, 143, 112)
+    if group.startswith("DN") or group.startswith("MN"): return ORANGE
     return CYAN
 
 
@@ -369,7 +408,7 @@ def _flow(brain, fired):
 def _meter(image, x, y, name, value, color):
     value = max(0.0, min(1.0, float(value)))
     image.text(x, y, name, TEXT, 1)
-    image.rectangle(x + 92, y, 136, 10, (18, 37, 54))
+    image.rectangle(x + 92, y, 136, 10, METER_TRACK)
     image.rectangle(x + 93, y + 1, int(134 * value), 8, color)
     image.text(x + 238, y, f"{value:.2f}", color, 1)
 
@@ -377,7 +416,7 @@ def _meter(image, x, y, name, value, color):
 def _signed_meter(image, x, y, name, value, color):
     value = max(-1.0, min(1.0, float(value)))
     image.text(x, y, name, TEXT, 1)
-    image.rectangle(x + 92, y, 136, 10, (18, 37, 54))
+    image.rectangle(x + 92, y, 136, 10, METER_TRACK)
     center = x + 160
     image.line(center, y, center, y + 10, MUTED)
     length = int(66 * abs(value))
@@ -505,8 +544,8 @@ def _decision_panel(image, x, y, width, height, brain, snapshot):
         bar_y = y + 108 + index * 18
         value = max(0.0, min(1.0, float(score)))
         image.text(x + 18, bar_y, name.upper(), TEXT, 1, 12)
-        image.rectangle(x + 94, bar_y, 170, 8, (18, 37, 54))
-        image.rectangle(x + 95, bar_y + 1, int(168 * value), 6, GREEN if name.upper() == current else CYAN_DIM)
+        image.rectangle(x + 94, bar_y, 170, 8, METER_TRACK)
+        image.rectangle(x + 95, bar_y + 1, int(168 * value), 6, GREEN if name.upper() == current else BLUE)
         image.text(x + 272, bar_y, f"{value:.2f}", GREEN if name.upper() == current else MUTED, 1)
     parts = decision.get("drive_contributions", {}).get(current.lower(), {})
     if parts:
@@ -547,17 +586,38 @@ def _social_panel(image, x, y, width, height, brain, snapshot):
     image.text(x + 18, y + 148, summary if social_parts else "SOCIAL CONTRIBUTION NONE", ORANGE, 1, 110)
 
 
+_BIOLOGICAL_SECTIONS = {
+    "BIOLOGICAL CIRCUIT", "ANATOMY VERIFIED", "LITERATURE",
+    "MODEL-DERIVED", "UNRESOLVED / ASSUMPTION",
+}
+
+
+def _biological_panel(image, x, y, width, height, research):
+    """Render the stored Fly Brain 3.0 research summary as a static panel.
+
+    The values are presentation-only research outputs, never live simulation
+    state, so the panel is drawn verbatim from the supplied summary text.
+    """
+    _panel(image, x, y, width, height, "FLY BRAIN 3.0", PURPLE)
+    lines = [line.strip() for line in str(research).splitlines() if line.strip()]
+    line_y = y + 46
+    for line in lines:
+        structural = line in _BIOLOGICAL_SECTIONS or line.startswith("MODEL OUTPUTS")
+        image.text(x + 18, line_y, line, ORANGE if structural else TEXT, 1, 200)
+        line_y += 20
+
+
 def _hero(image, x, y, states, visual, tick=0):
-    image.rectangle(x + 10, y + 40, 555, 500, (5, 16, 26))
-    for xx in range(x + 25, x + 565, 44): image.line(xx, y + 45, xx, y + 535, (8, 43, 58))
-    for yy in range(y + 60, y + 535, 36): image.line(x + 15, yy, x + 565, yy, (8, 43, 58))
+    image.rectangle(x + 10, y + 40, 555, 500, PANEL_ALT)
+    for xx in range(x + 25, x + 565, 44): image.line(xx, y + 45, xx, y + 535, DIVIDER)
+    for yy in range(y + 60, y + 535, 36): image.line(x + 15, yy, x + 565, yy, DIVIDER)
     image.text(x + 25, y + 52, "LIVE FUNCTIONAL MAP", CYAN, 1)
     cx, cy = x + 285, y + 170
     for prefix, dx, dy, color in (("OLF", -90, -10, MAGENTA), ("VIS", 90, -10, BLUE), ("CX", -35, 55, ORANGE), ("MB", 55, 55, GREEN), ("SEZ", 0, 95, PURPLE)):
         level = max((max(0.0, states.get(group, 0.0)) for group in states if group.startswith(prefix)), default=0.0)
         radius = 23 + int(min(1.0, level / FIRE_THRESHOLD) * 14)
         image.ellipse(cx + dx, cy + dy, radius, radius - 5, color, CYAN_DIM)
-        image.text(cx + dx - 10, cy + dy - 3, prefix, BG, 1)
+        image.text(cx + dx - 10, cy + dy - 3, prefix, TEXT, 1)
     frame_asset = _load_visual_asset(visual.get("frame"), tick)
     hero_asset = frame_asset or _load_hero_asset()
     if hero_asset:
@@ -572,9 +632,9 @@ def _hero(image, x, y, states, visual, tick=0):
                               display_x, display_y, display_width, display_height)
     else:
         # Graceful fallback if the optional visual asset is unavailable.
-        image.ellipse(cx - 96, y + 370, 38, 32, (136, 86, 52), ORANGE)
-        image.ellipse(cx - 45, y + 374, 57, 37, (103, 69, 48), ORANGE)
-        image.ellipse(cx + 27, y + 380, 82, 30, (87, 56, 43), ORANGE)
+        image.ellipse(cx - 96, y + 370, 38, 32, (158, 119, 80), ORANGE)
+        image.ellipse(cx - 45, y + 374, 57, 37, (139, 105, 75), ORANGE)
+        image.ellipse(cx + 27, y + 380, 82, 30, (120, 94, 69), ORANGE)
     for effect_path in visual.get("effects", []):
         effect_asset = _load_visual_asset(effect_path)
         if effect_asset:
@@ -585,9 +645,13 @@ def _hero(image, x, y, states, visual, tick=0):
 
 
 def render_dashboard(brain, highlight=None, stimulus_snapshot=None, behavior_snapshot=None,
-                     visual_override=None, snapshot=None):
+                     visual_override=None, snapshot=None, biological_research=None):
     """Render a live GroupBrain state; the result supports ``.save(..., 'PNG')``."""
-    image = DashboardImage()
+    # The biological research panel is a static, opt-in appendix. It only
+    # extends the canvas when the 3.0B layer is on, so the default 2.0
+    # dashboard keeps its exact 1400x1420 geometry.
+    canvas_height = 1760 if biological_research else HEIGHT
+    image = DashboardImage(WIDTH, canvas_height)
     snapshot = snapshot if isinstance(snapshot, dict) else {}
     states, drives = dict(getattr(brain, "this_state", {})), dict(getattr(brain, "drives", {}))
     groups, stimuli = list(getattr(brain, "groups", sorted(states))), dict(getattr(brain, "stimulate", {}))
@@ -601,8 +665,6 @@ def render_dashboard(brain, highlight=None, stimulus_snapshot=None, behavior_sna
     visual = visual_state(behavior_snapshot or behavior,
                           stimulus_snapshot if stimulus_snapshot is not None else stimuli, tick,
                           visual_override=visual_override)
-    for xx in range(0, WIDTH, 70): image.line(xx, 0, xx, HEIGHT, (5, 24, 35))
-    for yy in range(0, HEIGHT, 56): image.line(0, yy, WIDTH, yy, (5, 24, 35))
 
     _panel(image, 20, 18, 340, 88, "FLY BRAIN", ORANGE); image.text(42, 61, "LIVE NEURAL SIMULATION", CYAN, 1)
     _panel(image, 375, 18, 510, 88, "CURRENT BEHAVIOR"); image.text(580, 58, behavior, GREEN if behavior in ("IDLE", "REST") else ORANGE, 3, 15); image.text(397, 84, "SENSE  PROCESS  DECIDE  ACT", MUTED, 1)
@@ -623,14 +685,14 @@ def render_dashboard(brain, highlight=None, stimulus_snapshot=None, behavior_sna
     _panel(image, 315, 124, 575, 590, "NEURAL FIELD"); _hero(image, 315, 124, states, visual, tick)
     for index, action in enumerate(("IDLE", "WALK", "FEED", "GROOM", "SCARE", "BURN", "SHOCK", "SLEEP")):
         x, active = 330 + index * 67, action == behavior or (action == "SLEEP" and behavior == "REST")
-        image.rectangle(x, 665, 60, 28, PANEL_ALT if active else (5, 15, 24)); image.line(x, 665, x + 60, 665, GREEN if active else CYAN_DIM); image.text(x + 4, 676, action, GREEN if active else MUTED, 1, 9)
+        image.rectangle(x, 665, 60, 28, PANEL_ALT if active else PANEL); image.line(x, 665, x + 60, 665, GREEN if active else CYAN_DIM); image.text(x + 4, 676, action, GREEN if active else MUTED, 1, 9)
 
     _panel(image, 905, 124, 475, 590, "NEURAL ACTIVITY")
     active = sorted(groups, key=lambda group: (group not in fired, -max(0.0, states.get(group, 0.0))))[:8]
     image.text(1125, 145, "TOP ACTIVE", CYAN, 1)
     for index, group in enumerate(active):
         value, color = states.get(group, 0.0), _color(group); intensity = max(0, min(1, max(0, value) / FIRE_THRESHOLD)); y = 170 + index * 20
-        image.text(925, y, group, ORANGE if group in fired else TEXT, 1, 17); image.rectangle(1037, y, 175, 8, (20, 34, 53)); image.rectangle(1038, y + 1, int(173 * intensity), 6, ORANGE if group in fired else color); image.text(1218, y, f"{value:.1f}", ORANGE if group in fired else MUTED, 1)
+        image.text(925, y, group, ORANGE if group in fired else TEXT, 1, 17); image.rectangle(1037, y, 175, 8, METER_TRACK); image.rectangle(1038, y + 1, int(173 * intensity), 6, ORANGE if group in fired else color); image.text(1218, y, f"{value:.1f}", ORANGE if group in fired else MUTED, 1)
     image.line(923, 340, 1360, 340, CYAN_DIM); image.text(925, 353, "MOTOR OUTPUT", CYAN, 1)
     output = "  ".join(f"{name}:{value:.1f}" for name, value in sorted(motor.items()) if value > 0) or "NO ACTIVE MOTOR READOUT"; image.text(925, 374, output, TEXT, 1, 65)
     image.text(925, 398, "RECENT FIRED", ORANGE, 1); image.text(925, 418, ", ".join(sorted(fired)[:6]) or "NONE", ORANGE if fired else MUTED, 1, 65)
@@ -651,5 +713,10 @@ def render_dashboard(brain, highlight=None, stimulus_snapshot=None, behavior_sna
     _sensory_panel(image, 535, 970, 390, 220, brain, snapshot, stimuli)
     _decision_panel(image, 940, 970, 440, 220, brain, snapshot)
     _social_panel(image, 20, 1210, 1360, 180, brain, snapshot)
-    image.text(20, 1405, "DROSOPHILA SIMULATION / OBSERVE - EXPERIMENT - UNDERSTAND", CYAN_DIM, 1)
+    if biological_research:
+        _biological_panel(image, 20, 1420, 1360, 300, biological_research)
+        footer_y = 1735
+    else:
+        footer_y = 1405
+    image.text(20, footer_y, "DROSOPHILA SIMULATION / OBSERVE - EXPERIMENT - UNDERSTAND", MUTED, 1)
     return image

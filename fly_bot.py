@@ -20,6 +20,7 @@ from dotenv import load_dotenv
 
 from fly_controller import FlyController
 from biological_brain import BiologicalMode
+from biological_brain.status_summary import FLY_BRAIN_3_STATUS
 from brain_dashboard import render_dashboard
 
 load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), ".env"))
@@ -186,9 +187,10 @@ def overload_file():
 
 def dashboard_file(fired=None, stimuli=None, behavior=None, visual_override=None,
                    brain_snapshot=None) -> discord.File:
+    research = FLY_BRAIN_3_STATUS if ENABLE_BIOLOGICAL_3_0 else None
     img = render_dashboard(fly.brain, highlight=fired, stimulus_snapshot=stimuli,
                            behavior_snapshot=behavior, visual_override=visual_override,
-                           snapshot=brain_snapshot)
+                           snapshot=brain_snapshot, biological_research=research)
     buf = io.BytesIO()
     img.save(buf, format="PNG")
     buf.seek(0)
@@ -462,6 +464,7 @@ async def cmd_confused(interaction: discord.Interaction):
 
 @tree.command(name="status", description="check on the fly")
 async def cmd_status(interaction: discord.Interaction):
+    await interaction.response.defer(thinking=True)
     async with fly.lock:
         snap = fly._snapshot()
         hab = fly.brain.habituation_report()
@@ -491,11 +494,20 @@ async def cmd_status(interaction: discord.Interaction):
             f"threat={bio.get('bio_threat_signal', 0.0):.2f}"
         )
         content += "\n  LIF model outputs, not probabilities or measurements"
-    files = [dashboard_file(brain_snapshot=snap)]
-    if files:
-        await interaction.response.send_message(content=content, files=files)
-    else:
-        await interaction.response.send_message(content=content)
+    if ENABLE_BIOLOGICAL_3_0:
+        content += "\nFly Brain 3.0 biological model active -- research summary on the dashboard panel."
+    try:
+        files = [dashboard_file(brain_snapshot=snap)]
+    except Exception:
+        try:
+            await interaction.followup.send(
+                content="Unable to render the dashboard for this status request.",
+                ephemeral=True,
+            )
+        except discord.HTTPException:
+            pass
+        raise
+    await interaction.followup.send(content=content, files=files)
 
 
 @tree.command(name="memory", description="inspect the fly's current memory state")

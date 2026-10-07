@@ -16,8 +16,10 @@ import sys
 import pytest
 
 import fly_controller
+import brain_dashboard
 from biological_brain import BiologicalMode
 from biological_brain.configuration import BIOLOGICAL_CIRCUITS
+from biological_brain.status_summary import FLY_BRAIN_3_STATUS
 from fly_controller import FlyController
 
 
@@ -128,11 +130,21 @@ def _status_content(module, snapshot):
     sent = {}
 
     class _Response:
-        async def send_message(self, content=None, files=None):
+        async def defer(self, **kwargs):
+            sent["deferred"] = True
+
+        async def send_message(self, **kwargs):
+            raise AssertionError("/status must not send a second initial response")
+
+    class _Followup:
+        async def send(self, content=None, files=None, **kwargs):
             sent["content"] = content
+            sent["files"] = files
 
     class _Interaction:
-        response = _Response()
+        def __init__(self):
+            self.response = _Response()
+            self.followup = _Followup()
 
     # cmd_status is a discord.app_commands.Command after decoration; the
     # underlying coroutine is its .callback.
@@ -211,6 +223,79 @@ def test_status_shows_the_three_signals_when_present(
         "biological_signals": {"bio_threat_signal": 1.0},
     })
     assert "threat=1.00" in partial
+
+
+def test_status_research_summary_moves_into_dashboard_panel(
+    reset_biological_circuits,
+):
+    """The research summary leaves the text response and joins the dashboard."""
+    module, _ = _load_fly_bot("1")
+    snapshot = {
+        "behavior": "rest",
+        "drives": {
+            "hunger": 0.5, "fear": 0.25, "fatigue": 0.1, "curiosity": 0.3,
+        },
+    }
+
+    # Capture the snapshot that /status hands to the dashboard generator.
+    captured = {}
+
+    def fake_dashboard_file(**kwargs):
+        captured.update(kwargs)
+        return _FakeFile()
+
+    original_dashboard_file = module.dashboard_file
+    module.dashboard_file = fake_dashboard_file
+    try:
+        content = _status_content(module, snapshot)
+    finally:
+        module.dashboard_file = original_dashboard_file
+
+    # The concise text response still leads with the live status.
+    assert content.startswith("behavior: rest")
+    assert "hunger=0.50 fear=0.25 fatigue=0.10 curiosity=0.30" in content
+    # The large research dump is gone from the Discord text response.
+    for dumped in (
+        "ANATOMY VERIFIED", "PSI→MN5 contacts: 43 (left 17, right 26)",
+        "Contact→node mapping: 43/43 verified", "LITERATURE",
+        "MN5 resting: -67.8 mV", "Somatic EPSP: 4.71 mV", "MODEL-DERIVED",
+        "Sensitivity rows: 15,528", "g_PSI C-01 A: 4.49 nS",
+        "C-01 B: 10.16 nS", "UNRESOLVED / ASSUMPTION",
+        "C-01 capacitance: 43 vs ~127 pF", "Contact→soma path: unresolved",
+        "Native Dα7 conductance: model-derived", "Erev: model assumption",
+        "MODEL OUTPUTS ≠ EXPERIMENTAL MEASUREMENTS",
+    ):
+        assert dumped not in content, dumped
+    # A brief pointer to the model remains in the text response.
+    assert "Fly Brain 3.0 biological model active" in content
+
+    # The research data reaches the dashboard generation path verbatim.
+    assert captured.get("brain_snapshot") is snapshot
+    rendered = []
+
+    def capture_text(image, x, y, value, *args, **kwargs):
+        rendered.append(str(value).upper())
+
+    original_text = brain_dashboard.DashboardImage.text
+    brain_dashboard.DashboardImage.text = capture_text
+    try:
+        brain_dashboard.render_dashboard(
+            module.fly.brain, snapshot=captured["brain_snapshot"],
+            biological_research=module.FLY_BRAIN_3_STATUS,
+        )
+    finally:
+        brain_dashboard.DashboardImage.text = original_text
+
+    panel = "\n".join(rendered)
+    # Scientific values remain unchanged and present in the panel.
+    for value in (
+        "43", "17", "26", "43/43", "67.8", "4.71", "15,528",
+        "4.49", "10.16", "127",
+    ):
+        assert value in panel, value
+    # The provenance warning is rendered inside the panel.
+    assert "MODEL OUTPUTS" in panel
+    assert "EXPERIMENTAL MEASUREMENTS" in panel
 
 
 def test_status_reads_signals_from_the_snapshot_without_recomputing(
