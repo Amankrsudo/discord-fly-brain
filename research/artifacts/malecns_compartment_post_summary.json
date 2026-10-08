@@ -1,0 +1,61 @@
+{
+  "total_contacts": 43,
+  "retrieved": 43,
+  "missing": 0,
+  "unknown_label_count": 0,
+  "compartment_post_overall": {
+    "axon": 43
+  },
+  "compartment_pre_overall": {
+    "axon": 38,
+    "unknown": 5
+  },
+  "by_mn5_body": {
+    "801970": {
+      "contacts": 17,
+      "compartment_post": {
+        "axon": 17
+      },
+      "compartment_pre": {
+        "axon": 17
+      }
+    },
+    "801295": {
+      "contacts": 26,
+      "compartment_post": {
+        "axon": 26
+      },
+      "compartment_pre": {
+        "axon": 21,
+        "unknown": 5
+      }
+    }
+  },
+  "by_contact_class": {
+    "PDMN": {
+      "axon": 36
+    },
+    "WTct": {
+      "axon": 7
+    }
+  },
+  "by_pairing": {
+    "802401->801970": "axon",
+    "903327->801295": "axon"
+  },
+  "source_layer": "gs://flyem-male-cns/v1.0/male-cns-v1.0-synapses-precomputed",
+  "layer_info_type": "neuroglancer_annotations_v1",
+  "official_enum_labels": [
+    "unknown",
+    "axon",
+    "dendrite",
+    "linker",
+    "cell-body-fiber"
+  ],
+  "reader_shims_applied": [
+    "annotation_type_uppercased",
+    "numpy_hstack_legacy_positional"
+  ],
+  "provenance": "anatomical_measurement",
+  "interpretation_guard": "compartment_post is an ANATOMICAL/CONNECTOMIC DATASET ANNOTATION supplied by MaleCNS v1.0. It is not an electrophysiological measurement, not a morphological measurement, and not a native observation. MaleCNS does not publish the procedure that assigned these labels, so the label string is reported verbatim and is NOT interpreted here. Its presence does not validate the SWC kind column, and its biology is not asserted."
+}

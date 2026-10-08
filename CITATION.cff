@@ -1,0 +1,16 @@
+# Draft citation metadata scaffold. Complete and validate before publication.
+cff-version: 1.2.0
+message: >-
+  If you use this research archive, cite the versioned release after its
+  authors, repository URL, release version, and DOI have been verified.
+title: "House Fly Brain"
+type: software
+# VERIFY_REQUIRED: add confirmed scholarly contributors and ORCIDs. Git
+# authorship/committer identity is not evidence of scholarly authorship.
+authors:
+  - given-names: Aman
+version: "1.1"
+date-released: "2026-10-08"
+# VERIFY_REQUIRED: DOI is not yet available; do not invent or add one.
+repository: 'https://github.com/Amankrsudo/discord-fly-brain'
+license: MIT

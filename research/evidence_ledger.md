@@ -33,7 +33,7 @@ Measured/Modelled: **M** / **Mo**.
 | E-014 | GF→PSI does not age-decline in ShakB | qualitative | — | GF→PSI | Auger+ 2020 PLoS ONE 15:e0224057 | EXPERIMENT | NEM | STRONG | D | M | No | — | — | OPEN | Age decline is GF→TTMn-**specific** |
 | E-015 | MN5 dendritic length | 6716 ± 731 (n=30) | µm | Drosophila MN5 | von Hoff & Duch 2010; re-cited Ryglewski+ eLife 2017 | EXPERIMENT | AM | MODERATE | D | M | No | **C-07** | — | OPEN | Literature, **not** MaleCNS |
 | E-016 | MN5 dendritic branch count | 4000 ± 577 (n=30) | — | Drosophila MN5 | von Hoff & Duch 2010 | EXPERIMENT | AM | MODERATE | D | M | No | — | — | OPEN | |
-| E-017 | MN5 mean dendritic diameter | ≈0.88 | µm | Drosophila MN5 | von Hoff & Duch 2010 | EXPERIMENT | AM | MODERATE | D | M | No | — | M-09 | OPEN | MaleCNS kind=0 median 0.512 µm — same order, not a validation |
+| E-017 | MN5 mean dendritic diameter | ≈0.44 | µm | Drosophila MN5 | von Hoff & Duch 2010 (PMID 20437522; PMCID PMC4441823) | EXPERIMENT | AM | MODERATE | D | M | No | — | M-09 | OPEN | Primary text: “about 0.44 µm average diameter”; this is the literature dendritic average, not a MaleCNS value. Earlier 0.88 µm entry unsupported. MaleCNS kind=0 median 0.512 µm is a distinct dataset statistic, not validation |
 | E-018 | MN5 process length (MaleCNS) | 7453.5 / 7190.2 | µm | 801970 / 801295 | MaleCNS `em_*.swc` | DATASET | AM | STRONG | D | M | Yes | **C-07** | — | VERIFIED | Total cable, **not** dendritic |
 | E-019 | MN5 mesh surface area | 18725.6 / 19665.4 | µm² | 801970 / 801295 | MaleCNS `.ngmesh` | DATASET | AM | STRONG | D | M | Yes | — | — | VERIFIED | Cross product; Heron agrees to 2e-16 |
 | E-020 | MN5 mesh components | 2587 / 2765 | count | 801970 / 801295 | MaleCNS | DATASET | AM | STRONG | D | M | Yes | — | — | VERIFIED | Largest 2.8 % / 2.3 %. **Not** biological compartments |
@@ -48,7 +48,7 @@ Measured/Modelled: **M** / **Mo**.
 | E-029 | SIZ = spike initiating zone | — | — | Drosophila MN5 | Kuehn & Duch 2013 PMC3604049 | EXPERIMENT | AM | STRONG | D | M | — | **C-11** | M-08 | CORRECTED | **Not** "Secondary Isatoz Axon" |
 | E-030 | SIZ distance from soma | ≈100 | µm | Drosophila MN5 | Kuehn & Duch 2013 | EXPERIMENT | AM | MODERATE | D | M | No | **C-11** | M-08 | VERIFIED | "about 100 µm"; no numeric uncertainty given |
 | E-031 | SIZ localisation from dendrite origin | 11 ± 3 (n=7) | µm | Drosophila MN5 | Kuehn & Duch 2013 | EXPERIMENT | AM | MODERATE | D | M | No | **C-11** | M-08 | VERIFIED | SD-vs-SEM unstated. **Different reference point** from E-030 |
-| E-032 | MN5 spatial voltage transfer | **NO MEASUREMENT** | — | Drosophila MN5 | — | — | — | **NONE** | — | — | — | — | **M-02** | **MISSING** | Only a simulation on Manduca Ra/Cm |
+| E-032 | Native MN5 spatial voltage transfer | **NO EXPERIMENTAL MEASUREMENT** | — | Drosophila MN5 | — | — | — | **NONE** | — | — | — | — | **M-02** | **MISSING** | Model-derived abstract cable-bridge estimates now exist in E-051; they do not constitute a native voltage-transfer measurement. Earlier simulation used Manduca Ra/Cm |
 | E-033 | MN5 contact→soma current-transfer map | 0.2–1 | ratio | Drosophila MN5 | Ryglewski & Duch 2009 Fig 1B | MODEL | MDE | WEAK | I | Mo | Yes | — | M-02 | **MODEL ONLY** | Authors disclaim exactness |
 | E-034 | MN5 passive Ra in the only MN5 model | 90 | Ω·cm | *Manduca* adopted for Drosophila MN5 | Ryglewski & Duch 2009 citing Meseke+ 2009 | — | LDP | **WEAK** | I | Mo | — | **C-10** | **M-03** | **NOT DROSOPHILA** | Species mismatch |
 | E-035 | MN5 passive Cm in that model | 1.15e-6 | F·cm⁻² | *Manduca* adopted | Ryglewski & Duch 2009 citing Meseke+ 2009 | — | LDP | **WEAK** | I | Mo | — | **C-10** | M-03 | **NOT DROSOPHILA** | |
@@ -64,9 +64,10 @@ Measured/Modelled: **M** / **Mo**.
 | E-045 | Anatomical voltage decay along an arbor | qualitative decay | — | Drosophila Mi1/Tm3 | Yang+ 2016 Cell 166:245 | EXPERIMENT | NEM | MODERATE | D | M | No | — | M-02 | OPEN | **Not MN5**; method precedent only |
 | E-046 | **CLAIM A** — MaleCNS v1.0 assigns `compartment_post='axon'` to all 43 verified PSI→MN5 contacts | axon ×43 (17 on 801970, 26 on 801295) | enum label | 802401→801970; 903327→801295 | MaleCNS v1.0 synapse layer `gs://flyem-male-cns/v1.0/male-cns-v1.0-synapses-precomputed` | DATASET | AM | STRONG | D | M | Yes | — | **M-06** | **VERIFIED** | Connectomic **dataset annotation**, not an electrophysiological measurement. Missing 0, ambiguous 0, unknown 0. Artifact: `research/artifacts/malecns_compartment_post_psi_mn5.csv` |
 | E-047 | **CLAIM B** — PSI→MN5 contacts are exclusively in the axonal compartment per the official annotation | 43/43 axon, vs MN5-wide 4.3 %/21.2 % axon | fraction | MN5 801970 / 801295 | MaleCNS v1.0 synapse layer | DATASET | AM | STRONG | D | M | Yes | — | M-06, M-02 | **VERIFIED** | MN5-wide: 801970 452 axon / 9713 dendrite / 364 cell-body-fiber; 801295 2384 axon / 8787 dendrite / 89 linker. `compartment_pre` axon ×38, unknown ×5 (all on 801295). **Consistent with** Fayyazuddin 2006 "PSI bypasses the entire dendritic structure of MN5" |
-| E-048 | **CLAIM C** — the `compartment_post` result does **not** establish spatial voltage transfer | — | — | MN5 | methodological limitation | — | — | **NONE** | — | — | — | — | **M-02** | **UNRESOLVED** | A compartment **string** is not a distance and not a voltage. No Ra/Rm/Cm/length-constant/attenuation/transfer quantity is computed or implied anywhere. Gate remains closed |
+| E-048 | **CLAIM C** — the `compartment_post` annotation does **not** establish spatial voltage transfer | — | — | MN5 | methodological limitation | — | — | **NONE** | — | — | — | — | **M-02** | **UNRESOLVED** | A compartment **string** is not a distance and not a voltage. The separate abstract bridge has model-derived transfer outputs (E-051), but none is an anatomical per-contact transfer or experimental voltage-transfer measurement. Native transfer remains unmeasured |
 | E-049 | **CLAIM D** — SWC `kind=2` remains semantically unresolved for MaleCNS | UNDEFINED IN AVAILABLE SOURCE | — | MaleCNS MN5/PSI | MaleCNS download page cites PMC10654402 for *format* only; neuprint discards `node_type` | SCHEMA | — | **NONE** | — | — | — | **C-08** | **M-06** | **UNRESOLVED** | E-046 does **not** retroactively validate `kind`. Different column, different provenance. Descriptive annotation concordance is reported in `mn5_compartment_post_swc_type_concordance.md`; it does not resolve Type-code biology |
 | E-050 | **CLAIM E** — per-neuron cut-node artifact remains unreleased; M-06 resolved only in per-synapse form | 0 cut-node artifacts found | count | MaleCNS v1.0 | 6 locations enumerated with `truncated:false` (2025malecns, flyconnectome/malecns, flyem-male-cns bucket, neuprint-inputs, flywire_annotations, layer info) | DATASET | AM | STRONG | D | M | Yes | — | M-06 | **RESOLVED WITH SCOPE LIMITATION** | M-06 resolved as *per-synapse labels for every contact*; the per-neuron cut node is still unreleased |
+| E-051 | MN5 two-gate contact-local and abstract-transfer sensitivity analysis | 15,528 output rows; 43 contacts (17 left, 26 right); nominal-bridge fitted g_PSI 4.49 / 10.16 | rows; nS | Drosophila MN5 model; C-01 A / B | `research/mn5_psi_mn5_final_constraint_model.md`; reproducible script and CSV | MODEL | MDE | WEAK | I | Mo | Yes | **C-01** | **M-02, M-09** | **MODEL ONLY** | Gates are MODEL-AUTHORIZED for this analysis, not native measurements. Contact-local responses preserve verified contact-to-node mapping; all 43 contact-to-soma paths remain unresolved. Abstract-bridge transfer, fitted g_PSI, and effective g_Dα7 effects are MODEL-DERIVED, not biological measurements. 4.71 mV GF-stimulated EPSP is a comparison target only; C-01 remains unresolved |
 
 ---
 
@@ -74,7 +75,7 @@ Measured/Modelled: **M** / **Mo**.
 
 | Metric | Count |
 |---|---|
-| Rows | 50 |
+| Rows | 51 |
 | Sources classified | 17 (S-01…S-17) |
 | Verified / STRONG | 16 |
 | Conflicted | 4 (E-001, E-002, E-018/E-036–E-040 family) |
@@ -86,5 +87,7 @@ Measured/Modelled: **M** / **Mo**.
 | Conflicts **resolved** tonight | 5 (C-05, C-06, C-07, C-09, C-10, C-11) |
 | Conflicts **still unresolved** | 7 |
 
-**No row was promoted between provenance classes.** E-034/E-035 remain `LDP`
-and flagged as non-Drosophila rather than being silently reclassified.
+**No native-measurement row was promoted between provenance classes.** E-051
+is a model-only `MDE` entry and does not promote native voltage-transfer or
+Dα7-conductance evidence. E-034/E-035 remain `LDP` and flagged as
+non-Drosophila rather than being silently reclassified.

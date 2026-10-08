@@ -1,0 +1,228 @@
+"""Audit artifact builder for the PSI->MN5 reversal-experiment review (3.0D-8AC).
+
+RESEARCH SCRIPT. Generates research/psi_mn5_reversal_experiment_audit.csv so the
+identifiability table cannot drift from the reasoning in the markdown.
+
+Every row records, for one quantity:
+  - whether a SOMATIC reversal series at the PSI->MN5 synapse can identify it;
+  - the measurement or assumption that identification requires;
+  - what remains confounded;
+  - the gate-relevant consequence.
+
+NO BIOLOGICAL VALUE IS WRITTEN HERE. Numeric cells record only quantities that
+already exist in the frozen registry, and only to demonstrate availability or
+absence. E_rev, g_syn, kinetics, density and delay all remain NONE/BLOCKED.
+
+Run:
+    python research/scripts/build_reversal_experiment_audit.py
+"""
+
+from __future__ import annotations
+
+import csv
+import os
+import sys
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+RESEARCH = os.path.normpath(os.path.join(HERE, ".."))
+OUT = os.path.join(RESEARCH, "psi_mn5_reversal_experiment_audit.csv")
+
+COLUMNS = ["quantity", "identifiable_by_somatic_reversal_series",
+           "requires", "confounded_with", "current_freeze_status",
+           "current_freeze_value", "gate_consequence"]
+
+NEM = "native_experimental_measurement"
+MA = "model_assumption"
+
+ROWS = [
+    ("synaptic reversal potential (local, at the PSI contact)",
+     "NO",
+     "A recording site electrically compact with the synapse, OR an independent "
+     "correction for the somatic-to-synaptic attenuation. The observed "
+     "zero-crossing is a SOMATIC apparent reversal, pulled toward resting "
+     "potential by passive filtering.",
+     "Cable filtering between the synapse and the clamp site; the unknown "
+     "contact->soma path (B-5).",
+     "NOT IN REGISTRY as a local synaptic value",
+     "NONE (no synaptic E_rev exists)",
+     "A somatic series bounds E_rev; it does not measure it."),
+
+    ("apparent somatic reversal potential",
+     "YES (as an apparent quantity only)",
+     "A multi-point amplitude-vs-holding-potential series with adequate clamp "
+     "quality. Identifiable WITHOUT cable knowledge, but only as the somatic "
+     "apparent value.",
+     "Anything that makes the somatic apparent value differ from the local E_rev.",
+     "NOT IN REGISTRY (derived quantity, not measured)",
+     "NONE (no synaptic E_rev exists)",
+     "Usable as an upper/lower constraint on E_rev, explicitly labelled "
+     "apparent."),
+
+    ("synaptic I-V relationship",
+     "PARTIALLY",
+     "The series gives I_somatic(V_hold). Its shape is the local I-V convolved "
+     "with the somatic transfer function, so only the zero crossing is robust.",
+     "Filter shape; unknown attenuation.",
+     "NOT IN REGISTRY", "NONE",
+     "Cannot be presented as the synaptic I-V."),
+
+    ("peak synaptic conductance at the contact",
+     "NO",
+     "A local recording. From a somatic clamp, g_syn = I_peak/(V_hold - E_rev) "
+     "yields the SOMATIC apparent conductance, already multiplied by the "
+     "attenuation factor.",
+     "The attenuation factor, i.e. Ra/Rm/Cm and the contact->soma path.",
+     "BLOCKED", "NONE",
+     "Extracting g_syn somatically assumes the answer."),
+
+    ("synaptic conductance independent of spatial attenuation",
+     "NO",
+     "Nothing available in a somatic series. The attenuation and the "
+     "conductance are not separable from one another at one recording site.",
+     "Everything in the cable chain.",
+     "BLOCKED", "NONE",
+     "This is the core reason a reversal series cannot touch B-4."),
+
+    ("conductance kinetics at the contact",
+     "NO",
+     "A local recording. Somatically the time course is the synaptic waveform "
+     "filtered by the cable, so rise/decay are not the synaptic values.",
+     "Cable time constant; this is why no EPSP kinetics exist in the freeze.",
+     "BLOCKED", "NONE (tau_m also NONE)",
+     "No kinetic value may be reported from this design."),
+
+    ("driving force (V_m - E_rev) at the contact",
+     "NO",
+     "Requires both the local synaptic V_m and the local E_rev. A somatic "
+     "series supplies neither at the contact.",
+     "Local membrane potential at the synapse.",
+     "BLOCKED", "NONE",
+     "The single-point EPSP/driving-force route is unavailable."),
+
+    ("quantal size (mEPSP amplitude)",
+     "NO",
+     "Separate miniature-recording experiment at the same site; not part of a "
+     "reversal series.",
+     "Site of recording; filter.",
+     "BLOCKED", "NONE",
+     "Separate blocker, untouched by this design."),
+
+    ("quantal content / release probability",
+     "NO",
+     "Failure analysis plus mEPSP amplitude at a defined site; the release "
+     "sites are in the peripheral nerve, not the soma.",
+     "Everything unmeasured at the contact.",
+     "BLOCKED", "NONE",
+     "Separate blocker."),
+
+    ("active-zone / release-site count",
+     "NO",
+     "EM of the contact; no electrophysiological design can yield it.",
+     "n/a - different modality.",
+     "BLOCKED", "NONE",
+     "Requires the synapse ultrastructure."),
+
+    ("receptor density at PSI->MN5",
+     "NO",
+     "EM receptor-crowding analysis or calibrated binding.",
+     "n/a - different modality.",
+     "BLOCKED", "NONE",
+     "Requires ultrastructure or binding data."),
+
+    ("receptor single-channel conductance",
+     "NO",
+     "Single-channel recording in a native preparation, or an independent "
+     "constraint. No native Drosophila value exists.",
+     "Stoichiometry; channel count; open probability.",
+     "BLOCKED", "NONE",
+     "Not addressed by any somatic series."),
+
+    ("PSI->MN5 contact->soma spatial voltage transfer ratio",
+     "NO",
+     "Dual-site or optical voltage measurement. A single-site reversal series "
+     "cannot produce a transfer ratio.",
+     "n/a - different observable.",
+     "BLOCKED", "NONE (not computed)",
+     "GATE 1 stays closed; this is blocker B-4, untouched here."),
+
+    ("axial resistance (Ra)",
+     "NO",
+     "Two-site current injection at >=3 known locations plus known geometry, "
+     "with identifiability demonstrated. Two sites constrain only the "
+     "combination of Ra and Rm.",
+     "Rm; membrane area; electrode geometry.",
+     "BLOCKED", "NONE",
+     "No reversal design yields Ra."),
+
+    ("specific membrane resistance (Rm)",
+     "NO",
+     "Separate measurement. The two non-MN5 sources already differ by 4.4x, so "
+     "no defensible bound exists to sweep over.",
+     "Ra; area; space clamp.",
+     "BLOCKED", "NONE",
+     "Blocker B-1, untouched here."),
+
+    ("whole-cell capacitance (Cm)",
+     "PARTIALLY (as the same contested quantity)",
+     "Nothing. Cm is 43 +/- 2 pF versus 127 +/- 16 pF (C-01); a reversal series "
+     "does not adjudicate it.",
+     "Space clamp; series resistance; bridge balance.",
+     "ASSUMPTION (contested C-01)", "43 +/- 2 / 127 +/- 16 pF",
+     "Contest must not be resolved by choosing a value."),
+
+    ("PSI->MN5 transmitter identity",
+     "no - already established anatomically/genetically",
+     "Conditional cha mutations (Gorczyca & Hall 1984).",
+     "n/a.",
+     "SAFE", "acetylcholine",
+     "Established; not re-derived here."),
+
+    ("PSI->MN5 receptor identity (Dalpha7)",
+     "NO",
+     "Direct receptor identification. Current support is genetic inference "
+     "(allele strength vs EPSP amplitude) with a rescue driver that is not "
+     "localised to MN5.",
+     "Everything: identity is inferred, not observed at this synapse.",
+     "ASSUMPTION", "Dalpha7 nAChR (inferred)",
+     "A reversal series measures the RESPONSE, not the receptor. GATE 2 "
+     "untouched."),
+
+    ("input/output specificity (is the response from PSI?)",
+     "YES (with controls)",
+     "Direct PSI stimulation plus controls: PSI is a MINORITY input - 17 of "
+     "10,529 synapses on 801970 (0.16 percent) and 26 of 11,260 on 801295 "
+     "(0.23 percent), with 887 and 897 DISTINCT presynaptic bodies converging "
+     "on each MN5 and the largest single partner contributing 118-168 "
+     "synapses.",
+     "Polysynaptic recruitment; other presynaptic neurons; muscle feedback.",
+     "anatomical_measurement", "17+26 contacts among 887/897 partners",
+     "Achievable, but the specificity burden is large."),
+]
+
+
+def main() -> int:
+    errs = []
+    for r in ROWS:
+        if len(r) != len(COLUMNS):
+            errs.append(f"{r[0]}: {len(r)} fields, expected {len(COLUMNS)}")
+        if r[1] not in ("YES", "YES (as an apparent quantity only)",
+                        "YES (with controls)",
+                        "PARTIALLY", "PARTIALLY (as the same contested quantity)",
+                        "NO", "no - already established anatomically/genetically"):
+            errs.append(f"{r[0]}: unexpected identifiability {r[1]!r}")
+    if errs:
+        for e in errs:
+            print("ERROR", e, file=sys.stderr)
+        return 1
+    with open(OUT, "w", newline="", encoding="utf-8") as fh:
+        w = csv.writer(fh)
+        w.writerow(COLUMNS)
+        w.writerows(ROWS)
+    n_no = sum(1 for r in ROWS if r[1].startswith("NO"))
+    print(f"wrote {OUT} ({len(ROWS)} rows x {len(COLUMNS)} cols)")
+    print(f"identifiable: NO = {n_no}, other = {len(ROWS) - n_no}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

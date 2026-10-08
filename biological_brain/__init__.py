@@ -262,3 +262,31 @@ __all__ = [
     "compute_all_metrics",
     "assert_no_electrical_parameters",
 ]
+
+
+# --- 3.0D MN5 / PSI->MN5 reduced model pipeline (entry point) ---------------
+# Canonical flow: research/model_input_freeze.csv -> ParameterSet ->
+# ReducedMN5Simulator -> report(). See biological_brain/model.py.
+#
+# NOTE: the second gated-receptor refusal helper is deliberately NOT
+# re-exported here. The package public surface must not name that receptor at
+# all (enforced by tests/test_biological_brain.py::
+# TestImplicitBackwardEulerIntegration); it is reachable only through
+# biological_brain.model.
+from .model import (  # noqa: E402
+    BiologicalClaimError,
+    BlockedParameterError,
+    ModelParameter,
+    ModelProvenance,
+    ParameterSet,
+    ParameterStatus,
+    ReducedMN5Simulator,
+    SoftwareInputError,
+    SpikeEvent,
+    build_reduced_mn5,
+    load_model_inputs,
+    pipeline_capabilities,
+    pipeline_summary,
+    reduced_mn5_report,
+    require_spatial_transfer,
+)

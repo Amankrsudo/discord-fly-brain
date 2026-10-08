@@ -1,0 +1,9 @@
+# Model input provenance
+
+The current strongest frozen input artifact is [`research/model_input_freeze.csv`](../../research/model_input_freeze.csv), with generated companion [`research/model_input_freeze.md`](../../research/model_input_freeze.md) and builder `research/scripts/build_model_input_freeze.py`. The freeze document reports 108 audited parameters: 40 safe to use now, 31 usable only as explicit assumptions, and 37 blocked. It preserves 15 unresolved conflict entries. This is an input audit, not a claim that every parameter is biologically known.
+
+The freeze uses five project provenance categories: `NEM` (native experimental measurement), `AM` (anatomical measurement), `LDP` (literature-derived parameter), `MA` (model assumption), and `MDE` (model-derived estimate). These source/provenance labels coexist with the broader evidence classes in [evidence classification](../provenance/evidence_classification.md); do not conflate the vocabularies.
+
+Blocked inputs include native PSI→MN5 spatial voltage transfer, Drosophila MN5 axoplasmic resistivity and related transfer quantities, and native Dα7 conductance. Assumption-only inputs must remain explicitly marked. Sensitivity parameters and C-01/C-02/C-03 conflicts retain their uncertainty labels; do not choose a conflict side without new evidence.
+
+The repository also contains model notes and sensitivity outputs in `research/`, including `research/mn5_psi_mn5_final_constraint_model.md` and `research/mn5_psi_mn5_final_constraint_model_sensitivity.csv`. Model outputs, fitted conductances, and threshold crossings are conditional on selected inputs and the abstract bridge. They are not native measurements. Several analysis files are untracked or modified in the current worktree; see [archive index](../../research_archive/ARCHIVE_INDEX.md).

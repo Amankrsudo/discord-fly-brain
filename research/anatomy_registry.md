@@ -143,8 +143,12 @@ confounded with contact class**, so no class-based inference was possible or use
 | 801970 | 10,529 | 452 (4.3 %) | 9,713 (92.2 %) | — | 364 (3.5 %) |
 | 801295 | 11,260 | 2,384 (21.2 %) | 8,787 (78.0 %) | 89 (0.8 %) | — |
 
-PSI→MN5 contacts lie **exclusively in MN5's axonal compartment** while the bulk
-of MN5's input is dendritic. Independently consistent with Fayyazuddin+ 2006:
+For the 43 PSI→MN5 contacts, the literal official MaleCNS
+`compartment_post` annotation is `axon` in every record. This is an annotation
+result only; it does not establish biological axonal localization or
+compartment semantics. The whole-input counts below are likewise official
+dataset labels, not a biological compartment validation. Independently
+consistent with Fayyazuddin+ 2006:
 *"the PSI bypasses the entire dendritic structure of MN5 and makes multiple
 synaptic contacts that span 50 μm and follow the axons out into the posterior
 dorsal motor nerve."*
@@ -221,7 +225,7 @@ motor-neuron synapse to `'dendrite'` by fiat.
    format property.
 6. **Radius units are 8 nm, not µm** — a documented deviation from the SWC spec
    default. Inferred from plausibility (median 0.256 µm diameter 0.512 µm vs the
-   literature mean dendritic diameter ≈0.88 µm); **not stated by MaleCNS**.
+   literature mean dendritic diameter ≈0.44 µm); **not stated by MaleCNS**.
 7. **`tosomaLocation` and `rootSide` exist as annotation columns but are
    `None`/`unpopulated`** for all four bodies.
 8. **`syn-points-male-cns-v1.0-minconf-0.5.feather` is a truncated download**

@@ -12522,6 +12522,8 @@ class TestSynapticMechanismProvenance:
         # registry may NAME an excluded quantity only to exclude it.
         import os
 
+        import re
+
         import biological_brain
 
         package_dir = os.path.dirname(biological_brain.__file__)
@@ -12532,6 +12534,15 @@ class TestSynapticMechanismProvenance:
             "depression_time_constant", "vesicle_release_rate",
             "vesicle_pool_initial",
         )
+        # A banned token that appears ONLY as an element of a declared deny-list
+        # (e.g. the shared FORBIDDEN_ELECTRICAL_KEYS tuple) is the safety guard
+        # doing its job, not a declared parameter. Such literals are blanked
+        # before the scan so a guard cannot be mistaken for a violation. Any
+        # other occurrence still fails.
+        deny_literal = re.compile(
+            r"(?is)\b[A-Z_]*FORBIDDEN[A-Z_]*\s*(?::[^=\n]+)?=\s*"
+            r"[\(\[\{][^)\]\}]*[\)\]\}]"
+        )
         for root, _, files in os.walk(package_dir):
             if "__pycache__" in root:
                 continue
@@ -12541,7 +12552,7 @@ class TestSynapticMechanismProvenance:
                 with open(
                     os.path.join(root, name), encoding="utf-8"
                 ) as handle:
-                    text = handle.read().lower()
+                    text = deny_literal.sub(" ", handle.read().lower())
                 for token in banned:
                     assert token not in text, (name, token)
 
