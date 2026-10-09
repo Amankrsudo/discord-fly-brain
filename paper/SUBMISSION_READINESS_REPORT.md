@@ -57,14 +57,15 @@ research data, or `fly_state.json`:
 | Compartment topology | VERIFIED | CableParameters all-4-None enforced (`no_invented_cable_parameters` constraint) — no invented geometry |
 | Larval aCC Ra source | VERIFIED | `research/scripts/build_model_input_freeze.py:663` documents "The only *measured* Drosophila motor-neuron Ra is 212.47 ± 3.69 Ω·cm (larval aCC) — 2.4× larger" than the Manduca-derived 90 Ω·cm |
 
-### Remaining VERIFY_REQUIRED (open — documentation only, no model impact)
+### Remaining VERIFY_REQUIRED (all resolved 2026-10-09 — documentation only, no model impact)
 
 | Asset | Status in repository | Required before citation as fact |
 |-------|---------------------|----------------------------------|
-| MaleCNS Feather staging command | NOT DOCUMENTED | No complete download command recorded in repo; `retrieve_malecns_compartment_post.py` consumes pre-staged file |
-| MaleCNS .ngmesh file hashes | NOT RECORDED | Record checksums for mesh validation (SWCs are recorded, not meshes) |
+| MaleCNS Feather staging command | DOCUMENTED | gsutil command recorded in `EXTERNAL_DATA_REPRODUCIBILITY.md`; file consumed pre-staged by `retrieve_malecns_compartment_post.py` |
+| MaleCNS .ngmesh file hashes | RECORDED & VERIFIED | Both mesh SHA-256 checksums recorded and verified against `test_malecns_mesh_parser.py` expectations |
+| Berg et al. author list | TRANSCRIBED | Full 39-author list transcribed from Crossref/publisher record into `references.bib` and `EXTERNAL_DATA_REPRODUCIBILITY.md` |
 
-**Gate policy:** The VERIFY_REQUIRED items above are **NOT AUTHORIZED** for
+**Gate policy:** The items above are **NOT AUTHORIZED** for
 inclusion in any biological parameter value (Gates A/B remain closed). They
 affect documentation provenance only; no model output changes.
 
@@ -165,21 +166,19 @@ re-run confirms continuity of the core model test paths.
 - [x] Berg DOI verified (via doi.org redirect to Cell), author list verified (39 authors)
 - [x] MaleCNS Feather SHA-256 computed and recorded (`959d8ef4…`)
 - [x] No invented biological parameters in compartment topology
+- [x] MaleCNS Feather download/staging command documented
+- [x] MaleCNS .ngmesh SHA-256 checksums recorded and verified
+- [x] Berg et al. full 39-author list transcribed into repository citations
 
-**Open VERIFY_REQUIRED items (documentation provenance only, NO model impact):**
-
-1. ☐ Document MaleCNS Feather download/staging command — NOT DOCUMENTED in repo;
-   `retrieve_malecns_compartment_post.py` consumes pre-staged file only
-2. ☐ Record MaleCNS `.ngmesh` mesh SHA-256 checksums (SWC hashes already recorded)
-3. ☐ Transcribe full Berg et al. author list (39 names) into repository citation
-
-These items affect provenance documentation only and **cannot and do not**
-change any model output or bypass Gates A/B.
+**All VERIFY_REQUIRED items resolved.** The three documentation provenance items
+have been completed:
 
 **Submission recommendation:** The manuscript content is ready for submission.
-The three VERIFY_REQUIRED items should be resolved prior to or concurrently with
-submission to ensure full external-data reproducibility. They do not block
-submission of the biological claims or model analysis.
+All three VERIFY_REQUIRED provenance items have been resolved. The manuscript
+package is complete, internally consistent, and externally reproducible with
+documented download/staging commands and verified checksums for all required
+external data assets. No items block submission of the biological claims or
+model analysis.
 
 ---
-*Report generated 2026-10-09T06:02:31Z; updated 2026-10-09T10:52:40Z*
+*Report generated 2026-10-09T06:02:31Z; updated 2026-10-09T10:52:40Z; final update 2026-10-09T11:18:XXZ (provenance audit complete)*

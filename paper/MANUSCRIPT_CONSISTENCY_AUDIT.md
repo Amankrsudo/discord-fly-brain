@@ -103,15 +103,19 @@ These claims are accurate but would benefit from an explicit model-derived/nativ
 - **Recommended correction**: Fix the Map §5 citation label for Berg to use `10.1016/j.cell.2026.08.015`; keep Augustin at its eNeuro DOI. (Both are present in the repository; just mislabeled in the map.)
 - **Status**: Verified.
 
-### CR-2 | **INFORMATIONAL** — Feather checksum not recorded
+### CR-2 | **RESOLVED** — Feather checksum now recorded
 - **Location**: `CLAIM_EVIDENCE_MAP.md` C-701, `RESULTS_DRAFT.md` §8, `final_anatomy_audit.md`
-- **Gap**: The synapse-pair Feather has no recorded expected checksum. Verified: `malecns_ingest.py` records file hashes for `.ngmesh` meshes but the synapse-streaming reader does not checksum the Feather; `EXTERNAL_DATA_REPRODUCIBILITY.md` lists this as VERIFY_REQUIRED.
-- **Status**: Verified gap.
+- **Resolution**: The synapse-pair Feather SHA-256 checksum was computed directly from the local staging copy (6,777,179,098 bytes) on 2026-10-09: `959d8ef4173b35382a3e6acfaf5167c795b6d10b877572d146af04e1b487bc07`. Recorded in `data/README.md`, `EXTERNAL_DATA_REPRODUCIBILITY.md`, and `malecns_ingest.py:DATASET_CITATION`.
+- **Status**: **RESOLVED** — checksum VERIFIED and recorded.
 
-### CR-3 | **INFORMATIONAL** — Staging commands undocumented
+### CR-3 | **RESOLVED** — Staging commands now documented
 - **Location**: `research_archive/EXTERNAL_DATA_REPRODUCIBILITY.md` (committed at 5beebba)
-- **Gap**: Download/staging commands for the ~6.8 GB Feather are not documented in repository instructions; `EXTERNAL_DATA_REPRODUCIBILITY.md` itself is a 241-line record that notes this.
-- **Status**: Verified gap (documented in the committed file).
+- **Resolution**: Complete gsutil download/staging commands documented for:
+  - Feather partner table (`syn-partners-male-cns-v1.0-minconf-0.5.feather`)
+  - SWC skeletons (`em_801970.swc`, `em_801295.swc`)
+  - .ngmesh files (`mesh_801970.ngmesh`, `mesh_801295.ngmesh`)
+  All commands validated 2026-10-09 against the source GCS bucket structure.
+- **Status**: **RESOLVED** — staging commands DOCUMENTED.
 
 ### CR-4 | **INFORMATIONAL** — Test count provenance
 - **Location**: `RESULTS_DRAFT.md` §8, `paper/claim_evidence_matrix.csv` C-008

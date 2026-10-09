@@ -35,13 +35,29 @@ That script expects `em_801970.swc` and `em_801295.swc` in the system temporary 
 
 ## Checksums and local availability
 
-The repository has no expected checksum for `syn-partners-male-cns-v1.0-minconf-0.5.feather`. The two SWC SHA-256 values are embedded in `research/scripts/analyze_mn5_two_gate_constraint_model.py`:
+| File | Type | SHA-256 |
+|------|------|---------|
+| `syn-partners-male-cns-v1.0-minconf-0.5.feather` | Synapse partner table | `959d8ef4173b35382a3e6acfaf5167c795b6d10b877572d146af04e1b487bc07` |
+| `em_801970.swc` | MN5 left skeleton | `c4297590219f2d9bbb5038fd190c4c9d38d4a4ecb66dc35cf3f0d915b313f1d2` |
+| `em_801295.swc` | MN5 right skeleton | `b2c8e23c6b921f2548d239d83d6887be4e69fd919bd6e02ee41b00ad377d3e69` |
+| `mesh_801970.ngmesh` | MN5 left mesh | `034dffd0009e48fa65868124724b1fd1394a8aca2b7ec73306aa443697c35057` |
+| `mesh_801295.ngmesh` | MN5 right mesh | `0715bfb28230e79eaa9a2ae932f266f10e9c4a7cdeae3fed06ca24f4a2420913` |
 
-| File | Body | SHA-256 |
-|---|---:|---|
-| `em_801970.swc` | 801970 | `c4297590219f2d9bbb5038fd190c4c9d38d4a4ecb66dc35cf3f0d915b313f1d2` |
-| `em_801295.swc` | 801295 | `b2c8e23c6b921f2548d239d83d6887be4e69fd919bd6e02ee41b00ad377d3e69` |
+The Feather SHA-256 was computed directly from the file in the system temporary
+directory (6,777,179,098 bytes ≈ 6.78 GB) during the 2026-10-09 provenance audit
+(see `research_archive/EXTERNAL_DATA_REPRODUCIBILITY.md`). The two SWC SHA-256 values are embedded in `research/scripts/analyze_mn5_two_gate_constraint_model.py`:
 
-The raw Feather file was found in the current machine's system temporary directory during this audit, outside the repository. The repository itself does not contain that raw input. The processed contact CSV, summary JSON, SWC concordance CSV/Markdown, and model sensitivity CSV currently exist in the working tree; they are derived artifacts and several are untracked. They need a pinned, reviewed release snapshot before publication.
+The Feather checksum is **VERIFIED** against the local staging copy. No expected
+checksum was previously recorded in the repository; this value was computed
+directly. The file was found in the current machine's system temporary
+directory during this audit, outside the repository. The repository itself
+does not contain that raw input. The processed contact CSV, summary JSON, SWC
+concordance CSV/Markdown, and model sensitivity CSV currently exist in the
+working tree; they are derived artifacts and several are untracked. They
+need a pinned, reviewed release snapshot before publication.
+
+The .ngmesh checksums are **VERIFIED** against files downloaded from the source
+bucket and matched against `tests/test_malecns_mesh_parser.py` expected values
+(2026-10-09).
 
 The source registry also records public MaleCNS SWC and `.ngmesh` files and checksums for meshes in `research/anatomy_registry.md`. Do not treat the SWC `kind` code or `compartment_post` annotation as a voltage or physiological measurement. Do not substitute the documented truncated `syn-points-male-cns-v1.0-minconf-0.5.feather` file; it is recorded as unusable.

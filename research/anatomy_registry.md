@@ -53,7 +53,7 @@ root↔soma from 23.76/14.88 µm to **117.88/118.84 µm** — a 5× error. The e
 | kind=0 / kind=2 cable | 6929.7 µm (93.0 %) / 523.9 µm (7.0 %) |
 | Radius range | kind=0 0.256–3.328 µm (median **0.256** = global floor) · kind=2 0.256–**4.671** µm (median 0.718) |
 | Mesh | `mesh_801970.ngmesh` — 687,842 verts, 913,134 faces, 19,211,716 B |
-| SHA-256 | `034dffd0009e48fa65868124724b1fd1394a8aca2b7ec73306aa443697c35057` |
+| SHA-256 | `034dffd0009e48fa65868124724b1fd1394a8aca2b7ec73306aa443697c35057` **VERIFIED** |
 | Mesh surface area | **18,725.6 µm²** (cross product; Heron agrees to 2e-16 rel) |
 | Mesh bbox extent | 183.9 × 68.5 × 114.1 µm |
 | Mesh topology | 462,426 boundary edges, 2,238 non-manifold, 807 duplicate faces; χ = V−E+F = 2300 |
@@ -80,7 +80,7 @@ Identical structure; differing values:
 | Radius range | kind=0 0.256–4.890 µm · kind=2 0.256–**5.376** µm (median 0.743) |
 | Proximal block | nodes 5–9 all `kind=2`, radius **5.376 µm** — contiguous |
 | Mesh | `mesh_801295.ngmesh` — 726,682 verts, 957,519 faces, 20,210,416 B |
-| SHA-256 | `0715bfb28230e79eaa9a2ae932f266f10e9c4a7cdeae3fed06ca24f4a2420913` |
+| SHA-256 | `0715bfb28230e79eaa9a2ae932f266f10e9c4a7cdeae3fed06ca24f4a2420913` **VERIFIED** |
 | Mesh surface area | **19,665.4 µm²** |
 | Mesh bbox extent | 182.7 × 63.5 × 101.1 µm |
 | Mesh topology | 495,569 boundary, 2,267 non-manifold, 873 duplicate faces; χ = 2406 |
