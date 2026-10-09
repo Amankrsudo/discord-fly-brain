@@ -1,0 +1,88 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 560 420" width="560" height="420" font-family="sans-serif">
+  <!-- Title -->
+  <text x="280" y="24" text-anchor="middle" font-size="16" font-weight="bold">
+    Drosophila Giant Fiber System — escape circuit (anatomical inventory)
+  </text>
+  <text x="280" y="44" text-anchor="middle" font-size="10" fill="#555">
+    Body identities and synapse types from the frozen MaleCNS v1.0 evidence audit
+  </text>
+
+  <!-- Optic lobe / GF -->
+  <rect x="30" y="80" width="90" height="50" rx="4" fill="#e8f4f8" stroke="#2c5282" stroke-width="1.5"/>
+  <text x="75" y="110" text-anchor="middle" font-size="11" font-weight="bold">OL (LPLC2, LC4)</text>
+  <text x="75" y="126" text-anchor="middle" font-size="9" fill="#555">optic lobe interneurons</text>
+
+  <!-- GF neuron (left + right) -->
+  <rect x="170" y="70" width="70" height="70" rx="4" fill="#e8f4f8" stroke="#2c5282" stroke-width="2"/>
+  <circle cx="205" cy="105" r="8" fill="#2c5282"/>
+  <text x="205" y="108" text-anchor="middle" font-size="10" fill="#fff" font-weight="bold">GF</text>
+  <text x="205" y="130" text-anchor="middle" font-size="9">L/R, bilateral</text>
+
+  <!-- TTMn (jump) -->
+  <rect x="290" y="60" width="70" height="50" rx="4" fill="#fef3c7" stroke="#92400e" stroke-width="1.5"/>
+  <text x="325" y="88" text-anchor="middle" font-size="11" font-weight="bold">TTMn</text>
+  <text x="325" y="102" text-anchor="middle" font-size="9">jump motor</text>
+
+  <!-- PSI -->
+  <rect x="290" y="160" width="70" height="50" rx="4" fill="#dcfce8" stroke="#166534" stroke-width="1.5"/>
+  <text x="325" y="188" text-anchor="middle" font-size="11" font-weight="bold">PSI</text>
+  <text x="325" y="202" text-anchor="middle" font-size="9">802401/903327</text>
+
+  <!-- MN5 / DLMn -->
+  <rect x="410" y="50" width="70" height="70" rx="4" fill="#fee2e2" stroke="#991b1b" stroke-width="1.5"/>
+  <text x="445" y="88" text-anchor="middle" font-size="11" font-weight="bold">MN5</text>
+  <text x="445" y="102" text-anchor="middle" font-size="9">801970/801295</text>
+  <text x="445" y="116" text-anchor="middle" font-size="9">a, b / DLMn</text>
+
+  <!-- DLM muscle -->
+  <rect x="410" y="170" width="70" height="40" rx="4" fill="#fecaca" stroke="#991b1b" stroke-width="1.5"/>
+  <text x="445" y="195" text-anchor="middle" font-size="11" font-weight="bold">DLM fibers 5,6</text>
+
+  <!-- Connections -->
+  <!-- OL -> GF -->
+  <path d="M120,105 L170,105" stroke="#2c5282" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text x="145" y="95" text-anchor="middle" font-size="9">visual</text>
+
+  <!-- GF -> TTMn (electrical) -->
+  <path d="M240,90 L290,85" stroke="#92400e" stroke-width="3" stroke-dasharray="4,2"/>
+  <text x="265" y="82" font-size="9" fill="#92400e">elec.</text>
+
+  <!-- GF -> PSI (electrical) -->
+  <path d="M240,120 L290,185" stroke="#92400e" stroke-width="3" stroke-dasharray="4,2"/>
+  <text x="270" y="155" font-size="9" fill="#92400e">elec.</text>
+
+  <!-- PSI -> MN5 (chemical) -->
+  <path d="M355,205 L410,120" stroke="#166534" stroke-width="2.5"/>
+  <polygon points="355,205 350,207 350,203" fill="#166534"/>
+  <text x="365" y="165" font-size="9" fill="#166534" font-weight="bold">43 contacts</text>
+  <text x="365" y="180" font-size="8" fill="#166534">(minconf 0.5)</text>
+
+  <!-- MN5 -> DLM -->
+  <path d="M445,120 L445,170" stroke="#991b1b" stroke-width="2"/>
+  <polygon points="445,170 442,165 448,165" fill="#991b1b"/>
+  <text x="450" y="145" text-anchor="middle" font-size="9">motor</text>
+
+  <!-- Legend -->
+  <rect x="30" y="310" width="500" height="90" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1" rx="4"/>
+  <text x="35" y="330" font-size="11" font-weight="bold">Legend</text>
+  <line x1="35" y1="350" x2="60" y2="350" stroke="#92400e" stroke-width="3" stroke-dasharray="4,2"/>
+  <text x="65" y="354" font-size="10">electrical (gap junction, ShakB/innexin)</text>
+  <line x1="35" y1="370" x2="60" y2="370" stroke="#166534" stroke-width="2.5"/>
+  <polygon points="60,370 57,372 57,368" fill="#166534"/>
+  <text x="65" y="374" font-size="10">chemical (acetylcholine)</text>
+  <line x1="35" y1="390" x2="60" y2="390" stroke="#2c5282" stroke-width="1.5"/>
+  <polygon points="60,390 57,393 57,387" fill="#2c5282"/>
+  <text x="65" y="394" font-size="10">visual input</text>
+  <text x="35" y="410" font-size="9" fill="#555">
+    Source: MaleCNS v1.0 (Berg et al. 2026, DOI 10.1016/j.cell.2026.08.015);
+    GFS connectivity from Ryglewski &amp; Duch 2009, Fayyazuddin et al. 2006.
+  </text>
+
+  <!-- Definitions for markers -->
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3"
+            orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L9,3 L0,6 Z" fill="#2c5282"/>
+    </marker>
+  </defs>
+</svg>

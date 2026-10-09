@@ -1,0 +1,135 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Figure 7: Model capability surface and authorization gates.
+     All values verified from:
+       - model_framework.py:669-676 (MN5Model.capabilities)
+       - reduced_mn5.py:262-272 (ReducedMN5Simulator.capabilities)
+       - paper/tables/FIGURE_TABLE_R3_capability.md
+     GATES: PSI→MN5 spatial voltage transfer NOT AUTHORIZED (Gate A);
+            Dα7 biological conductance NOT AUTHORIZED (Gate B).
+     This diagram is hand-authored from verified code output; no model-derived
+     estimates are presented as native measurements. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="820" height="680" viewBox="0 0 820 680" font-family="monospace">
+  <style>
+    .title { font-size: 20px; font-weight: bold; fill: #1e293b; }
+    .subtitle { font-size: 13px; fill: #475569; }
+    .hdr { font-size: 13px; font-weight: bold; fill: #0f172a; }
+    .cell { font-size: 12px; fill: #1e293b; }
+    .avail { fill: #dcfce7; stroke: #16a34a; }
+    .partial { fill: #fef9c3; stroke: #ca8a04; }
+    .blocked { fill: #fee2e2; stroke: #dc2626; }
+    .badge { font-size: 11px; font-weight: bold; }
+    .note { font-size: 11px; fill: #475569; }
+    .gate-label { font-size: 12px; font-weight: bold; fill: #dc2626; }
+    .stat { font-size: 13px; font-weight: bold; fill: #0f172a; }
+    .stat-label { font-size: 11px; fill: #475569; }
+  </style>
+
+  <!-- Background -->
+  <rect width="820" height="680" fill="#ffffff"/>
+
+  <!-- Title -->
+  <text x="410" y="32" text-anchor="middle" class="title">Figure 7. Model capability surface and authorization gates</text>
+
+  <!-- Subtitle -->
+  <text x="410" y="54" text-anchor="middle" class="subtitle">Six capabilities enforced by model_framework.py (MN5Model.capabilities) and reduced_mn5.py (ReducedMN5Simulator.capabilities) [C-602, C-401, C-501]</text>
+
+  <!-- Capability surface table -->
+  <g transform="translate(80, 80)">
+    <!-- Header row -->
+    <rect x="0" y="0" width="660" height="26" class="hdr" fill="#e2e8f0" stroke="#94a3b8"/>
+    <text x="180" y="17" class="hdr">Capability</text>
+    <text x="470" y="17" class="hdr">Status</text>
+
+    <!-- Row 1: Anatomy - AVAILABLE -->
+    <rect x="0" y="26" width="660" height="32" class="avail"/>
+    <text x="180" y="48" class="cell">Anatomy (17/26 contacts, compartment labels, mesh geometry)</text>
+    <rect x="470" y="34" width="72" height="20" class="avail" stroke="#16a34a"/>
+    <text x="506" y="48" text-anchor="middle" class="badge" fill="#16a34a">AVAILABLE</text>
+
+    <!-- Row 2: Reduced MN5 - PARTIAL -->
+    <rect x="0" y="58" width="660" height="32" class="partial"/>
+    <text x="180" y="80" class="cell">Reduced single-compartment MN5 (3 native inputs, no leak)</text>
+    <rect x="470" y="66" width="72" height="20" stroke="#ca8a04" fill="#fef9c3"/>
+    <text x="506" y="80" text-anchor="middle" class="badge" fill="#ca8a04">PARTIAL</text>
+
+    <!-- Row 3: PSI→MN5 synaptic physiology - BLOCKED, Gate B -->
+    <rect x="0" y="90" width="660" height="32" fill="#fee2e2" stroke="#dc2626"/>
+    <text x="180" y="112" class="cell">PSI→MN5 synaptic physiology</text>
+    <rect x="470" y="98" width="72" height="20" fill="#fee2e2" stroke="#dc2626"/>
+    <text x="506" y="112" text-anchor="middle" class="badge" fill="#dc2626">BLOCKED</text>
+    <text x="560" y="112" class="gate-label">Gate B</text>
+
+    <!-- Row 4: PSI→MN5 spatial voltage transfer - BLOCKED, Gate A -->
+    <rect x="0" y="122" width="660" height="32" fill="#fee2e2" stroke="#dc2626"/>
+    <text x="180" y="144" class="cell">PSI→MN5 spatial voltage transfer</text>
+    <rect x="470" y="130" width="72" height="20" fill="#fee2e2" stroke="#dc2626"/>
+    <text x="506" y="144" text-anchor="middle" class="badge" fill="#dc2626">BLOCKED</text>
+    <text x="560" y="144" class="gate-label">Gate A</text>
+
+    <!-- Row 5: Dα7 receptor conductance - BLOCKED, Gate B -->
+    <rect x="0" y="154" width="660" height="32" fill="#fee2e2" stroke="#dc2626"/>
+    <text x="180" y="176" class="cell">Dα7 receptor conductance</text>
+    <rect x="470" y="162" width="72" height="20" fill="#fee2e2" stroke="#dc2626"/>
+    <text x="506" y="176" text-anchor="middle" class="badge" fill="#dc2626">BLOCKED</text>
+    <text x="560" y="176" class="gate-label">Gate B</text>
+
+    <!-- Row 6: GFS electrical coupling - PARTIAL -->
+    <rect x="0" y="186" width="660" height="32" class="partial" fill="#fef9c3" stroke="#ca8a04"/>
+    <text x="180" y="208" class="cell">GFS electrical coupling</text>
+    <rect x="470" y="194" width="72" height="20" stroke="#ca8a04" fill="#fef9c3"/>
+    <text x="506" y="208" text-anchor="middle" class="badge" fill="#ca8a04">PARTIAL</text>
+  </g>
+
+  <!-- Gate legend -->
+  <g transform="translate(80, 240)">
+    <rect x="0" y="0" width="260" height="70" fill="#fef2f2" stroke="#fecaca" rx="6"/>
+    <text x="130" y="18" text-anchor="middle" class="gate-label">Gate A: PSI→MN5 spatial voltage transfer</text>
+    <text x="130" y="36" text-anchor="middle" class="note">NOT AUTHORIZED — no native measurement</text>
+    <text x="130" y="54" text-anchor="middle" class="note">require_spatial_transfer raises</text>
+
+    <rect x="290" y="0" width="260" height="70" fill="#fef2f2" stroke="#fecaca" rx="6"/>
+    <text x="420" y="18" text-anchor="middle" class="gate-label">Gate B: Dα7 receptor conductance</text>
+    <text x="420" y="36" text-anchor="middle" class="note">NOT AUTHORIZED — no native measurement</text>
+    <text x="420" y="54" text-anchor="middle" class="note">require_dalpha7_gate raises</text>
+  </g>
+
+  <!-- Parameter inventory -->
+  <g transform="translate(80, 340)">
+    <text x="0" y="22" class="hdr">Frozen parameter inventory (model_input_freeze.csv, 108 parameters) [C-301]</text>
+
+    <!-- Safe -->
+    <rect x="0" y="28" width="140" height="48" class="avail" stroke="#16a34a" rx="6"/>
+    <text x="70" y="50" text-anchor="middle" class="stat">40</text>
+    <text x="70" y="68" text-anchor="middle" class="stat-label">SAFE to use</text>
+
+    <!-- Assumption -->
+    <rect x="150" y="28" width="140" height="48" stroke="#ca8a04" fill="#fef9c3" rx="6"/>
+    <text x="220" y="50" text-anchor="middle" class="stat">31</text>
+    <text x="220" y="68" text-anchor="middle" class="stat-label">Assumption-only</text>
+
+    <!-- Blocked -->
+    <rect x="300" y="28" width="140" height="48" stroke="#dc2626" fill="#fee2e2" rx="6"/>
+    <text x="370" y="50" text-anchor="middle" class="stat">37</text>
+    <text x="370" y="68" text-anchor="middle" class="stat-label">Blocked (never used)</text>
+
+    <!-- Conflicts -->
+    <rect x="450" y="28" width="140" height="48" stroke="#dc2626" fill="#ffebee" rx="6"/>
+    <text x="520" y="50" text-anchor="middle" class="stat">15</text>
+    <text x="520" y="68" text-anchor="middle" class="stat-label">Unresolved conflicts</text>
+
+    <rect x="600" y="28" width="140" height="48" stroke="#64748b" fill="#f1f5f9" stroke-dasharray="4 2" rx="6"/>
+    <text x="670" y="50" text-anchor="middle" class="stat">0</text>
+    <text x="670" y="68" text-anchor="middle" class="stat-label">Promoted to native</text>
+  </g>
+
+  <!-- Blocked quantities footer -->
+  <g transform="translate(80, 440)">
+    <rect x="0" y="0" width="660" height="62" fill="#fff5f5" stroke="#fecaca" rx="6"/>
+    <text x="20" y="20" class="note">Blocked quantities never inserted (examples from model_input_freeze.csv):</text>
+    <text x="20" y="40" class="note">MN5 Ra, MN5 Rm, PSI→MN5 synaptic conductance, native Dα7 conductance, contact→soma electrotonic distance [C-201, C-303, C-401, C-501]</text>
+    <text x="20" y="60" class="note">These raise BlockedParameterError when requested — they do not default, estimate, or degrade silently.</text>
+  </g>
+
+  <!-- Source note -->
+  <text x="80" y="660" class="note">Source: model_framework.py:669-676, reduced_mn5.py:262-272, paper/tables/FIGURE_TABLE_R3_capability.md</text>
+</svg>

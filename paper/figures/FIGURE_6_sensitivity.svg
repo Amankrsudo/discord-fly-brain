@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 480" width="760" height="480" font-family="sans-serif">
+<text x="380.0" y="24" text-anchor="middle" font-size="15" font-weight="bold">Model-derived sensitivity ranges (15,528 rows) [C-601, C-402]></text>
+<text x="380.0" y="42" text-anchor="middle" font-size="10" fill="#555">Outputs are MODEL-DERIVED, not native measurements. Gate A (spatial transfer) NOT AUTHORIZED [C-401].></text>
+<line x1="70" y1="410" x2="730" y2="410" stroke="#333" stroke-width="1"/>
+<line x1="70" y1="50" x2="70" y2="410" stroke="#333" stroke-width="1"/>
+<rect x="211.9" y="184.8" width="46.2" height="224.4" fill="#4a6fa5" fill-opacity="0.35" stroke="#4a6fa5"/>
+<line x1="235.0" y1="184.8" x2="235.0" y2="409.2" stroke="#4a6fa5" stroke-width="1.5"/>
+<line x1="226.0" y1="384.3" x2="244.0" y2="384.3" stroke="#1a365d" stroke-width="2"/>
+<line x1="235.0" y1="410.0" x2="235.0" y2="184.8" stroke="#4a6fa5" stroke-width="1"/>
+<line x1="235.0" y1="409.2" x2="235.0" y2="53.4" stroke="#4a6fa5" stroke-width="1"/>
+<text x="235.0" y="426" font-size="10" text-anchor="middle">Local peak</text>
+<text x="235.0" y="49.4" font-size="8" text-anchor="middle" fill="#333">0.01</text>
+<text x="235.0" y="422.0" font-size="8" text-anchor="middle" fill="#333">77.26</text>
+<rect x="376.9" y="326.7" width="46.2" height="83.0" fill="#4a6fa5" fill-opacity="0.35" stroke="#4a6fa5"/>
+<line x1="400.0" y1="326.7" x2="400.0" y2="409.7" stroke="#4a6fa5" stroke-width="1.5"/>
+<line x1="391.0" y1="401.6" x2="409.0" y2="401.6" stroke="#1a365d" stroke-width="2"/>
+<line x1="400.0" y1="410.0" x2="400.0" y2="326.7" stroke="#4a6fa5" stroke-width="1"/>
+<line x1="400.0" y1="409.7" x2="400.0" y2="100.4" stroke="#4a6fa5" stroke-width="1"/>
+<text x="400.0" y="426" font-size="10" text-anchor="middle">Somatic peak</text>
+<text x="400.0" y="96.4" font-size="8" text-anchor="middle" fill="#333">0.00</text>
+<text x="400.0" y="422.0" font-size="8" text-anchor="middle" fill="#333">67.08</text>
+<rect x="541.9" y="406.8" width="46.2" height="2.0" fill="#4a6fa5" fill-opacity="0.35" stroke="#4a6fa5"/>
+<line x1="565.0" y1="406.8" x2="565.0" y2="408.8" stroke="#4a6fa5" stroke-width="1.5"/>
+<line x1="556.0" y1="407.6" x2="574.0" y2="407.6" stroke="#1a365d" stroke-width="2"/>
+<line x1="565.0" y1="409.6" x2="565.0" y2="406.8" stroke="#4a6fa5" stroke-width="1"/>
+<line x1="565.0" y1="408.8" x2="565.0" y2="405.9" stroke="#4a6fa5" stroke-width="1"/>
+<text x="565.0" y="426" font-size="10" text-anchor="middle">Local-to-somatic
+ratio</text>
+<text x="565.0" y="401.9" font-size="8" text-anchor="middle" fill="#333">0.09</text>
+<text x="565.0" y="421.6" font-size="8" text-anchor="middle" fill="#333">0.89</text>
+<rect x="706.9" y="398.9" width="46.2" height="12" fill="#e53e3e" fill-opacity="0.7"/>
+<text x="730.0" y="395.9" font-size="8" text-anchor="middle">A (43pF)</text>
+<rect x="753.1" y="401.6" width="46.2" height="12" fill="#dd6b20" fill-opacity="0.7"/>
+<text x="776.2" y="398.6" font-size="8" text-anchor="middle">B (127pF)</text>
+<text x="730.0" y="426" font-size="10" text-anchor="middle">Nominal point
+(somatic, mV)</text>
+<text x="730.0" y="444" font-size="8" text-anchor="middle" fill="#666">A: 1.108 / B: 0.510</text>
+<text x="380.0" y="470" text-anchor="middle" font-size="9" fill="#666">C-01 variants A/B both shown; no winner chosen. Local nominal (gPSI=1, E_syn=0): min 40.13 / max 67.71 mV [C-303].</text>
+</svg>

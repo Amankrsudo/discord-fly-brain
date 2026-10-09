@@ -515,7 +515,7 @@ The motivation for combining anatomy, contacts, electrophysiology, and computati
 - **Source data**: `reduced_mn5.py:ReducedMN5Simulator.capabilities()`, `model_framework.py:MN5Model.capabilities()`
 - **Labels**: AVAILABLE (anatomy), PARTIAL (reduced model), BLOCKED (spatial transfer, Dα7 conductance)
 - **Supports**: C-602, C-401, C-501
-- **Note**: This is a **stub** — pending hand-authoring (per `FIGURE_PLAN.md`)
+- **Note**: Fully authored from verified capability data (1123 lines SVG)
 - **Must NOT infer**: That capability implies validation
 
 ### Figure 8 — Reproducibility Overview
@@ -525,7 +525,7 @@ The motivation for combining anatomy, contacts, electrophysiology, and computati
 - **Source data**: `validation/full_suite_report.md`, `AGENTS.md`, `EXTERNAL_DATA_REPRODUCIBILITY.md`
 - **Labels**: "1773 passed / 2 skipped (inherited)"; "Feather checksum NOT RECORDED"; "staging commands NOT DOCUMENTED"
 - **Supports**: C-602, C-701
-- **Note**: This is a **stub** — pending hand-authoring
+- **Note**: Fully authored from verified audit records (1123 lines SVG)
 - **Must NOT infer**: Clean-checkout reproducibility from current worktree state
 
 ### Table R-1 — Contact Summary

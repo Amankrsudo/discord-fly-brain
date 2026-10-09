@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 560 340" width="560" height="340" font-family="sans-serif">
+<text x="280.0" y="20" text-anchor="middle" font-size="15" font-weight="bold">PSI→MN5 compartment annotations (43 contacts)</text>
+<text x="280.0" y="38" text-anchor="middle" font-size="10" fill="#555">Source: MaleCNS v1.0 annotation layer</text>
+<rect x="55" y="45.0" width="455.0" height="57.1" fill="#4a6fa5" stroke="#333"/>
+<text x="59" y="77.6" font-size="11" fill="#fff" font-weight="bold">43</text>
+<text x="59" y="40.0" font-size="10" fill="#444">axon (pre)</text>
+<text x="51" y="77.6" font-size="10" text-anchor="end" fill="#333">compartment_pre</text>
+<rect x="55" y="135.0" width="402.1" height="57.1" fill="#4a6fa5" fill-opacity="0.45" stroke="#333"/>
+<text x="59" y="167.6" font-size="11" fill="#333" font-weight="bold">38</text>
+<text x="51" y="167.6" font-size="10" text-anchor="end" fill="#333">compartment_post</text>
+<rect x="55" y="215.0" width="52.9" height="57.1" fill="#999999" fill-opacity="0.45" stroke="#333"/>
+<text x="59" y="247.6" font-size="11" fill="#333" font-weight="bold">5</text>
+<text x="51" y="247.6" font-size="10" text-anchor="end" fill="#333">compartment_post</text>
+<text x="280.0" y="332" text-anchor="middle" font-size="10" fill="#666">All 43 contacts: compartment_post=axon. Label is a dataset annotation, not electrophysiology [C-103].</text>
+</svg>

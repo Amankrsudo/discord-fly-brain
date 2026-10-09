@@ -1,0 +1,80 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 700 500" width="700" height="500" font-family="sans-serif">
+  <!-- Title -->
+  <text x="350" y="24" text-anchor="middle" font-size="16" font-weight="bold">
+    Provenance-aware analysis pipeline
+  </text>
+  <text x="350" y="44" text-anchor="middle" font-size="10" fill="#555">
+    From source datasets to model inputs to manuscript claims — with gate enforcement
+  </text>
+
+  <!-- Source column (left) -->
+  <rect x="30" y="70" width="110" height="340" rx="4" fill="#f0f9ff" stroke="#0c4a6d" stroke-width="1.5"/>
+  <text x="85" y="95" text-anchor="middle" font-size="11" font-weight="bold">SOURCE DATASETS</text>
+  <text x="85" y="120" font-size="9">MaleCNS v1.0</text>
+  <text x="85" y="134" font-size="8">CC-BY, Berg et al. 2026</text>
+  <text x="85" y="150" font-size="9">syn-partners</text>
+  <text x="85" y="164" font-size="9">minconf 0.5</text>
+  <text x="85" y="182" font-size="9">synapses-precomputed</text>
+  <text x="85" y="196" font-size="9">SWC skeletons</text>
+  <text x="85" y="210" font-size="9">.ngmesh (validated)</text>
+  <text x="85" y="232" font-size="9">Fayyazuddin 2006</text>
+  <text x="85" y="246" font-size="9">Ryglewski 2014</text>
+  <text x="85" y="260" font-size="9">Augustin 2019</text>
+  <text x="85" y="274" font-size="9">Lansdell 2012</text>
+  <text x="85" y="296" font-size="9">model_input_freeze.csv</text>
+  <text x="85" y="310" font-size="9">(108 params)</text>
+
+  <!-- Ingest -->
+  <rect x="180" y="90" width="110" height="80" rx="4" fill="#e0f2fe" stroke="#0369a1" stroke-width="1.5"/>
+  <text x="235" y="115" text-anchor="middle" font-size="11" font-weight="bold">INGESTION</text>
+  <text x="235" y="135" font-size="9">malecns_ingest.py</text>
+  <text x="235" y="150" font-size="8">8 nm EM frame validated</text>
+
+  <!-- Anatomical analysis -->
+  <rect x="180" y="200" width="110" height="80" rx="4" fill="#dcfce8" stroke="#15803d" stroke-width="1.5"/>
+  <text x="235" y="225" text-anchor="middle" font-size="11" font-weight="bold">ANATOMICAL</text>
+  <text x="235" y="245" font-size="9">43 contacts verified</text>
+  <text x="235" y="260" font-size="8">compartment_post=axon</text>
+
+  <!-- Model inputs + gates -->
+  <rect x="330" y="90" width="140" height="230" rx="4" fill="#fef3c7" stroke="#92400e" stroke-width="1.5"/>
+  <text x="400" y="115" text-anchor="middle" font-size="11" font-weight="bold">MODEL INPUTS + GATES</text>
+  <text x="400" y="138" font-size="9">ParameterSet.require()</text>
+  <text x="400" y="152" font-size="8">raises on BLOCKED</text>
+  <text x="400" y="170" font-size="9" fill="#c54b1b">Gate A: NOT AUTHORIZED</text>
+  <text x="400" y="184" font-size="8" fill="#c54b1b">spatial transfer</text>
+  <text x="400" y="202" font-size="9" fill="#c54b1b">Gate B: NOT AUTHORIZED</text>
+  <text x="400" y="216" font-size="8" fill="#c54b1b">Dα7 conductance</text>
+  <text x="400" y="234" font-size="9">SAFE: 40 / ASSUMPTION: 31</text>
+  <text x="400" y="248" font-size="8">BLOCKED: 37 / Conflicts: 15</text>
+
+  <!-- Outputs -->
+  <rect x="510" y="90" width="150" height="230" rx="4" fill="#f1f5f9" stroke="#33415d" stroke-width="1.5"/>
+  <text x="585" y="115" text-anchor="middle" font-size="11" font-weight="bold">OUTPUTS</text>
+  <text x="585" y="140" font-size="9">Model-derived [MDE]</text>
+  <text x="585" y="154" font-size="8">(conditional only)</text>
+  <text x="585" y="174" font-size="9">Sensitivity 15,528</text>
+  <text x="585" y="188" font-size="8">rows CSV</text>
+  <text x="585" y="210" font-size="9" fill="#64748b">Blocked:</text>
+  <text x="585" y="224" font-size="8" fill="#64748b">native transfer [Gate A] [C-401]</text>
+  <text x="585" y="238" font-size="8" fill="#64748b">Dα7 conductance [Gate B] [C-501]</text>
+
+  <!-- Arrows -->
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3"
+            orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L9,3 L0,6 Z" fill="#083344"/>
+    </marker>
+  </defs>
+  <path d="M140,130 L178,130" stroke="#083344" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <path d="M140,240 L178,240" stroke="#083344" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <path d="M310,120 L330,160" stroke="#083344" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <path d="M310,240 L330,200" stroke="#083344" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <path d="M450,160 L495,160" stroke="#083344" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- Footer note -->
+  <text x="300" y="490" text-anchor="middle" font-size="8" fill="#666">
+    Source: malecns_ingest.py (EvidenceClass), model_framework.py (ModelProvenance, ParameterSet),
+    reduced_mn5.py (capabilities). Five evidence classes enforced in code.
+  </text>
+</svg>
