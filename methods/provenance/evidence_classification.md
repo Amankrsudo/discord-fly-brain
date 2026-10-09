@@ -1,15 +1,14 @@
 # Evidence classification
 
-The project distinguishes these classes in claims, parameters, figures, and validation outputs. A result must not silently move from one class to another.
+The project distinguishes five evidence classes — enforced in `biological_brain/model_framework.py` (`ModelProvenance`) and `biological_brain/malecns_ingest.py` (`EvidenceClass`) — in claims, parameters, figures, and validation outputs. A result must not silently move from one class to another. Repository-execution facts and validation fixtures are recorded separately by the validation package; they are not biological evidence classes.
 
-| Class | Meaning | Boundary |
-|---|---|---|
-| Literature-derived | Value or statement reported by a cited publication. | Preserve the measured object, species, method, units, sample/statistic, and caveats. A parameter used by an earlier model is not automatically a native measurement. |
-| Primary-dataset-derived | Value computed from or label read from a deposited primary dataset, such as MaleCNS v1.0. | Record dataset version, source field, body IDs, confidence threshold, and processing. Dataset annotations are not electrophysiology. |
-| Repository-derived | Fact read from project source, configuration, artifacts, tests, or executed-model code. | Establishes repository contents or execution, not necessarily biological reality. Track file and tree status. |
-| Model-derived | Simulated, fitted, or calculated output from a declared model and inputs. | Conditional on model structure and assumptions; not a biological measurement. |
-| Assumptions | Explicit choices used where direct evidence is missing or insufficient. | Keep visible, sensitivity-test where appropriate, and never promote to measured facts. |
-| Validation fixtures | Synthetic, hand-authored, or expected values used to test software. | Evidence only that code meets a test expectation; not independent biological or dataset evidence. |
+| Class | Code | Meaning | Boundary |
+|---|---|---|---|
+| Native experimental measurement | `NATIVE_EXPERIMENTAL_MEASUREMENT` (NEM) | Value derived from direct measurement in native tissue (e.g., electrophysiology recordings, EPSPs). | Preserve measured object, species, method, units, sample size, and caveats. A parameter used by an earlier model is not automatically a native measurement. |
+| Anatomical measurement | `ANATOMICAL_MEASUREMENT` (AM) | Connectomic or standard anatomical observation from deposited datasets (e.g., MaleCNS v1.0 synapse annotations, compartment labels). | Record dataset version, source field, body IDs, confidence threshold, and processing. Dataset annotations are labels, not electrophysiology. |
+| Literature-derived passive parameter | `LITERATURE_DERIVED_PASSIVE_PARAMETER` (LDP) | Value or statement reported by a cited publication. | Preserve the measured object, species, method, units, sample/statistic, and caveats. |
+| Model-derived estimate | `MODEL_DERIVED_ESTIMATE` (MDE) | Simulated, fitted, or calculated output from a declared model and inputs. | Conditional on model structure and assumptions; not a biological measurement. |
+| Model assumption | `MODEL_ASSUMPTION` (MA) | Explicit choices where direct evidence is missing or insufficient; includes facts read from repository source/configuration. | Keep visible, sensitivity-test where appropriate, and never promote to measured facts. |
 
 ## Open scientific gates
 

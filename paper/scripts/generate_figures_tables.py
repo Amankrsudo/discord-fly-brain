@@ -438,6 +438,106 @@ def figure_6():
     return "\n".join(svg)
 
 
+def figure_8_reproducibility():
+    """Generate Figure 8: Reproducibility overview from verified audit records."""
+    width, height = 820, 580
+    svg = [
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" '
+        f'viewBox="0 0 {width} {height}" font-family="monospace">',
+        f'<style>'
+        f'.title {{ font-size: 20px; font-weight: bold; fill: #1e293b; }}'
+        f'.subtitle {{ font-size: 13px; fill: #475569; }}'
+        f'.hdr {{ font-size: 13px; font-weight: bold; fill: #0f172a; }}'
+        f'.cell {{ font-size: 12px; fill: #1e293b; }}'
+        f'.verified {{ fill: #dcfce7; stroke: #16a34a; }}'
+        f'.inherited {{ fill: #dbeafe; stroke: #2563eb; }}'
+        f'.generated {{ fill: #dbeafe; stroke: #2563eb; }}'
+        f'.unavail {{ fill: #fee2e2; stroke: #dc2626; }}'
+        f'.verify {{ fill: #fff7ed; stroke: #f97316; }}'
+        f'.badge {{ font-size: 11px; font-weight: bold; }}'
+        f'.note {{ font-size: 11px; fill: #475569; }}'
+        f'.stat {{ font-size: 13px; font-weight: bold; fill: #0f172a; }}'
+        f'.stat-label {{ font-size: 11px; fill: #475569; }}'
+        f'</style>',
+        f'<rect width="{width}" height="{height}" fill="#ffffff"/>',
+        f'<text x="{width/2}" y="32" text-anchor="middle" class="title">'
+        f'Figure 8. Reproducibility and validation overview</text>',
+        f'<text x="{width/2}" y="54" text-anchor="middle" class="subtitle">'
+        f'Test count and audit status are inherited from prior runs, not freshly reproduced [C-602, C-701]</text>',
+        f'<g transform="translate(80, 80)">',
+        f'<rect x="0" y="0" width="660" height="26" class="hdr" fill="#e2e8f0" stroke="#94a3b8"/>',
+        f'<text x="180" y="17" class="hdr">Item</text>',
+        f'<text x="500" y="17" class="hdr">Value / Status</text>',
+        f'<text x="640" y="17" class="hdr">Evidence class</text>',
+        f'<rect x="0" y="26" width="660" height="34" class="inherited"/>',
+        f'<text x="180" y="50" class="cell">Repository test suite</text>',
+        f'<rect x="500" y="36" width="120" height="20" class="inherited" stroke="#2563eb"/>',
+        f'<text x="560" y="50" text-anchor="middle" class="badge" fill="#2563eb">1773 passed / 2 skipped</text>',
+        f'<text x="700" y="50" text-anchor="middle" class="badge" fill="#2563eb">INHERITED</text>',
+        f'<text x="640" y="50" text-anchor="middle" class="cell" fill="#2563eb">AM (software)</text>',
+        f'<rect x="0" y="60" width="660" height="34" class="verified"/>',
+        f'<text x="180" y="84" class="cell">Test command</text>',
+        f'<rect x="500" y="70" width="120" height="20" class="verified" stroke="#16a34a"/>',
+        f'<text x="560" y="84" text-anchor="middle" class="badge" fill="#16a34a">VERIFIED</text>',
+        f'<text x="640" y="84" text-anchor="middle" class="cell" fill="#16a34a">AM</text>',
+        f'<text x="20" y="90" class="note">python -m pytest tests/ -v --tb=short --ignore=tests/test_diagnostics.py</text>',
+        f'<rect x="0" y="94" width="660" height="34" class="verified"/>',
+        f'<text x="180" y="118" class="cell">SWC SHA-256 pinning (sensitivity script)</text>',
+        f'<rect x="500" y="104" width="120" height="20" class="verified" stroke="#16a34a"/>',
+        f'<text x="560" y="118" text-anchor="middle" class="badge" fill="#16a34a">SHA-256 confirmed</text>',
+        f'<text x="640" y="118" text-anchor="middle" class="cell" fill="#16a34a">AM</text>',
+        f'<text x="20" y="122" class="note">2 cached MN5 SWCs pinned in analyze_mn5_two_gate_constraint_model.py</text>',
+        f'<rect x="0" y="128" width="660" height="34" class="unavail"/>',
+        f'<text x="180" y="152" class="cell">MaleCNS synapse Feather checksum</text>',
+        f'<rect x="500" y="138" width="120" height="20" class="unavail" stroke="#dc2626"/>',
+        f'<text x="560" y="152" text-anchor="middle" class="badge" fill="#dc2626">NOT RECORDED</text>',
+        f'<text x="640" y="152" text-anchor="middle" class="cell" fill="#dc2626">—</text>',
+        f'<text x="20" y="158" class="note">VERIFY_REQUIRED: no expected checksum recorded for raw Feather artifact</text>',
+        f'<rect x="0" y="162" width="660" height="34" class="verify"/>',
+        f'<text x="180" y="186" class="cell">Data download / staging commands</text>',
+        f'<rect x="500" y="172" width="120" height="20" class="verify" stroke="#f97316"/>',
+        f'<text x="560" y="186" text-anchor="middle" class="badge" fill="#f97316">NOT DOCUMENTED</text>',
+        f'<text x="640" y="186" text-anchor="middle" class="cell" fill="#f97316">—</text>',
+        f'<text x="20" y="190" class="note">VERIFY_REQUIRED: no repository-authored download/stage command exists</text>',
+        f'<rect x="0" y="196" width="660" height="34" class="verify"/>',
+        f'<text x="180" y="220" class="cell">External data license / attribution</text>',
+        f'<rect x="500" y="206" width="120" height="20" class="verify" stroke="#f97316"/>',
+        f'<text x="560" y="220" text-anchor="middle" class="badge" fill="#f97316">VERIFY_REQUIRED</text>',
+        f'<text x="640" y="220" text-anchor="middle" class="cell" fill="#f97316">—</text>',
+        f'<text x="20" y="224" class="note">MaleCNS v1.0 is CC-BY; exact attribution terms to be verified</text>',
+        f'<rect x="0" y="230" width="660" height="34" class="generated"/>',
+        f'<text x="180" y="254" class="cell">Model sensitivity rows (two-gate sweep)</text>',
+        f'<rect x="500" y="240" width="120" height="20" class="generated" stroke="#2563eb"/>',
+        f'<text x="560" y="254" text-anchor="middle" class="badge" fill="#2563eb">15,528 rows</text>',
+        f'<text x="640" y="254" text-anchor="middle" class="cell" fill="#2563eb">MDE</text>',
+        f'<text x="20" y="258" class="note">9,288 local + 2,880 abstract + 2,880 Dα7 + 480 calibration [C-601]</text>',
+        f'</g>',
+        f'<g transform="translate(80, 290)">',
+        f'<text x="0" y="16" class="hdr">Status legend:</text>',
+        f'<rect x="0" y="24" width="110" height="22" class="verified" stroke="#16a34a" rx="4"/>',
+        f'<text x="120" y="40" class="cell">VERIFIED — confirmed by audit</text>',
+        f'<rect x="0" y="52" width="110" height="22" class="inherited" stroke="#2563eb" rx="4"/>',
+        f'<text x="120" y="68" class="cell">INHERITED — from prior run, not fresh</text>',
+        f'<rect x="0" y="80" width="110" height="22" class="generated" stroke="#2563eb" rx="4"/>',
+        f'<text x="120" y="96" class="cell">GENERATED — model-derived output</text>',
+        f'<rect x="0" y="108" width="110" height="22" class="unavail" stroke="#dc2626" rx="4"/>',
+        f'<text x="120" y="124" class="cell">NOT RECORDED / VERIFY_REQUIRED</text>',
+        f'<rect x="0" y="136" width="110" height="22" class="verify" stroke="#f97316" rx="4"/>',
+        f'<text x="120" y="152" class="cell">NOT DOCUMENTED / VERIFY_REQUIRED</text>',
+        f'</g>',
+        f'<g transform="translate(80, 460)">',
+        f'<rect x="0" y="0" width="660" height="70" fill="#f8fafc" stroke="#e2e8f0" rx="6"/>',
+        f'<text x="20" y="20" class="note"><tspan font-weight="bold">Key constraints:</tspan></text>',
+        f'<text x="20" y="40" class="note">• Test count 1773/2 is INHERITED — not freshly executed against a clean checkout.</text>',
+        f'<text x="20" y="58" class="note">• Feather checksum NOT RECORDED; staging commands NOT DOCUMENTED — VERIFY_REQUIRED.</text>',
+        f'<text x="20" y="76" class="note">• Software validation is not empirical biological validation [C-602].</text>',
+        f'</g>',
+        f'<text x="80" y="560" class="note">Source: paper/tables/FIGURE_TABLE_R4_reproducibility.md, validation/full_suite_report.md, EXTERNAL_DATA_REPRODUCIBILITY.md</text>',
+        f'</svg>'
+    ]
+    return "\n".join(svg)
+
+
 def write(name, content):
     path = os.path.join(FIG if name.endswith(".svg") else TAB, name)
     with open(path, "w", encoding="utf-8") as f:
@@ -453,35 +553,106 @@ def main():
     write("FIGURE_TABLE_R2_native_biophysics.md", table_r2())
     with open(CONTACT_SUMMARY, encoding="utf-8") as f:
         cs = json.load(f)
-    write("FIGURE_7_capability.svg", _stub_capability(cs))
+    # Figures 7 and 8 are hand-authored from verified sources — do not regenerate
     write("FIGURE_TABLE_R3_capability.md", table_r3())
     write("FIGURE_TABLE_R4_reproducibility.md", table_r4())
-    write("FIGURE_8_reproducibility.svg", _stub_repro())
 
 
-def _stub_capability(cs):
-    return textwrap.dedent("""\
-        <!-- Stub: Figure 7 (capability/gating diagram) pending hand-authoring.
-             Source values verified from reduced_mn5.py and model_framework.py:
-             AVAILABLE: anatomy, reduced_passive_mn5; PARTIAL: gfs_electrical_coupling;
-             BLOCKED: psi_mn5_synaptic_physiology, psi_mn5_spatial_transfer,
-             dalpha7_receptor_conductance. -->
-        """) + (
-            '<svg xmlns="http://www.w3.org/2000/svg" width="400" height="200">'
-            f'<text x="200" y="100" text-anchor="middle" font-size="14">'
-            'Figure 7: capability/gating diagram (pending)</text></svg>')
-
-
-def _stub_repro():
-    return textwrap.dedent("""\
-        <!-- Stub: Figure 8 (reproducibility/overview) pending hand-authoring.
-             Key facts: 1773 passed / 2 skipped (inherited, not freshly
-             reproduced); Feather checksum NOT recorded; staging commands
-             NOT DOCUMENTED; license/attribution VERIFY_REQUIRED. -->
-        """) + (
-            '<svg xmlns="http://www.w3.org/2000/svg" width="400" height="200">'
-            f'<text x="200" y="100" text-anchor="middle" font-size="14">'
-            'Figure 8: reproducibility overview (pending)</text></svg>')
+def figure_7_capability(cs):
+    """Generate Figure 7: Capability surface and authorization gates."""
+    width, height = 820, 680
+    svg = [
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" '
+        f'viewBox="0 0 {width} {height}" font-family="monospace">',
+        f'<style>'
+        f'.title {{ font-size: 20px; font-weight: bold; fill: #1e293b; }}'
+        f'.subtitle {{ font-size: 13px; fill: #475569; }}'
+        f'.hdr {{ font-size: 13px; font-weight: bold; fill: #0f172a; }}'
+        f'.cell {{ font-size: 12px; fill: #1e293b; }}'
+        f'.avail {{ fill: #dcfce7; stroke: #16a34a; }}'
+        f'.partial {{ fill: #fef9c3; stroke: #ca8a04; }}'
+        f'.blocked {{ fill: #fee2e2; stroke: #dc2626; }}'
+        f'.badge {{ font-size: 11px; font-weight: bold; }}'
+        f'.note {{ font-size: 11px; fill: #475569; }}'
+        f'.gate-label {{ font-size: 12px; font-weight: bold; fill: #dc2626; }}'
+        f'.stat {{ font-size: 13px; font-weight: bold; fill: #0f172a; }}'
+        f'.stat-label {{ font-size: 11px; fill: #475569; }}'
+        f'</style>',
+        f'<rect width="{width}" height="{height}" fill="#ffffff"/>',
+        f'<text x="{width/2}" y="32" text-anchor="middle" class="title">'
+        f'Figure 7. Model capability surface and authorization gates</text>',
+        f'<text x="{width/2}" y="54" text-anchor="middle" class="subtitle">'
+        f'Six capabilities enforced by model_framework.py (MN5Model.capabilities) and reduced_mn5.py (ReducedMN5Simulator.capabilities) [C-602, C-401, C-501]</text>',
+        f'<g transform="translate(80, 80)">',
+        f'<rect x="0" y="0" width="660" height="26" class="hdr" fill="#e2e8f0" stroke="#94a3b8"/>',
+        f'<text x="180" y="17" class="hdr">Capability</text>',
+        f'<text x="470" y="17" class="hdr">Status</text>',
+        f'<rect x="0" y="26" width="660" height="32" class="avail"/>',
+        f'<text x="180" y="48" class="cell">Anatomy (17/26 contacts, compartment labels, mesh geometry)</text>',
+        f'<rect x="470" y="34" width="72" height="20" class="avail" stroke="#16a34a"/>',
+        f'<text x="506" y="48" text-anchor="middle" class="badge" fill="#16a34a">AVAILABLE</text>',
+        f'<rect x="0" y="58" width="660" height="32" class="partial"/>',
+        f'<text x="180" y="80" class="cell">Reduced single-compartment MN5 (3 native inputs, no leak)</text>',
+        f'<rect x="470" y="66" width="72" height="20" stroke="#ca8a04" fill="#fef9c3"/>',
+        f'<text x="506" y="80" text-anchor="middle" class="badge" fill="#ca8a04">PARTIAL</text>',
+        f'<rect x="0" y="90" width="660" height="32" fill="#fee2e2" stroke="#dc2626"/>',
+        f'<text x="180" y="112" class="cell">PSI→MN5 synaptic physiology</text>',
+        f'<rect x="470" y="98" width="72" height="20" fill="#fee2e2" stroke="#dc2626"/>',
+        f'<text x="506" y="112" text-anchor="middle" class="badge" fill="#dc2626">BLOCKED</text>',
+        f'<text x="560" y="112" class="gate-label">Gate B</text>',
+        f'<rect x="0" y="122" width="660" height="32" fill="#fee2e2" stroke="#dc2626"/>',
+        f'<text x="180" y="144" class="cell">PSI→MN5 spatial voltage transfer</text>',
+        f'<rect x="470" y="130" width="72" height="20" fill="#fee2e2" stroke="#dc2626"/>',
+        f'<text x="506" y="144" text-anchor="middle" class="badge" fill="#dc2626">BLOCKED</text>',
+        f'<text x="560" y="144" class="gate-label">Gate A</text>',
+        f'<rect x="0" y="154" width="660" height="32" fill="#fee2e2" stroke="#dc2626"/>',
+        f'<text x="180" y="176" class="cell">Dα7 receptor conductance</text>',
+        f'<rect x="470" y="162" width="72" height="20" fill="#fee2e2" stroke="#dc2626"/>',
+        f'<text x="506" y="176" text-anchor="middle" class="badge" fill="#dc2626">BLOCKED</text>',
+        f'<text x="560" y="176" class="gate-label">Gate B</text>',
+        f'<rect x="0" y="186" width="660" height="32" class="partial" fill="#fef9c3" stroke="#ca8a04"/>',
+        f'<text x="180" y="208" class="cell">GFS electrical coupling</text>',
+        f'<rect x="470" y="194" width="72" height="20" stroke="#ca8a04" fill="#fef9c3"/>',
+        f'<text x="506" y="208" text-anchor="middle" class="badge" fill="#ca8a04">PARTIAL</text>',
+        f'</g>',
+        f'<g transform="translate(80, 240)">',
+        f'<rect x="0" y="0" width="260" height="70" fill="#fef2f2" stroke="#fecaca" rx="6"/>',
+        f'<text x="130" y="18" text-anchor="middle" class="gate-label">Gate A: PSI→MN5 spatial voltage transfer</text>',
+        f'<text x="130" y="36" text-anchor="middle" class="note">NOT AUTHORIZED — no native measurement</text>',
+        f'<text x="130" y="54" text-anchor="middle" class="note">require_spatial_transfer raises</text>',
+        f'<rect x="290" y="0" width="260" height="70" fill="#fef2f2" stroke="#fecaca" rx="6"/>',
+        f'<text x="420" y="18" text-anchor="middle" class="gate-label">Gate B: Dα7 receptor conductance</text>',
+        f'<text x="420" y="36" text-anchor="middle" class="note">NOT AUTHORIZED — no native measurement</text>',
+        f'<text x="420" y="54" text-anchor="middle" class="note">require_dalpha7_gate raises</text>',
+        f'</g>',
+        f'<g transform="translate(80, 340)">',
+        f'<text x="0" y="22" class="hdr">Frozen parameter inventory (model_input_freeze.csv, 108 parameters) [C-301]</text>',
+        f'<rect x="0" y="28" width="140" height="48" class="avail" stroke="#16a34a" rx="6"/>',
+        f'<text x="70" y="50" text-anchor="middle" class="stat">40</text>',
+        f'<text x="70" y="68" text-anchor="middle" class="stat-label">SAFE to use</text>',
+        f'<rect x="150" y="28" width="140" height="48" stroke="#ca8a04" fill="#fef9c3" rx="6"/>',
+        f'<text x="220" y="50" text-anchor="middle" class="stat">31</text>',
+        f'<text x="220" y="68" text-anchor="middle" class="stat-label">Assumption-only</text>',
+        f'<rect x="300" y="28" width="140" height="48" stroke="#dc2626" fill="#fee2e2" rx="6"/>',
+        f'<text x="370" y="50" text-anchor="middle" class="stat">37</text>',
+        f'<text x="370" y="68" text-anchor="middle" class="stat-label">Blocked (never used)</text>',
+        f'<rect x="450" y="28" width="140" height="48" stroke="#dc2626" fill="#ffebee" rx="6"/>',
+        f'<text x="520" y="50" text-anchor="middle" class="stat">15</text>',
+        f'<text x="520" y="68" text-anchor="middle" class="stat-label">Unresolved conflicts</text>',
+        f'<rect x="600" y="28" width="140" height="48" stroke="#64748b" fill="#f1f5f9" stroke-dasharray="4 2" rx="6"/>',
+        f'<text x="670" y="50" text-anchor="middle" class="stat">0</text>',
+        f'<text x="670" y="68" text-anchor="middle" class="stat-label">Promoted to native</text>',
+        f'</g>',
+        f'<g transform="translate(80, 440)">',
+        f'<rect x="0" y="0" width="660" height="62" fill="#fff5f5" stroke="#fecaca" rx="6"/>',
+        f'<text x="20" y="20" class="note">Blocked quantities never inserted (examples from model_input_freeze.csv):</text>',
+        f'<text x="20" y="40" class="note">MN5 Ra, MN5 Rm, PSI→MN5 synaptic conductance, native Dα7 conductance, contact→soma electrotonic distance [C-201, C-303, C-401, C-501]</text>',
+        f'<text x="20" y="60" class="note">These raise BlockedParameterError when requested — they do not default, estimate, or degrade silently.</text>',
+        f'</g>',
+        f'<text x="80" y="660" class="note">Source: model_framework.py:669-676, reduced_mn5.py:262-272, paper/tables/FIGURE_TABLE_R3_capability.md</text>',
+        f'</svg>'
+    ]
+    return "\n".join(svg)
 
 
 if __name__ == "__main__":

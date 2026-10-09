@@ -40,7 +40,7 @@ The methodological contribution is a **provenance-aware framework** that prevent
 - **Gate A — PSI→MN5 spatial voltage transfer: NOT AUTHORIZED.** `require_biological_transfer_authorization()` and `require_spatial_transfer()` both always raise; no code path may claim a measured native transfer `[C-201, C-401]`.
 - **Gate B — Dα7 conductance: NOT AUTHORIZED.** `require_dalpha7_gate()` always raises; `Dalpha7Interface.conductance()` calls it `[C-501]`.
 
-This is not a stylistic choice but a scientific one: MN5-specific passive parameters are not uniquely determinable from available evidence — two whole-cell measurements constrain three unknowns (Cm, Rm/g_pas, Ra), no Drosophila axial resistivity exists, the recovered skeleton lacks a soma node, and the somatic capacitance is discrepant by ~3× `[C-201, C-303, C-401]`.
+This is not a stylistic choice but a scientific one: MN5-specific passive parameters are not uniquely determinable from available evidence — two whole-cell measurements constrain three unknowns (Cm, Rm/g_pas, Ra), no MN5-specific axial resistivity exists (the only measured Drosophila motor-neuron Ra is larval aCC, 212.47 ± 3.69 Ω·cm), the recovered skeleton lacks a soma node, and the somatic capacitance is discrepant by ~3× `[C-201, C-303, C-401]`.
 
 > **Permitted**: "The framework does not infer biological parameters from desired model outputs."
 

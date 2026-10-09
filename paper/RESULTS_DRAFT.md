@@ -74,7 +74,7 @@ A straight-line soma distance is **not** an electrotonic distance `[C-201]`. The
 
 ## 5. Electrophysiological evidence and model-input provenance
 
-Native MN5 physiology is reported with provenance class `NEM` (native experimental measurement) and `LDP` (literature-derived). The strongest admissible native MN5 values are: resting potential **−67.8 ± 5.5 mV** (n=13), spike threshold **−24.1 ± 8.2 mV** (n=11), action-potential amplitude **+45.5 ± 8.6 mV** (n=13), AP time-to-peak **1.20 ± 0.33 ms**, AP 50% width **0.92 ± 0.25 ms**, and input resistance **102 ± 12 MΩ** (n=22) / **97 ± 31 MΩ** (n=52) — the two input-resistance sets are consistent `[C-301, C-302]`. Provenance: Ryglewski, Kilo & Duch 2014 `[C-301, C-302]`.
+Native MN5 physiology is reported with provenance class `NEM` (native experimental measurement) and `LDP` (literature-derived). The strongest admissible native MN5 values are: resting potential **−67.8 ± 5.5 mV** (n=13), spike threshold **−24.1 ± 8.2 mV** (n=11), action-potential amplitude **+45.5 ± 8.6 mV** (n=13), AP time-to-peak **1.20 ± 0.33 ms**, AP 50% width **0.92 ± 0.25 ms**, and input resistance **102 ± 12 MΩ** (n=22) / **97 ± 31 MΩ** (n=52) — the two input-resistance sets are consistent `[C-301, C-302]`. Provenance: resting potential, threshold, AP from Ryglewski, Kilo & Duch 2014 `[C-301]`; input resistance n=22 from Fayyazuddin et al. 2006 `[C-302]`; input resistance n=52 from Ryglewski, Kilo & Duch 2014 `[C-302]`.
 
 > **Permitted**: "Ryglewski, Kilo & Duch 2014 reported native MN5 resting potential −67.8 ± 5.5 mV (n=13), spike threshold −24.1 ± 8.2 mV (n=11), and AP amplitude +45.5 ± 8.6 mV (n=13); used only as measured constraints on a reduced model." `[C-301]`
 
@@ -130,7 +130,7 @@ The two-gate constrained analysis runs **15,528 rows** across a deterministic pa
 
 The resolving experiment is a dual-site recording (somatic whole-cell plus focal dendritic/axonal patch at the identified contact) during direct PSI stimulation; Yang et al. 2016's ASAP2f imaging is the realistic first-pass fallback (`missing_evidence.md` M-02) `[C-401]`.
 
-**Gate B — Dα7 biological conductance: NOT AUTHORIZED.** No native Dα7 conductance, density, kinetics, or reversal potential at PSI→MN5 is measured `[C-501]`. The Dα7 recombinant channel-level data (Lansdell et al. 2012: EC50 6.7 ± 1.7 µM ACh, Hill 1.0 ± 0.3, n=4, max current 86 nA at −60 mV) supply **channel-level constraints only** and are **not** relabeled as native MN5 conductance `[C-501, C-503]`. Dα7 is not imaged at PSI terminals or MN5 axons in any primary source: localization is reported only as "NOT REPORTED" for both `[C-502]`. The Dα7 effective-conductance sweep is a model-derived sensitivity analysis `[C-503]`.
+**Gate B — Dα7 biological conductance: NOT AUTHORIZED.** No native Dα7 conductance, density, kinetics, or reversal potential at PSI→MN5 is measured `[C-501]`. Dα7 is enriched at GF dendrites (10–100×) and binds α-bungarotoxin in native tissue, but is **not reported** at PSI terminals or MN5 axons in any primary source `[C-502]`. The Dα7 recombinant channel-level data (Lansdell et al. 2012: EC50 6.7 ± 1.7 µM ACh, Hill 1.0 ± 0.3, n=4, max current 86 nA at −60 mV) supply **channel-level constraints only** and are **not** relabeled as native MN5 conductance `[C-501, C-503]`. The Dα7 effective-conductance sweep is a model-derived sensitivity analysis `[C-503]`.
 
 > **Permitted**: "No native PSI→MN5 Dα7 conductance exists in the reviewed evidence; recombinant Dα7 constraints supply channel-level precedent only." `[C-501]`
 
