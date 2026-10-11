@@ -174,7 +174,7 @@ The **reported** full-suite figure of **1,773 passed and 2 skipped** is inherite
 - `tests/test_parameter_adoption.py` — no blocked parameter is admitted as a value
 - `tests/test_psi_mn5_optical_experiment_design_audit.py` / `tests/test_psi_mn5_reversal_experiment_audit.py` — genetic-access / reversal-potential absences `[C-101, C-303, C-401, C-501]`
 
-> **Reproducibility limitations**: the synapse-pair Feather has **no recorded expected checksum**; the download/staging commands are **not documented**; and external-data license redistribution and author attribution remain **VERIFY_REQUIRED** per `research_archive/EXTERNAL_DATA_REPRODUCIBILITY.md` `[C-701]`. The two cached SWCs used by the sensitivity script are pinned by SHA-256 in the script itself `[C-601]`.
+> **Reproducibility limitations**: a SHA-256 digest for the synapse-pair Feather is recorded and verified against the local staging copy, and download/staging commands are documented in `research_archive/EXTERNAL_DATA_REPRODUCIBILITY.md` `[C-701]`. The digest is not an independently published source checksum, so future remote-byte identity is not independently established; external-data license redistribution and author attribution remain **VERIFY_REQUIRED**. The two cached SWCs used by the sensitivity script are pinned by SHA-256 in the script itself `[C-601]`.
 
 ---
 
