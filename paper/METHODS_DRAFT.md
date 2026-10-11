@@ -40,7 +40,7 @@ MaleCNS `.ngmesh` files are parsed by a reverse-engineered, byte-budget-validate
 - **Offset 4**: N × `float32` (x, y, z) — raw vertices
 - **After vertices**: 3F × `uint32` — triangle indices (face count F is implied by file size, not stored)
 
-The parser **rejects** any file where the consumption budget `4 + 12·N + 12·F` does not exactly reproduce the file size, where any triangle index falls outside `[0, N−1]`, or where the size is inconsistent with the float32/uint32 record structure `[C-204]`. Vertices are raw **nanometres** in Male CNS EM coordinate space `[C-202]`. A SHA-256 digest is recorded per mesh, but the synapse-pair Feather has **no recorded expected checksum** (documented limitation) `[C-701]`.
+The parser **rejects** any file where the consumption budget `4 + 12·N + 12·F` does not exactly reproduce the file size, where any triangle index falls outside `[0, N−1]`, or where the size is inconsistent with the float32/uint32 record structure `[C-204]`. Vertices are raw **nanometres** in Male CNS EM coordinate space `[C-202]`. A SHA-256 digest is recorded per mesh. For the synapse-pair Feather, a digest is recorded for the local staged file, but no independent publisher-provided expected checksum was identified `[C-701]`.
 
 Mesh–SWC registration is **confirmed numerically**: `check_male_mesh_matches_swc` asserts the SWC bounding box scaled by 8 (`MESH_TO_SWC_SCALE = 8.0`) sits within the mesh bounding box (raw units), i.e. `swc_voxel × 8 = mesh_nm` `[C-202]`. The mirrored MaleCNS SWC set (1 nm units) fails this check and is therefore never substitutable `[C-202]`.
 
