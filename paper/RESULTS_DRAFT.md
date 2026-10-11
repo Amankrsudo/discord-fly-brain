@@ -152,9 +152,9 @@ Gates are described as **evidence constraints** — the absence of qualifying pr
 
 > **Permitted**: "The tests verify code paths against stated assertions and fixtures. This is software validation and is not empirical biological validation." `[C-602]`
 
-**Reproducibility**: the MaleCNS inputs consumed here carry **no recorded expected checksum**, so exact-tree-snapshot reproducibility is partially constrained `[C-701]`. The retrieval and analysis are scripted (`retrieve_malecns_compartment_post.py`, `analyze_mn5_two_gate_constraint_model.py`) and the audited contact artifact is exported at `research/artifacts/malecns_compartment_post_psi_mn5.csv`, but the Feather download is a truncated/unpinned snapshot `[C-701]`.
+**Reproducibility**: a SHA-256 checksum for the Feather input is now recorded in `data/README.md` and `EXTERNAL_DATA_REPRODUCIBILITY.md`, computed from and verified against the local staging copy; staging commands are documented `[C-701]`. This verifies the staged file against the recorded local digest, but does not independently establish a publisher-provided checksum or prove that a future remote download is byte-identical. The audited contact artifact is exported at `research/artifacts/malecns_compartment_post_psi_mn5.csv` `[C-701]`.
 
-> **Limitation**: external-data reproducibility items are documented in `EXTERNAL_DATA_REPRODUCIBILITY.md` and remain VERIFY_REQUIRED for checksumming and staging commands `[C-701]`.
+> **Limitation**: the recorded digest is based on the local staged Feather, not an independently published source checksum; redistribution/license and attribution questions remain VERIFY_REQUIRED `[C-701]`.
 
 *Figure/table proposal*:
 - **Figure 8** — Validation/reproducibility overview. *Source*: `validation/full_suite_report.md`. *Exists*: No.
