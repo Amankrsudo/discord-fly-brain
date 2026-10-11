@@ -1,0 +1,111 @@
+name: Research branch validation
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: ["review/scientific-claim-corrections"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: research-validation-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements.txt
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt pytest numpy scipy pandas
+      - name: Run MN5 provenance and gate tests
+        run: |
+          python -m pytest -q \
+            tests/test_mn5_two_gate_constraint_model.py \
+            tests/test_reduced_mn5.py \
+            tests/test_model_framework.py \
+            tests/test_parameter_adoption.py \
+            tests/test_malecns_compartment.py \
+            tests/test_malecns_contact_path.py \
+            tests/test_mn5_spatial_transfer_gate_review.py
+      - name: Run full test suite
+        run: python -m pytest -q --tb=short
+      - name: Check whitespace errors
+        run: git diff --check
+
+  manuscript-artifacts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install figure-generator dependency
+        run: python -m pip install numpy
+      - name: Regenerate manuscript figures and tables
+        run: python paper/scripts/generate_figures_tables.py
+      - name: Check generated package for whitespace errors
+        run: git diff --check
+      - name: Validate manuscript source, references, and scientific gates
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import re
+
+          root = Path(".")
+          required = [
+              "paper/ABSTRACT_DRAFT.md",
+              "paper/INTRODUCTION_DRAFT.md",
+              "paper/METHODS_DRAFT.md",
+              "paper/RESULTS_DRAFT.md",
+              "paper/DISCUSSION_DRAFT.md",
+              "paper/CLAIM_EVIDENCE_MAP.md",
+              "paper/references.bib",
+          ]
+          missing = [p for p in required if not (root / p).is_file()]
+          if missing:
+              raise SystemExit(f"Missing manuscript sources: {missing}")
+
+          bib = (root / "paper/references.bib").read_text(encoding="utf-8")
+          entries = re.split(r"(?=^@(?:article|misc|book|inproceedings)\{)", bib, flags=re.M)
+          entries = [e for e in entries if e.startswith("@")]
+          keys = [re.match(r"^@\w+\{([^,]+)", e).group(1) for e in entries]
+          if len(keys) != len(set(keys)):
+              raise SystemExit("Duplicate BibTeX keys")
+          for e in entries:
+              if e.count("{") != e.count("}"):
+                  raise SystemExit(f"Unbalanced braces in {e.splitlines()[0]}")
+              if not e.rstrip().endswith("}"):
+                  raise SystemExit(f"Unterminated BibTeX entry: {e.splitlines()[0]}")
+
+          results = (root / "paper/RESULTS_DRAFT.md").read_text(encoding="utf-8")
+          methods = (root / "paper/METHODS_DRAFT.md").read_text(encoding="utf-8")
+          evidence = (root / "research/da7_evidence.md").read_text(encoding="utf-8")
+          if "Gate A — PSI→MN5 spatial voltage transfer: NOT AUTHORIZED" not in results:
+              raise SystemExit("Spatial-transfer gate text missing/changed")
+          if "Gate B — Dα7 biological conductance: NOT AUTHORIZED" not in results:
+              raise SystemExit("Dα7 gate text missing/changed")
+          if "not a native contact-to-soma measurement" not in results:
+              raise SystemExit("Model-derived bridge qualification missing")
+          if "no established fly-specific functional equivalent" not in methods:
+              raise SystemExit("Kir7.1 orthology qualification missing from Methods")
+          if "absence of an established" not in evidence:
+              raise SystemExit("Kir7.1 evidence qualification missing")
+          print(f"Manuscript sources present; {len(keys)} unique BibTeX entries balanced; both gates and wording guardrails verified.")
+          PY
