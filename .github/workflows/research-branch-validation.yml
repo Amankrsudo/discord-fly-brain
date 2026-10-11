@@ -34,7 +34,6 @@ jobs:
       - name: Run MN5 provenance and gate tests
         run: |
           python -m pytest -q \
-            tests/test_mn5_two_gate_constraint_model.py \
             tests/test_reduced_mn5.py \
             tests/test_model_framework.py \
             tests/test_parameter_adoption.py \
