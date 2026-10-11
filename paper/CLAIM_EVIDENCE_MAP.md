@@ -226,13 +226,13 @@
 
 ## Claim Group 7 — Reproducibility and external data
 
-### C-701 | Pinned MaleCNS snapshot is not checksummed
-- **Claim**: The MaleCNS inputs consumed here are not accompanied by a recorded expected checksum, so exact tree snapshot reproducibility is partially constrained.
+### C-701 | MaleCNS checksum provenance and reproducibility limits
+- **Claim**: A SHA-256 digest for the local staged Feather input is recorded, but no independent publisher-provided expected checksum was identified; the digest supports local-file identity, not independent verification of future remote downloads.
 - **Evidence category**: `MA` (limitation documentation)
 - **Exact source**: `research/final_anatomy_audit.md` (Block D / Block C provenance note); `paper/claim_evidence_matrix.csv` (C-001 status).
 - **Establishes**: The reproducibility limitation is documented.
 - **Does NOT establish**: A fully pinned snapshot.
-- **Permitted wording**: "Always report the minimum-confidence threshold; raw Feather has no recorded expected checksum."
+- **Permitted wording**: "Always report the minimum-confidence threshold. A SHA-256 digest is recorded for the local staged Feather, but no independent publisher-provided expected checksum was identified."
 - **Required citations**: MaleCNS v1.0 release (Berg et al. 2026).
 - **Status**: **Qualified (open limitation)**
 
