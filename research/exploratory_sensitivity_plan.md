@@ -125,3 +125,5 @@ conductance, which remains BLOCKED. Calibration always runs with Dα7 disabled.
 - It does not open either gate. The cable-mode attenuation is a
   MODEL-DERIVED ESTIMATE and the experimental spatial-transfer gate remains
   closed.
+
+**Exploratory-model authorization labels:** this sensitivity analysis is `MODEL-AUTHORIZED / ANATOMY + LITERATURE CONSTRAINED` only for conditional, assumption-dependent model calculations. This label does not authorize native biological inference; PSI→MN5 spatial voltage transfer and native Dα7 conductance remain **NOT AUTHORIZED**.
