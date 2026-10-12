@@ -2,27 +2,27 @@
 
 **Status: CONDITIONAL — NOT READY FOR JOURNAL SUBMISSION**  
 **Last reconciled:** 2026-10-12  
-**Branch:** `review/scientific-claim-corrections`  
-**Pull request:** https://github.com/Amankrsudo/discord-fly-brain/pull/1
+**Branch under current test-fix validation:** `fix/broad-suite-regressions`  
+**Test-fix pull request:** https://github.com/Amankrsudo/discord-fly-brain/pull/2
 
-This report distinguishes historical audit statements from current evidence. A successful review-PDF build and focused tests do not establish final editorial readiness, biological validation, or a green full test suite.
+This report distinguishes historical audit statements from current evidence. A successful review-PDF build and passing software tests do not establish final editorial readiness or biological validation.
 
 ## 1. Current deliverables and evidence
 
 The review-only manuscript source is `paper/REVIEW_MANUSCRIPT.md`; the renderer is `paper/scripts/build_review_pdf.py`. The GitHub Actions workflow builds a PDF and HTML artifact labelled **REVIEW ONLY — NOT FOR SUBMISSION**.
 
-The latest confirmed review-only PDF was built from source commit `119ac5379af58427a23810fc3bce941e78b824bf` in Actions run [38209499640](https://github.com/Amankrsudo/discord-fly-brain/actions/runs/38209499640). Both jobs passed. The PDF is a review artifact only; it predates the citation corrections committed afterward (`6fdd8a7` and `ee2dc83`) and therefore must be rebuilt before relying on it as the current manuscript snapshot. The earlier visually inspected 30-page build is not the final candidate. Preserve the source commit and artifact together when the next build is available.
+The latest confirmed review-only PDF build is from Actions run [38213618643](https://github.com/Amankrsudo/discord-fly-brain/actions/runs/38213618643), commit `1b76580690f67fac78c4bf6ef3893cf4ff00e4bd`. The manuscript-artifacts job passed, including figure/table generation, review-PDF generation, PDF checks, and manuscript/reference/scientific-gate validation. Keep the exact source commit and its artifact together; this review PDF is not a submission-ready package.
 
-## 2. Current CI status — do not overstate
+## 2. Current CI status — exact run
 
-For Actions run `38209499640` on commit `119ac5379af58427a23810fc3bce941e78b824bf`:
+For Actions run [38213618643](https://github.com/Amankrsudo/discord-fly-brain/actions/runs/38213618643), commit `1b76580690f67fac78c4bf6ef3893cf4ff00e4bd`:
 
-- **manuscript-artifacts: PASS.** Figure/table generation, whitespace check, review-PDF build, PDF text/page checks, and manuscript/reference/gate checks completed successfully for that commit.
-- **focused MN5 provenance/gate tests: PASS.** The required focused step completed successfully.
-- **broad test-suite audit: 1,637 passed, 13 failed, 39 skipped, 3 errors** in 232.88 seconds. The failures/errors include missing research documents (`asset_evidence_resolution.md`, `OVERNIGHT_CHECKPOINT.md`, `research_done.md`), an asset-inventory/hash drift, exploratory-model wording/parameter-count expectations, and absent externally staged SWCs (`/tmp/em_801970.swc`). This is a real non-green broad-suite result, not a pass. The workflow's broad-suite step is configured `continue-on-error`, so the job can still report success despite this audit failure.
-- **Current citation corrections are newer than this run** (`6fdd8a7` and `ee2dc83`) and have not yet been validated or rebuilt by Actions at the time of this report update.
+- **manuscript-artifacts: PASS.** Figure/table generation, whitespace check, review-PDF build, PDF text/page checks, and manuscript/reference/gate checks completed successfully.
+- **focused MN5 provenance/gate tests: PASS — 172 passed, 16 skipped.**
+- **broad test-suite audit: 1,646 passed, 44 skipped, 0 failed, 0 errors** in 235.09 seconds.
+- **Whitespace/diff check: PASS.** Both workflow jobs completed successfully.
 
-The review-PDF and focused-test results apply only to the exact source commit named above. Do not present historical counts (including 1,773 broad-suite passes with two skips) as the current suite result.
+The broad-suite audit step is configured `continue-on-error` in the workflow, so future reviews should continue to inspect the pytest summary rather than relying only on the overall Actions conclusion. The 44 skips are not failures; some external-SWC-dependent tests intentionally skip when the required staged SWC files are absent. A skipped test is not evidence that its data-dependent analysis passed.
 
 ## 3. Editorial blockers before submission
 
@@ -30,7 +30,7 @@ The assembled PDF is a review layout, not an eNeuro-ready submission package. Th
 
 - [ ] Replace author-name/order and affiliation placeholders; confirm corresponding author and contact details.
 - [ ] Confirm acknowledgements, funding, competing interests, author contributions, and data/code availability statements.
-- [ ] Rebuild the review PDF after the latest reference corrections. Three mismatched titles were corrected in `paper/references.bib` (Ryglewski & Duch 2009, Fayyazuddin et al. 2006, Yang et al. 2016), and the citation audit was updated; these changes still need a fresh Actions build and final in-text/orphan-reference reconciliation.
+- [ ] Perform final in-text/orphan-reference reconciliation against the current rebuilt review PDF. The current Actions run builds successfully, but a passing build alone does not establish that every citation and reference has been manually reconciled.
 - [ ] Resolve remaining uncertain metadata and confirm the preferred MaleCNS dataset citation, project authorship/release metadata, and final attribution. Do not claim the bibliography is fully verified.
 - [ ] Review MaleCNS CC-BY attribution and the applicable data redistribution conditions; ensure the final attribution matches the source and journal requirements.
 - [ ] Confirm figure legends, image quality, figure placement, and journal-specific formatting in the final submission layout.
@@ -58,8 +58,8 @@ Earlier statements that “all VERIFY_REQUIRED items are resolved” and that th
 
 ## 6. Decision
 
-**Current decision: continue editorial review; do not submit this PDF.** Primary-record checks caught three materially incorrect bibliography titles, now corrected on the draft branch, and the audit records what remains unverified. The broad suite currently has 13 failures and 3 errors in the last confirmed run; focused tests and the review-artifact build passed on the preceding commit. The latest citation changes still need CI and PDF regeneration. Author metadata, dataset attribution, final journal layout, and exact-candidate validation remain open. This report does not authorize opening either scientific gate or resolving any biological conflict.
+**Current decision: continue editorial review; do not submit this PDF.** The latest confirmed CI run has a clean broad-suite result (1,646 passed, 44 skipped, no failures/errors) and a successful review-only PDF build. This establishes software/build status for the exact commit only; it does not close editorial blockers. Author metadata, acknowledgements/funding/disclosure statements, final citation reconciliation, dataset attribution/licensing review, final journal layout, and exact-candidate human inspection remain open. This report does not authorize opening either scientific gate or resolving any biological conflict.
 
 ---
 
-This status reconciles the earlier `SUBMISSION_READINESS_REPORT.md` with the review-build record and the observed Actions job results as of 2026-10-12.
+This status was reconciled against Actions run `38213618643` on 2026-10-12. Historical failure counts above are superseded by the latest run; retain them only in the Actions history, not as current status.
