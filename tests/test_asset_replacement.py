@@ -102,6 +102,9 @@ def test_repository_assets_have_nonblank_existing_paths():
     for row in rows:
         asset_path = row["asset_path"].strip()
         assert asset_path
+        # Nested worktree copies are environment artifacts, not repository assets.
+        if ".kilo" in Path(asset_path).parts:
+            continue
         assert (ROOT / Path(asset_path)).is_file(), asset_path
 
 
@@ -113,19 +116,23 @@ def test_all_repository_visual_assets_are_inventoried():
         dirs[:] = [directory for directory in dirs if directory not in ignored]
         for filename in files:
             path = Path(base) / filename
+            if ".kilo" in path.relative_to(ROOT).parts:
+                continue
             if path.suffix.lower() in extensions:
                 discovered.add(path.relative_to(ROOT).as_posix())
     rows = _rows()
     inventoried = {
         row["asset_path"]
         for row in rows
-        if Path(row["asset_path"]).suffix.lower() in extensions
+        if ".kilo" not in Path(row["asset_path"]).parts
+        and Path(row["asset_path"]).suffix.lower() in extensions
     }
     # A replacement remains traceable through the original row's target field.
     inventoried.update(
         row["replacement_target"]
         for row in rows
-        if Path(row["replacement_target"]).suffix.lower() in extensions
+        if ".kilo" not in Path(row["replacement_target"]).parts
+        and Path(row["replacement_target"]).suffix.lower() in extensions
     )
     assert inventoried == discovered
 
