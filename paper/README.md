@@ -29,7 +29,9 @@ The public MaleCNS source and known local inputs/outputs are described in [data/
 - `MANUSCRIPT_READING_GUIDE.md` — beginner-friendly companion (1123 lines)
 - `MANUSCRIPT_READING_CHECKLIST.md` — reviewer checklist
 - `SUBMISSION_READINESS_REPORT.md` — status tracking (historical audit; reconcile before relying on submission claims)
-- `REVIEW_BUILD_BLOCKERS.md` — current branch audit of why a review-only PDF was not built, plus the requirements for a traceable build
+- `REVIEW_MANUSCRIPT.md` — assembled review-only manuscript source with visible author placeholders, four tables, eight figures, and a generated bibliography insertion point
+- `scripts/build_review_pdf.py` — reproducible HTML/PDF builder for editorial review only; output is explicitly NOT FOR SUBMISSION
+- `REVIEW_BUILD_BLOCKERS.md` — build pipeline status, limits, and post-build inspection checklist
 - `references.bib` — 18 entries with verified DOIs
 - `FIGURE_TABLE_MANIFEST.md` — figure/table registry with sources
 - `PUBLICATION_MANIFEST.csv` — machine-readable release classification
