@@ -28,7 +28,8 @@ The public MaleCNS source and known local inputs/outputs are described in [data/
 - `MANUSCRIPT_CONSISTENCY_AUDIT.md` — cross-document audit (DISC-01 resolved)
 - `MANUSCRIPT_READING_GUIDE.md` — beginner-friendly companion (1123 lines)
 - `MANUSCRIPT_READING_CHECKLIST.md` — reviewer checklist
-- `SUBMISSION_READINESS_REPORT.md` — status tracking
+- `SUBMISSION_READINESS_REPORT.md` — status tracking (historical audit; reconcile before relying on submission claims)
+- `REVIEW_BUILD_BLOCKERS.md` — current branch audit of why a review-only PDF was not built, plus the requirements for a traceable build
 - `references.bib` — 18 entries with verified DOIs
 - `FIGURE_TABLE_MANIFEST.md` — figure/table registry with sources
 - `PUBLICATION_MANIFEST.csv` — machine-readable release classification
