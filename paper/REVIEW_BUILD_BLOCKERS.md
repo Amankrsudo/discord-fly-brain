@@ -1,9 +1,7 @@
 # Review-only Manuscript PDF — Build and Inspection Status
 
-**Status:** REVIEW PDF BUILT AND VISUALLY INSPECTED — editorial review only, not submission-ready.
-**Source branch:** `review/scientific-claim-corrections`.
-**Source commit:** `a56875e8e85e73429a50f1a360cd72067ed249c8`.
-**CI run:** [GitHub Actions run 38205908211](https://github.com/Amankrsudo/discord-fly-brain/actions/runs/38205908211).
+**Status:** REVIEW PDF BUILT AND AUTOMATED CHECKS PASS — editorial review only, not submission-ready. The visual inspection below documents the earlier 30-page build; the current build was regenerated in [Actions run 38213618643](https://github.com/Amankrsudo/discord-fly-brain/actions/runs/38213618643), commit `1b76580690f67fac78c4bf6ef3893cf4ff00e4bd`.
+**Current test status:** focused MN5 stage 172 passed / 16 skipped; broad-suite audit 1,646 passed / 44 skipped / 0 failed / 0 errors. External-SWC-dependent tests can skip when inputs are absent.
 
 ## Implemented
 
