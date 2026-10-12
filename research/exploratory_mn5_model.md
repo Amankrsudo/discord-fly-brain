@@ -260,3 +260,5 @@ This model is not a measurement of MN5 spatial voltage transfer or Dα7 conducta
 
 
 Clarification: no anatomically reconstructed contact-to-soma path exists.
+
+Clarification: the available somatic EPSP is not an experimental voltage-transfer measurement.
