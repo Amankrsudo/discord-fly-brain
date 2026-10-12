@@ -11,21 +11,18 @@ This report distinguishes historical audit statements from current evidence. A s
 
 The review-only manuscript source is `paper/REVIEW_MANUSCRIPT.md`; the renderer is `paper/scripts/build_review_pdf.py`. The GitHub Actions workflow builds a PDF and HTML artifact labelled **REVIEW ONLY — NOT FOR SUBMISSION**.
 
-The latest inspected artifact was rebuilt from source commit `7ad7c05be52ba75ada9ba861272aae45244556e4` after correcting stale validation and provenance wording. It is 30 pages (A4; 235,802 bytes). Automated PDF text checks passed for the review-only warning, both closed authorization gates, visible author placeholder, updated checksum-provenance wording, historical test-count qualification, and absence of the superseded stale claims. The PDF text was extracted locally and checked; the eight-figure rendering was visually inspected in the preceding build, while this latest build's CI text/page checks passed.
-
-Actions run: https://github.com/Amankrsudo/discord-fly-brain/actions/runs/38206908260  
-Artifact name: `review-only-manuscript-pdf`; artifact ID `11727991324`; digest `sha256:174f7d034f840311784ee905202b43a68f0b617e791a315dcadcad23d0d9c765`; expiry 2026-10-26. Artifact retention is temporary, so preserve a verified copy if needed.
+The latest confirmed review-only PDF was built from source commit `119ac5379af58427a23810fc3bce941e78b824bf` in Actions run [38209499640](https://github.com/Amankrsudo/discord-fly-brain/actions/runs/38209499640). Both jobs passed. The PDF is a review artifact only; it predates the citation corrections committed afterward (`6fdd8a7` and `ee2dc83`) and therefore must be rebuilt before relying on it as the current manuscript snapshot. The earlier visually inspected 30-page build is not the final candidate. Preserve the source commit and artifact together when the next build is available.
 
 ## 2. Current CI status — do not overstate
 
-For Actions run `38205908211`:
+For Actions run `38209499640` on commit `119ac5379af58427a23810fc3bce941e78b824bf`:
 
-- **manuscript-artifacts: PASS.** Figure/table generation, whitespace check, review-PDF build, PDF text/page checks, and manuscript/reference/gate checks completed successfully.
+- **manuscript-artifacts: PASS.** Figure/table generation, whitespace check, review-PDF build, PDF text/page checks, and manuscript/reference/gate checks completed successfully for that commit.
 - **focused MN5 provenance/gate tests: PASS.** The required focused step completed successfully.
-- **broad test-suite audit: CANCELLED in this run.** The job was cancelled while that non-blocking step was running; this run does not establish a full-suite pass or failure.
-- Therefore, **the complete workflow is not a clean all-jobs pass**. The broad-suite audit is explicitly configured as non-blocking because known unrelated baseline problems include missing research documents, asset-inventory drift, and externally staged SWCs. Report any later broad-suite result separately from the focused test result.
+- **broad test-suite audit: 1,637 passed, 13 failed, 39 skipped, 3 errors** in 232.88 seconds. The failures/errors include missing research documents (`asset_evidence_resolution.md`, `OVERNIGHT_CHECKPOINT.md`, `research_done.md`), an asset-inventory/hash drift, exploratory-model wording/parameter-count expectations, and absent externally staged SWCs (`/tmp/em_801970.swc`). This is a real non-green broad-suite result, not a pass. The workflow's broad-suite step is configured `continue-on-error`, so the job can still report success despite this audit failure.
+- **Current citation corrections are newer than this run** (`6fdd8a7` and `ee2dc83`) and have not yet been validated or rebuilt by Actions at the time of this report update.
 
-Historical counts in earlier reports (including 995 biological-brain tests and 1,773 broad-suite passes with two skips) are historical claims, not fresh evidence from this workflow run. Do not present them as the current full-suite result.
+The review-PDF and focused-test results apply only to the exact source commit named above. Do not present historical counts (including 1,773 broad-suite passes with two skips) as the current suite result.
 
 ## 3. Editorial blockers before submission
 
@@ -33,7 +30,8 @@ The assembled PDF is a review layout, not an eNeuro-ready submission package. Th
 
 - [ ] Replace author-name/order and affiliation placeholders; confirm corresponding author and contact details.
 - [ ] Confirm acknowledgements, funding, competing interests, author contributions, and data/code availability statements.
-- [ ] Review the machine-rendered bibliography against publisher records and the final in-text citations. Resolve uncited/orphaned references and incomplete or uncertain metadata; do not claim these are all resolved without a fresh citation audit.
+- [ ] Rebuild the review PDF after the latest reference corrections. Three mismatched titles were corrected in `paper/references.bib` (Ryglewski & Duch 2009, Fayyazuddin et al. 2006, Yang et al. 2016), and the citation audit was updated; these changes still need a fresh Actions build and final in-text/orphan-reference reconciliation.
+- [ ] Resolve remaining uncertain metadata and confirm the preferred MaleCNS dataset citation, project authorship/release metadata, and final attribution. Do not claim the bibliography is fully verified.
 - [ ] Review MaleCNS CC-BY attribution and the applicable data redistribution conditions; ensure the final attribution matches the source and journal requirements.
 - [ ] Confirm figure legends, image quality, figure placement, and journal-specific formatting in the final submission layout.
 - [ ] Rebuild and inspect the PDF after manuscript-source changes, recording the exact source commit and artifact together.
@@ -60,7 +58,7 @@ Earlier statements that “all VERIFY_REQUIRED items are resolved” and that th
 
 ## 6. Decision
 
-**Current decision: continue editorial review; do not submit this PDF.** The review artifact and focused validation are useful milestones, but unresolved author metadata, reference/attribution review, final journal layout, and fresh exact-candidate validation remain. This report does not authorize opening either scientific gate or resolving any biological conflict.
+**Current decision: continue editorial review; do not submit this PDF.** Primary-record checks caught three materially incorrect bibliography titles, now corrected on the draft branch, and the audit records what remains unverified. The broad suite currently has 13 failures and 3 errors in the last confirmed run; focused tests and the review-artifact build passed on the preceding commit. The latest citation changes still need CI and PDF regeneration. Author metadata, dataset attribution, final journal layout, and exact-candidate validation remain open. This report does not authorize opening either scientific gate or resolving any biological conflict.
 
 ---
 
