@@ -112,7 +112,7 @@ def main() -> None:
       Source commit: {html.escape(sha)}
       </div>{body}</body></html>"""
     OUT_HTML.write_text(html_doc, encoding="utf-8")
-    HTML(string=html_doc, base_url=str(ROOT)).write_pdf(
+    HTML(string=html_doc, base_url=str(ROOT / "paper")).write_pdf(
         OUT_PDF,
         presentational_hints=True,
     )
