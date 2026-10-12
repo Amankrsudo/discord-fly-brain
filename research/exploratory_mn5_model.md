@@ -20,6 +20,9 @@ writes nothing to the frozen evidence registry.
 
 ## 2. Evidence-safe boundary
 
+**Exploratory-model authorization labels:** the simulation surface is `MODEL-AUTHORIZED / ANATOMY + LITERATURE CONSTRAINED` for its explicitly assumption-dependent model output, and `MODEL-AUTHORIZED / CHANNEL-CONSTRAINED / NATIVE VALUE MODEL-DERIVED` for its optional Dα7 model component. These labels authorize only conditional model calculations. They do **not** authorize native biological inference: the PSI→MN5 spatial voltage-transfer and native Dα7 conductance gates below remain **NOT AUTHORIZED**.
+
+
 - The model owns a **private** `ParameterSet`. It does not read
   `research/model_input_freeze.csv` at run time and never writes to
   it; no synthetic value can enter the registry.
