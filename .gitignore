@@ -1,0 +1,32 @@
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+*.env
+bot_config.json
+
+# Per-machine runtime state and checkpoints
+fly_state.json
+*.checkpoint
+*.checkpoint.*
+
+# Python environments and caches
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Editor and operating-system files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Local build and release outputs
+releases/
+dist/
+build/
+*.egg-info/
