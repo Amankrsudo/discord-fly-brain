@@ -166,18 +166,22 @@ All entries verified against primary text unless marked otherwise.
   34(16):5416–5430. PMID 24740867 · DOI `10.1523/JNEUROSCI.3183-13.2014`
   - ShakB occupies **14.72 ± 3.99 % (SD, n=9)** of GF terminal in WT;
     *frazzled* LOF 3.00 ± 0.57 (n=12); *Netrin* LOF 1.54 ± 0.48 (n=15).
-- **Citation (age/auditory input):** Blagburn, J.M. (2020). *A new method of
-  recording from the giant fiber of Drosophila melanogaster shows that the
+- **Citation (aging / ShakB staining):** Augustin, H. et al. (2017).
+  *Reduced insulin signaling maintains electrical transmission in a neural
+  circuit in aging flies.* *PLoS Biology* 15(9):e2001655. PMID 28902870 · PMCID
+  PMC5597081 · DOI `10.1371/journal.pbio.2001655`. The paper studies age-related
+  GFS transmission and ShakB-containing gap junctions. Blagburn (2020) explicitly
+  summarizes the nearby GF→PSI output synapse as showing no comparable decrease
+  in ShakB staining and cites Augustin et al. for that statement. The comparison
+  is therefore traceable through this secondary report; retain the specific
+  GF→PSI interpretation only with this citation trail and after checking the
+  relevant figure/text in Augustin et al.
+- **Secondary source / scope distinction:** Blagburn, J.M. (2020). *A new method
+  of recording from the giant fiber of Drosophila melanogaster shows that the
   strength of its auditory inputs remains constant with age.* *PLoS ONE*
   15(1):e0224057. PMID 31951567 · PMCID PMC6946141 · DOI
   `10.1371/journal.pone.0224057`. This paper measures auditory Johnston's organ
-  neuron input to GF; it does **not** support a comparison of GF→TTMn versus
-  GF→PSI ShakB staining. The previously attributed GF→PSI statement is
-  **UNVERIFIED and must not be used** until its actual source is identified.
-- Augustin et al. (2017), *Reduced insulin signaling maintains electrical
-  transmission in a neural circuit in aging flies*, *PLoS Biology* 15(9):e2001655,
-  DOI `10.1371/journal.pbio.2001655`; supports aging-related GFS context, not a
-  specific GF→PSI aging effect.
+  neuron input to GF; it is not the primary aging experiment.
 
 ## S-10 · SIZ localisation — **PRIMARY EXPERIMENT**
 
