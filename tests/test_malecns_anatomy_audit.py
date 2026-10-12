@@ -43,8 +43,7 @@ GATE_CONDUCTANCE = "Dα7 conductance: NOT AUTHORIZED"
 
 ALL_MD = ["evidence_ledger.md", "anatomy_registry.md", "conflicts.md",
           "missing_evidence.md", "dependency_graph.md",
-          "OVERNIGHT_CHECKPOINT.md", "source_registry.md",
-          "parameter_registry.md", "research_done.md",
+          "source_registry.md", "parameter_registry.md",
           "spatial_transfer_evidence.md", "da7_evidence.md",
           "final_anatomy_audit.md"]
 
