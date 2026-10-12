@@ -11,10 +11,10 @@ This report distinguishes historical audit statements from current evidence. A s
 
 The review-only manuscript source is `paper/REVIEW_MANUSCRIPT.md`; the renderer is `paper/scripts/build_review_pdf.py`. The GitHub Actions workflow builds a PDF and HTML artifact labelled **REVIEW ONLY — NOT FOR SUBMISSION**.
 
-The latest inspected artifact was built from source commit `a56875e8e85e73429a50f1a360cd72067ed249c8`. The subsequent `455e3bd593d5c51b256446ae60d83cf669bc359b` commit updated build-status documentation; it did not rebuild the PDF from a new manuscript source. The artifact was 30 pages (A4; 234,922 bytes), and all eight SVG figures were visually present in the inspected build.
+The latest inspected artifact was rebuilt from source commit `7ad7c05be52ba75ada9ba861272aae45244556e4` after correcting stale validation and provenance wording. It is 30 pages (A4; 235,802 bytes). Automated PDF text checks passed for the review-only warning, both closed authorization gates, visible author placeholder, updated checksum-provenance wording, historical test-count qualification, and absence of the superseded stale claims. The PDF text was extracted locally and checked; the eight-figure rendering was visually inspected in the preceding build, while this latest build's CI text/page checks passed.
 
-Actions run: https://github.com/Amankrsudo/discord-fly-brain/actions/runs/38205908211  
-Artifact name: `review-only-manuscript-pdf`; artifact ID `11727401642`; recorded expiry 2026-10-26. Artifact retention is temporary, so preserve a verified copy if needed.
+Actions run: https://github.com/Amankrsudo/discord-fly-brain/actions/runs/38206908260  
+Artifact name: `review-only-manuscript-pdf`; artifact ID `11727991324`; digest `sha256:174f7d034f840311784ee905202b43a68f0b617e791a315dcadcad23d0d9c765`; expiry 2026-10-26. Artifact retention is temporary, so preserve a verified copy if needed.
 
 ## 2. Current CI status — do not overstate
 
