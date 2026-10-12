@@ -1,36 +1,35 @@
-# Review-only Manuscript PDF Build — Blockers
+# Review-only Manuscript PDF — Build and Inspection Status
 
-**Status:** BLOCKED — no review PDF was built or inspected from this branch.
-**Audited ref:** `review/scientific-claim-corrections` at `702aa08e96cc23072cce1a2fceccb00c142af770`.
-**Purpose:** Record the concrete requirements for a faithful review-only PDF without silently manufacturing a submission-ready manuscript.
+**Status:** A reproducible review-only build pipeline is now committed; artifact generation and inspection are pending the next GitHub Actions run.
+**Current branch:** `review/scientific-claim-corrections`.
+**Scope:** Editorial review only, explicitly not an eNeuro submission package.
 
-## Findings from the branch audit
+## Implemented
 
-1. **The manuscript exists as separate draft files, not a single compilation source.** The branch contains `ABSTRACT_DRAFT.md`, `INTRODUCTION_DRAFT.md`, `METHODS_DRAFT.md`, `RESULTS_DRAFT.md`, and `DISCUSSION_DRAFT.md`, alongside an outline and reading aids. No integrated `MANUSCRIPT.md`, LaTeX entry point, or other canonical assembled manuscript was found.
-2. **No PDF build recipe exists in the branch workflow.** `.github/workflows/research-branch-validation.yml` regenerates figures/tables and validates source text/BibTeX structure, but does not invoke Pandoc, LaTeX, or another PDF compiler and does not upload a PDF artifact.
-3. **Figures are SVG assets, but there is no manuscript layout/figure-placement map that binds all eight figures and four tables into one final sequence.** The outline and manifest are planning/registry documents; they are not a verified, publication-formatted manuscript.
-4. **Submission-readiness claims are not a safe build specification.** `SUBMISSION_READINESS_REPORT.md` contains older statements that all provenance items are resolved and the package is ready for submission. The current branch's methods and Figure 8 explicitly say no independent publisher-provided expected checksum was identified for the staged Feather file; attribution still needs author review. The report also cites inherited test counts and a 2026-10-09 audit, while current branch CI has a focused required test set and a broad-suite audit marked non-blocking.
-5. **A rendered PDF could hide editorial decisions if assembled automatically.** The current sources include draft labels and author/affiliation placeholders are unresolved in the separate local Candidate 2 package; that local package is not part of this GitHub branch and cannot be treated as the branch's source or artifact.
+- `paper/REVIEW_MANUSCRIPT.md` assembles the five existing draft sections, four tables, eight SVG figures, a generated reference list, and visible author/affiliation placeholders.
+- `paper/scripts/build_review_pdf.py` renders the source to HTML and PDF, labels the output **REVIEW ONLY — NOT FOR SUBMISSION**, and includes the current CI source SHA in the generated document.
+- `.github/workflows/research-branch-validation.yml` now installs a pinned Markdown/WeasyPrint/PyPDF toolchain, builds the PDF, checks extracted text/page count and critical scientific guardrails, then uploads the PDF and HTML as `review-only-manuscript-pdf` for 14 days.
+- `paper/README.md` points to the assembled source and build instructions.
 
-## Required steps before a trustworthy review PDF
+## What the build does not establish
 
-- [ ] Designate or create one canonical assembled manuscript source from the five draft sections; preserve their scientific wording and claim qualifiers.
-- [ ] Resolve section ordering, title, author/affiliation placeholders, acknowledgements/funding, data/code availability, and correspondence fields—or visibly mark each unresolved item as a placeholder in the review PDF.
-- [ ] Reconcile the stale statements in `SUBMISSION_READINESS_REPORT.md` with current provenance and CI evidence. Do not claim the Feather has an independent source checksum unless one is identified.
-- [ ] Define an explicit figure/table placement order and captions, including all eight SVG figures and the four tables; ensure figures are regenerated from the current branch before rendering.
-- [ ] Add a reproducible PDF build command and CI artifact upload, pin or record toolchain versions, and ensure the artifact name labels it **REVIEW ONLY — NOT FOR SUBMISSION**.
-- [ ] Run the build on the exact PR head, download the produced artifact, and inspect page count, clipping, SVG rendering, references, figure order, placeholder visibility, and Gate A/B wording.
-- [ ] Keep the PDF's source commit SHA and build log alongside the artifact so it is traceable to the reviewed branch snapshot.
+- It is a review layout, not journal-formatted or submission-ready.
+- The bibliography is mechanically rendered from `references.bib`; missing or verification-required metadata remains an editorial issue.
+- Author order, affiliations, correspondence, acknowledgements, funding, data/code availability, and final attribution still require human confirmation.
+- Figure placement is grouped in a figure section after the main text and tables; it is not yet an editorially finalized journal layout.
+- The PDF has not been called successful or inspected until the GitHub Actions run produces an artifact and the artifact is actually checked.
 
-## Scientific safeguards for the build
+## Required post-build inspection
 
-- Gate A (PSI→MN5 spatial voltage transfer) remains **NOT AUTHORIZED**.
-- Gate B (native PSI→MN5 Dα7 conductance) remains **NOT AUTHORIZED**.
-- Do not derive attenuation, transfer resistance, Cm, Rm, g_pas, Ra, time constants, length constants, or electrotonic distance from morphology.
-- Keep C-01 (MN5 capacitance) and C-02/C-03 (conductance-unit conflicts) unresolved.
-- Keep the 15,528 sensitivity rows explicitly model-derived and conditional, not native validation.
-- Distinguish focused test success from the non-blocking broad-suite audit; do not label all tests green based solely on the workflow job status.
+1. Confirm the `manuscript-artifacts` job succeeds and the `review-only-manuscript-pdf` artifact exists.
+2. Download the artifact and inspect page count, SVG rendering, clipping, table width, reference output, placeholders, and all eight figures.
+3. Confirm Gate A and Gate B remain **NOT AUTHORIZED**, C-01/C-02/C-03 remain unresolved, and the 15,528 rows are still described as conditional model outputs.
+4. Record the exact source commit SHA and build result. If rendering or inspection fails, fix the pipeline before claiming a usable review PDF.
 
-## Outcome
+## Scientific safeguards
 
-This audit intentionally stops before PDF generation because the branch lacks a canonical assembled manuscript and a defined, inspectable PDF build pipeline. The next safe implementation step is to create that canonical review source and reproducible build workflow, then inspect the actual artifact. No PDF build or visual inspection is claimed here.
+- Gate A — PSI→MN5 spatial voltage transfer: **NOT AUTHORIZED**.
+- Gate B — native PSI→MN5 Dα7 conductance: **NOT AUTHORIZED**.
+- Do not infer attenuation, transfer resistance, Cm, Rm, g_pas, Ra, time constants, length constants, or electrotonic distance from morphology.
+- Preserve the C-01 capacitance conflict and C-02/C-03 conductance-unit conflicts as unresolved.
+- Software tests and PDF generation are not empirical biological validation.
