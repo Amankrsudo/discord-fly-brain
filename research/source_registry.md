@@ -268,20 +268,23 @@ coupling.** Do not cite. (A real and heavily cited GFS paper is Stebbings,
 Alexander & King 2002, PMID 12407015, but it is *behavioural/habituation*, not
 an electrical-coupling measurement.)
 
-## S-18 · GFS GAL4 driver validation caveat — **SOURCE MISMATCH / UNVERIFIED**
+## S-18 · GFS GAL4 driver validation caveat — **PRIMARY EXPERIMENT**
 
-- The previously supplied citation, Kadas et al. (2012), DOI
-  `10.1523/JNEUROSCI.6583-10.2012`, is titled “Constitutive activation of
-  Ca2+/calmodulin-dependent protein kinase II during development impairs central
-  cholinergic transmission in a circuit underlying escape behavior in
-  Drosophila.” Its verified metadata does **not** match the previously
-  attributed PSI-specific GAL4-driver-validation claim.
-- **Status:** the claim that PSI driver expression was not experimentally
-  determined (“data not shown”) is **UNVERIFIED** against this source and must
-  not be attributed to Kadas et al. until a matching primary source is found.
-- **Safe conclusion:** no PSI-specific driver validation is established by the
-  citation currently attached to this claim. This is a source-attribution gap,
-  not proof that no such validation exists.
+- **Citation:** Kadas, D., Tzortzopoulos, A., Skoulakis, E.M.C. & Consoulas, C.
+  (2012). “Constitutive activation of Ca2+/calmodulin-dependent protein kinase
+  II during development impairs central cholinergic transmission in a circuit
+  underlying escape behavior in Drosophila.” *J Neurosci* 32(1):170–182.
+  DOI `10.1523/JNEUROSCI.6583-10.2012` · PMID 22219280 · PMCID PMC6621333.
+- **Verified source statement:** the authors state that they verified their
+  targeted GAL4 drivers in intended GFS cells with one exception—the PSI
+  neuron—and that this PSI expression was not experimentally determined
+  (“data not shown”); they also caution that drivers may be expressed elsewhere
+  in the CNS.
+- **Relevance:** this supports the caveat that the driver used for PSI was not
+  validated in that paper. It does not establish PSI-selective activation or
+  prove that any particular driver is PSI-specific.
+- **Limitation:** the citation's title had been incorrectly transcribed in the
+  bibliography; the source statement itself is present in the verified full text.
 
 ## S-19 · Recombinant Dα7 functional-channel data — **PRIMARY EXPERIMENT**
 
