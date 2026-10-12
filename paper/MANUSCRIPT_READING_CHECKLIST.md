@@ -5,7 +5,7 @@
 **Ground rules**:
 - All findings are drawn from the manuscript drafts and repository artifacts in `paper/` and `research/`.
 - Do NOT treat model-derived outputs as native measurements.
-- Do NOT treat the test count (1,773 passed / 2 skipped) as freshly reproduced.
+- The latest confirmed CI count is 1,646 passed / 44 skipped / 0 failed / 0 errors in Actions run 38213618643 (commit 1b765806). This is software validation only; skipped external-SWC tests are not evidence of passing data-dependent analyses.
 - Do NOT invent results or fill gaps with external knowledge.
 
 ---
