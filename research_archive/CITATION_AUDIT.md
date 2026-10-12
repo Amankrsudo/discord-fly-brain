@@ -1,6 +1,6 @@
 # Citation metadata audit
 
-Audit date: **2026-10-08**. Audit basis: repository-local `3.0_RELEASE_SPEC.md`, `research/source_registry.md`, parameter/model research records, `CITATION.cff`, and `paper/references.bib`. No external metadata lookup was performed.
+Audit date: **2026-10-12**. Audit basis: repository-local `3.0_RELEASE_SPEC.md`, `research/source_registry.md`, parameter/model research records, `CITATION.cff`, and `paper/references.bib`, plus targeted publisher/PubMed/PMC metadata checks. This is a partial audit; unchecked entries remain explicitly unresolved.
 
 ## CITATION.cff
 
@@ -22,21 +22,21 @@ Entries below were checked only against repository records. A field's presence i
 | BibTeX key | Registry match | Fields requiring verification |
 |---|---|---|
 | `Berg2026MaleCNS`, `MaleCNSv1` | S-01: paper title, journal, year, volume/issue/pages, DOI, dataset v1.0 | Complete author list and preferred dataset citation; dataset entry reuses paper attribution only as a provisional record. **VERIFY_REQUIRED**. |
-| `Mehta2023SWC` | S-02: authors, title, journal, year, volume/article number, DOI | Journal abbreviation and citation formatting before publication. |
+| `Mehta2023SWC` | Publisher/PubMed record checked | Title, seven authors, journal, year, volume/issue/article number, DOI, PMID 37973857 and PMCID PMC10654402 match the indexed record; final eNeuro formatting remains. |
 | `RyglewskiDuch2009` | S-03: authors, journal, year, volume/issue/pages, DOI and identifiers | Article title is absent. **VERIFY_REQUIRED**. |
 | `Fayyazuddin2006` | S-04: authors, journal, year, volume/issue/article number, DOI | Article title is absent. **VERIFY_REQUIRED**. |
 | `Augustin2019GFS` | S-06: authors, journal, year, volume/issue/article identifier, DOI | Article title is absent. **VERIFY_REQUIRED**. |
-| `Hurkey2023` | S-07: first author initial, journal, year, volume/pages, DOI | Full author list and title absent. **VERIFY_REQUIRED**. |
-| `Phelan2008` | S-08: first author initial, journal, year, volume/issue/pages, PMID | Full author list, title, and DOI absent. **VERIFY_REQUIRED**. |
+| `Hurkey2023` | Publisher/PubMed record checked | Corrected title to “Gap junctions desynchronize a neural circuit to stabilize insect flight”; author list and issue metadata updated. Verify citation is used only for its measured MN1–MN4 coupling results, not MN5-specific conductance. |
+| `Phelan2008` | PubMed/PMC record checked | Corrected title, full author list, issue, pages, DOI, PMID 19084406 and PMCID PMC2663713. Heterologous channel data must not be presented as native GFS conductance. |
 | `Orr2014` | S-09 anatomy citation: author names, journal, year, volume/issue/pages, DOI, PMID | Article title absent. **VERIFY_REQUIRED**. |
-| `Auger2020` | S-09 age citation: journal, year, volume/issue/article number, DOI | Author list and title absent. **VERIFY_REQUIRED**; current entry lacks an author field. |
-| `KuehnDuch2013` | S-10: authors, journal, year, volume/issue/pages, DOI and identifiers | Article title absent. **VERIFY_REQUIRED**. |
+| `Blagburn2020` | PubMed/PMC record checked | Replaced the misattributed `Auger2020` entry with the verified Blagburn title, author, journal, article number, DOI, PMID 31951567 and PMCID PMC6946141. This is an auditory-input study; the GF→PSI ShakB statement is a secondary citation to Augustin 2017. |
+| `KuehnDuch2013` | PubMed/PMC record checked | Corrected title to “Putative excitatory and putative inhibitory inputs are localised in different dendritic domains in a Drosophila flight motoneuron”; identifiers match. Confirm any SIZ-specific sentence against the full paper before submission. |
 | `vonHoffDuch2010` | S-11: author names and year; parameter registry supplies PMID/PMCID | Title, journal, volume/pages, DOI absent from source registry. **VERIFY_REQUIRED**. |
 | `Yang2016` | S-12: authors, journal, year, volume/issue/pages, DOI and identifiers | Article title absent. **VERIFY_REQUIRED**. |
 | `GouwensWilson2009` | S-13: authors, journal, year, volume/issue/pages | Title, DOI, and identifiers absent. **VERIFY_REQUIRED**. |
 | `Meseke2009`, `DuchLevine2000`, `DuchBaylineLevine2000` | S-15: author names, year, journal/volume/pages where recorded; Manduca species boundary | Several titles and publication fields absent. **VERIFY_REQUIRED**; ensure these are used only for cross-species context. |
-| `Augustin2017` | S-09 mentions journal, year, volume/issue/article number | Author list and title absent. **VERIFY_REQUIRED**. |
-| `Kadas2012` | S-18: first author, journal, year, volume/issue/pages, DOI and identifiers | Full author list and title absent. **VERIFY_REQUIRED**. |
+| `Augustin2017` | Publisher/PubMed record checked | Full title, 11 authors, volume 15 issue 9, article e2001655, DOI 10.1371/journal.pbio.2001655, PMID 28902870 and PMCID PMC5597081 verified. Specific GF→PSI interpretation should be checked against the relevant figure/text in the primary article. |
+| `Kadas2012` | PubMed/PMC record checked | Corrected full title and four-author list; DOI, PMID 22219280 and PMCID PMC6621333 match. Supports developmental CaMKII/cholinergic GFS claims and the documented PSI driver-validation caveat; not evidence of PSI-selective activation. |
 | `Lansdell2012` | S-19: authors, title, journal, year, volume/article number, DOI | Complete against S-19 record; no external verification performed. |
 
 S-14 is a software repository/function citation and needs an exact version/URL if cited. S-16 is a repository/data record with incomplete citation fields. S-17 is explicitly **UNVERIFIED** and must not be promoted into the bibliography as evidence. The source registry and other parameter records cite additional articles; reconcile every citation actually used in the paper against a primary record before release. Do not fill missing fields from memory.
