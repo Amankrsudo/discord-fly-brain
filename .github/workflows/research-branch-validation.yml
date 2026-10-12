@@ -37,9 +37,9 @@ jobs:
           TEMP_DIR="$(python -c 'import tempfile; print(tempfile.gettempdir())')"
           BASE="https://storage.googleapis.com/flyem-male-cns/v1.0/segmentation/skeletons-malecns/skeletons-swc"
           curl --fail --location --retry 3 --retry-delay 2 \
-            "$BASE/em_801970.swc" -o "$TEMP_DIR/em_801970.swc"
+            "$BASE/801970.swc" -o "$TEMP_DIR/em_801970.swc"
           curl --fail --location --retry 3 --retry-delay 2 \
-            "$BASE/em_801295.swc" -o "$TEMP_DIR/em_801295.swc"
+            "$BASE/801295.swc" -o "$TEMP_DIR/em_801295.swc"
           cd "$TEMP_DIR"
           printf '%s  %s\n' \
             'c4297590219f2d9bbb5038fd190c4c9d38d4a4ecb66dc35cf3f0d915b313f1d2' 'em_801970.swc' \
