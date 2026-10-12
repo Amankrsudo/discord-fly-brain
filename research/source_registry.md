@@ -145,8 +145,12 @@ All entries verified against primary text unless marked otherwise.
 
 ## S-08 · GF gap junction biophysics — **PRIMARY EXPERIMENT (heterologous)**
 
-- **Citation:** Phelan, K. et al. (2008). *Curr Biol* 18(22):1440–1445.
-  PMID 18976832
+- **Citation:** Phelan, P., Goulding, L.A., Tam, J.L.Y., Allen, M.J., Dawber, R.J.,
+  Davies, J.A. & Bacon, J.P. (2008). *Molecular mechanism of rectification at
+  identified electrical synapses in the Drosophila giant fiber system.*
+  *Current Biology* 18(24):1955–1960. PMID 19084406 · PMCID PMC2663713 · DOI
+  `10.1016/j.cub.2008.10.067`. The previously listed title, issue, pages, PMID
+  and DOI referred to different or mismatched records.
 - **Measured:** **Xenopus oocyte** heterotypic ShakB(N+16)/ShakB(L):
   rectification index Gj_min/Gj_max = **0.21**; Gj reaches only ~50–60 % of max
   by 5 ms; 15–20 % voltage-insensitive fraction; single-Boltzmann fit.
@@ -162,16 +166,29 @@ All entries verified against primary text unless marked otherwise.
   34(16):5416–5430. PMID 24740867 · DOI `10.1523/JNEUROSCI.3183-13.2014`
   - ShakB occupies **14.72 ± 3.99 % (SD, n=9)** of GF terminal in WT;
     *frazzled* LOF 3.00 ± 0.57 (n=12); *Netrin* LOF 1.54 ± 0.48 (n=15).
-- **Citation (age):** Auger et al. (2020). *PLoS ONE* 15(1):e0224057.
-  DOI `10.1371/journal.pone.0224057` — *"the nearby output synapse of the GF
-  with the PSI showed no such decrease in ShakB staining."* Age decline is
-  **GF→TTMn-specific, not GF→PSI.**
-- Also Augustin et al. (2017) *PLoS Biology* 15(8):e2001655.
+- **Citation (aging / ShakB staining):** Augustin, H. et al. (2017).
+  *Reduced insulin signaling maintains electrical transmission in a neural
+  circuit in aging flies.* *PLoS Biology* 15(9):e2001655. PMID 28902870 · PMCID
+  PMC5597081 · DOI `10.1371/journal.pbio.2001655`. The paper studies age-related
+  GFS transmission and ShakB-containing gap junctions. Blagburn (2020) explicitly
+  summarizes the nearby GF→PSI output synapse as showing no comparable decrease
+  in ShakB staining and cites Augustin et al. for that statement. The comparison
+  is therefore traceable through this secondary report; retain the specific
+  GF→PSI interpretation only with this citation trail and after checking the
+  relevant figure/text in Augustin et al.
+- **Secondary source / scope distinction:** Blagburn, J.M. (2020). *A new method
+  of recording from the giant fiber of Drosophila melanogaster shows that the
+  strength of its auditory inputs remains constant with age.* *PLoS ONE*
+  15(1):e0224057. PMID 31951567 · PMCID PMC6946141 · DOI
+  `10.1371/journal.pone.0224057`. This paper measures auditory Johnston's organ
+  neuron input to GF; it is not the primary aging experiment.
 
 ## S-10 · SIZ localisation — **PRIMARY EXPERIMENT**
 
-- **Citation:** Kuehn, C. & Duch, C. (2013). *Eur J Neurosci* 37(6):860–875.
-  DOI `10.1111/ejn.12104` · PMID 23279094 · PMCID **PMC3604049**
+- **Citation:** Kuehn, C. & Duch, C. (2013). “Putative excitatory and putative
+  inhibitory inputs are localised in different dendritic domains in a Drosophila
+  flight motoneuron.” *Eur J Neurosci* 37(6):860–875. DOI
+  `10.1111/ejn.12104` · PMID 23279094 · PMCID **PMC3604049**
 - **Measured:** anti-VGSC (AB5210, anti-SP19) immunocytochemistry + fills +
   confocal co-localisation. **Not electrophysiology.**
 - **Figures:** "about **100 µm from the soma**"; "**11 ± 3 µm** around the origin
@@ -257,17 +274,21 @@ an electrical-coupling measurement.)
 
 ## S-18 · GFS GAL4 driver validation caveat — **PRIMARY EXPERIMENT**
 
-- **Citation:** Kadas, D. et al. (2012). *J Neurosci* 32(1):170–182.
+- **Citation:** Kadas, D., Tzortzopoulos, A., Skoulakis, E.M.C. & Consoulas, C.
+  (2012). “Constitutive activation of Ca2+/calmodulin-dependent protein kinase
+  II during development impairs central cholinergic transmission in a circuit
+  underlying escape behavior in Drosophila.” *J Neurosci* 32(1):170–182.
   DOI `10.1523/JNEUROSCI.6583-10.2012` · PMID 22219280 · PMCID PMC6621333.
-- **Relevant source statement:** the authors report that their GAL4 drivers
-  were verified in intended GFS cells except for PSI; the PSI expression
-  assignment was not experimentally determined (“data not shown”). They also
-  note likely expression elsewhere in the CNS.
-- **Relevance:** the paper does not establish a PSI-specific driver or
-  PSI-selective activation. Its driver-based GFS experiments cannot be treated
-  as validation of PSI access.
-- **Limitations:** source-reported driver expression statement; no named,
-  cell-resolved PSI-specific driver validation is supplied.
+- **Verified source statement:** the authors state that they verified their
+  targeted GAL4 drivers in intended GFS cells with one exception—the PSI
+  neuron—and that this PSI expression was not experimentally determined
+  (“data not shown”); they also caution that drivers may be expressed elsewhere
+  in the CNS.
+- **Relevance:** this supports the caveat that the driver used for PSI was not
+  validated in that paper. It does not establish PSI-selective activation or
+  prove that any particular driver is PSI-specific.
+- **Limitation:** the citation's title had been incorrectly transcribed in the
+  bibliography; the source statement itself is present in the verified full text.
 
 ## S-19 · Recombinant Dα7 functional-channel data — **PRIMARY EXPERIMENT**
 

@@ -131,21 +131,27 @@ native conductance.
 
 ---
 
-## ⚠ Dα7 → Kir7.1 coupling DOES NOT EXIST IN DROSOPHILA
+## ⚠ Dα7 → Kir7.1 coupling is NOT ESTABLISHED IN DROSOPHILA
 
-This mechanism is **vertebrate**, and the fly lacks the channel:
+The vertebrate Dα7/α7-to-Kir7.1 coupling mechanism must not be assumed to
+operate in the fly. The available evidence reviewed here does not establish a
+functionally equivalent coupling mechanism in *Drosophila*.
 
-- *Drosophila* has **three** inward-rectifier genes: **Irk1, Irk2, Irk3**
+- *Drosophila* has three named inward-rectifier genes: **Irk1, Irk2, Irk3**
   (FlyBase FBgn group FBgg0000509; *Irk3* = CG10369, FBgn0032706).
-- **There is no Kir7.1 / KCNJ13 orthologue in *Drosophila*.** Kir7.1 is a
-  vertebrate channel (Döring+ 1998 *J Neurosci* 18:8625, PMID 9786970).
-- No coupling of any insect nAChR to any Kir was found.
-- Irk function in fly neurons is documented only in non-cholinergic contexts
-  (e.g. Dpp release in wing development — Dahal+ 2017 *Development* 144:2771).
+- Do not state categorically that *Drosophila* has no Kir7.1/KCNJ13 orthologue
+  without a current, authoritative orthology record that resolves low-scoring
+  candidates. The evidence reviewed here supports **absence of an established
+  functional equivalent**, not proof that no orthologue exists.
+- No coupling of an insect nAChR to an Irk channel was identified in the sources
+  reviewed for this evidence map.
+- Irk functions in fly neurons are documented here in non-cholinergic contexts
+  (for example, Dpp release in wing development — Dahal+ 2017 *Development*
+  144:2771); that does not by itself exclude other functions.
 
-**Implication:** any model that routes Dα7 current through a Kir7.1-like channel
-in MN5 is importing a vertebrate mechanism that has no fly homologue. This must
-not be built.
+**Modeling implication:** do not build a Dα7→Kir7.1-like coupling pathway into
+MN5 without direct fly-specific evidence. This is a constraint on unsupported
+mechanistic assumptions, not a claim that orthology is definitively absent.
 
 ---
 
@@ -170,7 +176,7 @@ any direct measurement of PSI→MN5 receptor identity by imaging or binding.
 | Synaptic / peak conductance | **NO QUALIFYING MEASUREMENT FOUND.** Nothing in the literature derives, estimates or names one. |
 | Quantal size / content / release probability | **NO QUALIFYING MEASUREMENT FOUND.** No mEPSP, no failure analysis. |
 | Active zones / release sites | **NO QUALIFYING MEASUREMENT FOUND.** No T-bar count at PSI→MN5. |
-| Short-term plasticity | **NO QUALIFYING MEASUREMENT FOUND** at the synapse. Kadas 2012's CaMKII-T287D raises GF–DLM RP from ~4 ms to ~10–12 ms — a **pathway-fidelity** effect assigned postsynaptically by driver logic, with the authors' own caveats (*cha*-GAL4 PSI expression "assumed", "data not shown"). |
+| Short-term plasticity | **NO QUALIFYING MEASUREMENT FOUND** at the synapse. Kadas 2012 reports developmental CaMKII-T287D effects on GF-pathway response period / transmission; this is not a direct short-term-plasticity measurement at PSI→MN5. The authors state that their GAL4 targeting was verified except for PSI, whose expression was not experimentally determined ("data not shown"). |
 | Receptor density | **NO QUALIFYING MEASUREMENT FOUND.** No quantitative immunostaining, no α-Btx binding density at this synapse. |
 | Synaptic delay | **NOT MEASURED.** The ~0.5 ms in Gaitanidis 2025 is an explicit assumption, derived from a TTM→DLM *muscle* offset, not an isolated synaptic delay. |
 

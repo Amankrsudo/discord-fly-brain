@@ -40,7 +40,7 @@ MaleCNS `.ngmesh` files are parsed by a reverse-engineered, byte-budget-validate
 - **Offset 4**: N × `float32` (x, y, z) — raw vertices
 - **After vertices**: 3F × `uint32` — triangle indices (face count F is implied by file size, not stored)
 
-The parser **rejects** any file where the consumption budget `4 + 12·N + 12·F` does not exactly reproduce the file size, where any triangle index falls outside `[0, N−1]`, or where the size is inconsistent with the float32/uint32 record structure `[C-204]`. Vertices are raw **nanometres** in Male CNS EM coordinate space `[C-202]`. A SHA-256 digest is recorded per mesh, but the synapse-pair Feather has **no recorded expected checksum** (documented limitation) `[C-701]`.
+The parser **rejects** any file where the consumption budget `4 + 12·N + 12·F` does not exactly reproduce the file size, where any triangle index falls outside `[0, N−1]`, or where the size is inconsistent with the float32/uint32 record structure `[C-204]`. Vertices are raw **nanometres** in Male CNS EM coordinate space `[C-202]`. A SHA-256 digest is recorded per mesh. For the synapse-pair Feather, a digest is recorded for the local staged file, but no independent publisher-provided expected checksum was identified `[C-701]`.
 
 Mesh–SWC registration is **confirmed numerically**: `check_male_mesh_matches_swc` asserts the SWC bounding box scaled by 8 (`MESH_TO_SWC_SCALE = 8.0`) sits within the mesh bounding box (raw units), i.e. `swc_voxel × 8 = mesh_nm` `[C-202]`. The mirrored MaleCNS SWC set (1 nm units) fails this check and is therefore never substitutable `[C-202]`.
 
@@ -153,7 +153,7 @@ Every reported quantity carries exactly one of the five frozen provenance classe
 
 **Gate A — PSI→MN5 spatial voltage transfer: NOT AUTHORIZED.** Enforced by `malecns_ingest.py:require_biological_transfer_authorization()` (always raises) and `model_framework.py:require_spatial_transfer()` (always raises). The block rests on four unresolved premises: no MN5-specific axial resistivity (the only measured Drosophila motor-neuron Ra is larval aCC, 212.47 ± 3.69 Ω·cm; Manduca value adopted by assertion), no specific membrane resistance (Rm), an adjudicated whole-cell capacitance (C-01 contested), and no labelled soma node to close an anatomical path `[C-201, C-401]`.
 
-**Gate B — Dα7 conductance: NOT AUTHORIZED.** Enforced by `model_framework.py:require_dalpha7_gate()` (always raises). The block rests on: no native Dα7 single-channel conductance / open probability / reversal / kinetics / density at PSI→MN5; no Dα7 imaging at PSI terminals or MN5 axons; and the absence in Drosophila of the Kir7.1/KCNJ13 orthologue that mediates vertebrate α7→Kir coupling `[C-501]`.
+**Gate B — Dα7 conductance: NOT AUTHORIZED.** Enforced by `model_framework.py:require_dalpha7_gate()` (always raises). The block rests on: no native Dα7 single-channel conductance / open probability / reversal / kinetics / density at PSI→MN5; no Dα7 imaging at PSI terminals or MN5 axons; and no established fly-specific functional equivalent of the vertebrate α7→Kir7.1 coupling mechanism; orthology is not declared absent without a current authoritative resolution of candidate homologues `[C-501]`.
 
 The gates are **evidence constraints on interpretation**, not assertions that the underlying biological quantities do not exist `[C-401, C-501]`. A model-authorized conditional analysis (the abstract bridge, the Dα7 effective-conductance sweep) is permitted to execute under declared assumptions, but its outputs remain model-derived `[C-402, C-503]`.
 
@@ -174,7 +174,7 @@ The **reported** full-suite figure of **1,773 passed and 2 skipped** is inherite
 - `tests/test_parameter_adoption.py` — no blocked parameter is admitted as a value
 - `tests/test_psi_mn5_optical_experiment_design_audit.py` / `tests/test_psi_mn5_reversal_experiment_audit.py` — genetic-access / reversal-potential absences `[C-101, C-303, C-401, C-501]`
 
-> **Reproducibility limitations**: the synapse-pair Feather has **no recorded expected checksum**; the download/staging commands are **not documented**; and external-data license redistribution and author attribution remain **VERIFY_REQUIRED** per `research_archive/EXTERNAL_DATA_REPRODUCIBILITY.md` `[C-701]`. The two cached SWCs used by the sensitivity script are pinned by SHA-256 in the script itself `[C-601]`.
+> **Reproducibility limitations**: a SHA-256 digest for the synapse-pair Feather is recorded and verified against the local staging copy, and download/staging commands are documented in `research_archive/EXTERNAL_DATA_REPRODUCIBILITY.md` `[C-701]`. The digest is not an independently published source checksum, so future remote-byte identity is not independently established; external-data license redistribution and author attribution remain **VERIFY_REQUIRED**. The two cached SWCs used by the sensitivity script are pinned by SHA-256 in the script itself `[C-601]`.
 
 ---
 

@@ -109,7 +109,7 @@ Both are recorded as `recorded_value=True` (evidence about the artefact, not a u
 3. A **conditional two-gate sensitivity analysis** (15,528 rows) whose model-derived outputs are explicitly tagged and never relabeled as native measurements `[C-601]`.
 4. A **minimum-honest model** (`ReducedMN5Simulator`) that uses only three SAFE native inputs and contains no leak, compartment, synapse, or assumed conductance `[C-602]`.
 
-**Future work** is constrained to the resolving experiments above: native MN5 axial resistivity (M-03), a measured contact→soma voltage transfer (M-02) to open Gate A, and a native PSI→MN5 synaptic conductance (M-01) plus Dα7 measurements (M-04) to open Gate B `[C-401, C-501]`. Developmental, sex, and ageing variation are excluded by construction (all MaleCNS is male; GF→TTMn age literature does not apply to GF→PSI) `[C-201, C-301]`.
+**Future work** is constrained to the resolving experiments above: native MN5 axial resistivity (M-03), a measured contact→soma voltage transfer (M-02) to open Gate A, and a native PSI→MN5 synaptic conductance (M-01) plus Dα7 measurements (M-04) to open Gate B `[C-401, C-501]`. Developmental and sex variation are excluded by construction because the MaleCNS dataset used here is male-adult; ageing was not assessed in this study `[C-201, C-301]`.
 
 ---
 

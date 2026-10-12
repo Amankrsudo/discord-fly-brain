@@ -103,7 +103,7 @@ The two-gate constrained analysis runs **15,528 rows** across a deterministic pa
 
 > **Permitted**: "Under the stated model structure and parameter grid, the model produced X outcomes. These are model-derived outcomes conditional on the listed assumptions; they are not native physiological measurements." `[C-601]`
 
-**Abstract somatic-transfer bridge**: a uniform two-compartment cable (112.5 µm length, 2 µm diameter) derived from published GFS DLMn geometry (DLMn dendrite 100 µm + PSI input 12.5 µm from the axon proximal end) `[C-402]`. This bridge is **not** traced onto the MaleCNS SWC and is **not** a per-contact anatomical somatic transfer `[C-402, C-201]`. Across the 2,880-row bridge sweep, the model-derived somatic-peak depolarization ranged **0.0028 / 1.81 / 67.08 mV** (min/median/max), with a peak local-to-somatic ratio (CSV field `local_to_somatic_peak_ratio`) of **0.085 / 0.517 / 0.892** `[C-402]`. At the nominal GFS-bridge point (Ra = 35.4 Ω·cm, Cm = 1.0 µF/cm², Rm = 6 kΩ·cm²), somatic peak was **1.108 mV (C-01 A)** and **0.510 mV (C-01 B)** `[C-402]`.
+**Abstract somatic-transfer bridge**: a uniform two-compartment cable (112.5 µm length, 2 µm diameter) derived from published GFS DLMn geometry (DLMn dendrite 100 µm + PSI input 12.5 µm from the axon proximal end) `[C-402]`. This bridge is **not** traced onto the MaleCNS SWC and is **not** a per-contact anatomical somatic transfer `[C-402, C-201]`. Across the 2,880-row bridge sweep, the model-derived somatic-peak depolarization ranged **0.0028 / 1.81 / 67.08 mV** (min/median/max), with a model-derived peak local-to-somatic ratio (CSV field `local_to_somatic_peak_ratio`) of **0.085 / 0.517 / 0.892** `[C-402]`. This is the abstract-bridge ratio, not a native contact-to-soma measurement `[C-401, C-402]`. At the nominal GFS-bridge point (Ra = 35.4 Ω·cm, Cm = 1.0 µF/cm², Rm = 6 kΩ·cm²), somatic peak was **1.108 mV (C-01 A)** and **0.510 mV (C-01 B)** `[C-402]`.
 
 > **Permitted**: "We performed a model-authorized conditional analysis using [explicit abstract bridge/assumption set]. The analysis is permitted to execute under those assumptions; its outputs remain model-derived and do not establish native physiology." `[C-402]`
 
@@ -152,9 +152,9 @@ Gates are described as **evidence constraints** — the absence of qualifying pr
 
 > **Permitted**: "The tests verify code paths against stated assertions and fixtures. This is software validation and is not empirical biological validation." `[C-602]`
 
-**Reproducibility**: the MaleCNS inputs consumed here carry **no recorded expected checksum**, so exact-tree-snapshot reproducibility is partially constrained `[C-701]`. The retrieval and analysis are scripted (`retrieve_malecns_compartment_post.py`, `analyze_mn5_two_gate_constraint_model.py`) and the audited contact artifact is exported at `research/artifacts/malecns_compartment_post_psi_mn5.csv`, but the Feather download is a truncated/unpinned snapshot `[C-701]`.
+**Reproducibility**: a SHA-256 checksum for the Feather input is now recorded in `data/README.md` and `EXTERNAL_DATA_REPRODUCIBILITY.md`, computed from and verified against the local staging copy; staging commands are documented `[C-701]`. This verifies the staged file against the recorded local digest, but does not independently establish a publisher-provided checksum or prove that a future remote download is byte-identical. The audited contact artifact is exported at `research/artifacts/malecns_compartment_post_psi_mn5.csv` `[C-701]`.
 
-> **Limitation**: external-data reproducibility items are documented in `EXTERNAL_DATA_REPRODUCIBILITY.md` and remain VERIFY_REQUIRED for checksumming and staging commands `[C-701]`.
+> **Limitation**: the recorded digest is based on the local staged Feather, not an independently published source checksum; redistribution/license and attribution questions remain VERIFY_REQUIRED `[C-701]`.
 
 *Figure/table proposal*:
 - **Figure 8** — Validation/reproducibility overview. *Source*: `validation/full_suite_report.md`. *Exists*: No.
