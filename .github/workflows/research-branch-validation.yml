@@ -31,6 +31,37 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt pytest numpy scipy pandas
+      - name: Stage and verify external MN5 SWCs
+        run: |
+          set -euo pipefail
+          TEMP_DIR="$(python -c 'import tempfile; print(tempfile.gettempdir())')"
+          BASE="https://storage.googleapis.com/flyem-male-cns/v1.0/segmentation/skeletons-malecns/skeletons-swc"
+          curl --fail --location --retry 3 --retry-delay 2 \
+            "$BASE/em_801970.swc" -o "$TEMP_DIR/em_801970.swc"
+          curl --fail --location --retry 3 --retry-delay 2 \
+            "$BASE/em_801295.swc" -o "$TEMP_DIR/em_801295.swc"
+          cd "$TEMP_DIR"
+          printf '%s  %s\\n' \
+            'c4297590219f2d9bbb5038fd190c4c9d38d4a4ecb66dc35cf3f0d915b313f1d2' 'em_801970.swc' \
+            'b2c8e23c6b921f2548d239d83d6887be4e69fd919bd6e02ee41b00ad377d3e69' 'em_801295.swc' \
+            | sha256sum --check
+          python - <<'PY'
+          import tempfile
+          from pathlib import Path
+
+          root = Path(tempfile.gettempdir())
+          expected = {"em_801970.swc": 8520, "em_801295.swc": 7991}
+          for filename, expected_nodes in expected.items():
+              rows = [
+                  line for line in (root / filename).read_text().splitlines()
+                  if line.strip() and not line.lstrip().startswith("#")
+              ]
+              if len(rows) != expected_nodes:
+                  raise SystemExit(
+                      f"{filename}: expected {expected_nodes} nodes, got {len(rows)}"
+                  )
+              print(f"{filename}: {len(rows)} nodes verified")
+          PY
       - name: Run MN5 provenance and gate tests
         run: |
           python -m pytest -q \
