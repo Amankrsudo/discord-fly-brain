@@ -127,3 +127,5 @@ conductance, which remains BLOCKED. Calibration always runs with Dα7 disabled.
   closed.
 
 **Exploratory-model authorization labels:** this sensitivity analysis is `MODEL-AUTHORIZED / ANATOMY + LITERATURE CONSTRAINED` only for conditional, assumption-dependent model calculations. This label does not authorize native biological inference; PSI→MN5 spatial voltage transfer and native Dα7 conductance remain **NOT AUTHORIZED**.
+
+**Authorization and evidence limits:** `MODEL-AUTHORIZED / ANATOMY + LITERATURE CONSTRAINED` and `MODEL-AUTHORIZED / CHANNEL-CONSTRAINED / NATIVE VALUE MODEL-DERIVED` authorize only conditional model calculations. Outputs are **MODEL-DERIVED**, not native biological measurements. The available somatic EPSP is **not an experimental voltage-transfer measurement**, and no anatomically reconstructed contact-to-soma path exists. PSI→MN5 spatial voltage transfer and native Dα7 conductance remain **NOT AUTHORIZED** for native biological inference.
