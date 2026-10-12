@@ -258,9 +258,9 @@ A complete download/staging command is:
 # Download MN5 SWC skeletons from MaleCNS v1.0 GCS bucket
 # (requires gsutil / Google Cloud SDK authenticated)
 TEMP_DIR="$(python -c 'import tempfile; print(tempfile.gettempdir())')"
-gsutil cp gs://flyem-male-cns/v1.0/segmentation/skeletons-malecns/skeletons-swc/em_801970.swc \
+gsutil cp gs://flyem-male-cns/v1.0/segmentation/skeletons-malecns/skeletons-swc/801970.swc \
   "${TEMP_DIR}/em_801970.swc"
-gsutil cp gs://flyem-male-cns/v1.0/segmentation/skeletons-malecns/skeletons-swc/em_801295.swc \
+gsutil cp gs://flyem-male-cns/v1.0/segmentation/skeletons-malecns/skeletons-swc/801295.swc \
   "${TEMP_DIR}/em_801295.swc"
 ```
 
