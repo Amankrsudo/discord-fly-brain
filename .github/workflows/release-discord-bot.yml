@@ -1,0 +1,94 @@
+name: Build Discord Bot Release
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "bot-v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Build clean bot ZIP
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          from zipfile import ZIP_DEFLATED, ZipFile
+
+          root = Path.cwd()
+          output = root / "fly-brain-discord-bot.zip"
+          files = [
+              ".env.example",
+              "README.md",
+              "LICENSE",
+              "requirements.txt",
+              "fly_bot.py",
+              "fly_controller.py",
+              "brain_dashboard.py",
+              "dashboard_animation.py",
+              "experiment_runner.py",
+              "group_brain.py",
+              "group_weights.json",
+              "memory.py",
+              "social_simulation.py",
+          ]
+          dirs = ["biological_brain", "dashboard assests", "sprites"]
+          included = []
+
+          for item in files:
+              path = root / item
+              if path.is_file():
+                  included.append(path)
+
+          excluded_parts = {
+              ".git", ".venv", "venv", "__pycache__", ".pytest_cache",
+              ".mypy_cache", ".ruff_cache", "node_modules", "dist", "build"
+          }
+          for dirname in dirs:
+              base = root / dirname
+              if base.is_dir():
+                  for path in base.rglob("*"):
+                      if not path.is_file():
+                          continue
+                      relative = path.relative_to(root)
+                      if any(part in excluded_parts for part in relative.parts):
+                          continue
+                      if path.name == "fly_state.json" or path.suffix in {".pyc", ".pyo"}:
+                          continue
+                      included.append(path)
+
+          missing = [item for item in files if not (root / item).is_file()]
+          if missing:
+              raise SystemExit("Required release files missing: " + ", ".join(missing))
+          if not any(p.name == ".env.example" for p in included):
+              raise SystemExit("Missing .env.example")
+          if any(p.name == ".env" or p.name == "fly_state.json" for p in included):
+              raise SystemExit("Refusing to package secrets or runtime state")
+
+          with ZipFile(output, "w", ZIP_DEFLATED) as archive:
+              for path in sorted(set(included)):
+                  archive.write(path, Path("fly-brain-discord-bot") / path.relative_to(root))
+          print(f"Created {output.name} with {len(set(included))} files")
+          PY
+
+      - name: Create GitHub release and attach ZIP
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event_name == 'push' && github.ref_name || format('bot-v{0}', github.run_number) }}
+          name: ${{ github.event_name == 'push' && github.ref_name || format('Fly Brain Discord Bot build {0}', github.run_number) }}
+          body: |
+            Standalone Fly Brain Discord bot package.
+
+            Download `fly-brain-discord-bot.zip`, extract it, install dependencies with `pip install -r requirements.txt`, configure `DISCORD_TOKEN` as an environment variable (or copy `.env.example` to `.env` if the hosting environment supports dotenv), and start with `python fly_bot.py`.
+
+            Never upload or commit a real Discord bot token. Runtime state is not included.
+          files: fly-brain-discord-bot.zip
+          generate_release_notes: true
