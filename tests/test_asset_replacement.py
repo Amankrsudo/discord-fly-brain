@@ -106,7 +106,7 @@ def test_repository_assets_have_nonblank_existing_paths():
 
 
 def test_all_repository_visual_assets_are_inventoried():
-    ignored = {".git", ".venv", "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache"}
+    ignored = {".git", ".venv", "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache", ".kilo"}
     extensions = {".png", ".gif", ".jpg", ".jpeg", ".webp"}
     discovered = set()
     for base, dirs, files in __import__("os").walk(ROOT):
