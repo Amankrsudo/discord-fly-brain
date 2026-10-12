@@ -32,7 +32,7 @@ The public MaleCNS source and known local inputs/outputs are described in [data/
 - `REVIEW_MANUSCRIPT.md` — assembled review-only manuscript source with visible author placeholders, four tables, eight figures, and a generated bibliography insertion point
 - `scripts/build_review_pdf.py` — reproducible HTML/PDF builder for editorial review only; output is explicitly NOT FOR SUBMISSION
 - `REVIEW_BUILD_BLOCKERS.md` — build pipeline status, limits, and post-build inspection checklist
-- `references.bib` — 18 entries with verified DOIs
+- `references.bib` — 20 BibTeX entries; DOI and metadata verification is mixed, with unresolved entries explicitly marked for review
 - `FIGURE_TABLE_MANIFEST.md` — figure/table registry with sources
 - `PUBLICATION_MANIFEST.csv` — machine-readable release classification
 - `claim_evidence_matrix.csv` — 8 claims with evidence-class codes
