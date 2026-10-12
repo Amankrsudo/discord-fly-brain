@@ -29,18 +29,29 @@ Entries below were checked only against repository records. A field's presence i
 | `Augustin2019GFS` | S-06: authors, journal, year, volume/issue/article identifier, DOI | Article title is absent. **VERIFY_REQUIRED**. |
 | `Hurkey2023` | Publisher/PubMed record checked | Corrected title to “Gap junctions desynchronize a neural circuit to stabilize insect flight”; author list and issue metadata updated. Verify citation is used only for its measured MN1–MN4 coupling results, not MN5-specific conductance. |
 | `Phelan2008` | PubMed/PMC record checked | Corrected title, full author list, issue, pages, DOI, PMID 19084406 and PMCID PMC2663713. Heterologous channel data must not be presented as native GFS conductance. |
-| `Orr2014` | S-09 anatomy citation: author names, journal, year, volume/issue/pages, DOI, PMID | Article title absent. **VERIFY_REQUIRED**. |
+| `Orr2014` | BibTeX currently includes title, author list, journal, year, volume/issue/pages, DOI, and PMID | Fields are present in the working bibliography; verify all against the primary record and ensure claims remain limited to GF→TTMn/ShakB evidence. **VERIFY_REQUIRED**. |
 | `Blagburn2020` | PubMed/PMC record checked | Replaced the misattributed `Auger2020` entry with the verified Blagburn title, author, journal, article number, DOI, PMID 31951567 and PMCID PMC6946141. This is an auditory-input study; the GF→PSI ShakB statement is a secondary citation to Augustin 2017. |
 | `KuehnDuch2013` | PubMed/PMC record checked | Corrected title to “Putative excitatory and putative inhibitory inputs are localised in different dendritic domains in a Drosophila flight motoneuron”; identifiers match. Confirm any SIZ-specific sentence against the full paper before submission. |
-| `vonHoffDuch2010` | S-11: author names and year; parameter registry supplies PMID/PMCID | Title, journal, volume/pages, DOI absent from source registry. **VERIFY_REQUIRED**. |
+| `vonHoffDuch2010` | BibTeX currently includes title, author list, journal, year, volume/issue/pages, DOI, PMID, and PMCID | Fields are present in the working bibliography; independently verify against the primary record before submission. **VERIFY_REQUIRED**. |
 | `Yang2016` | PubMed/PMC record checked | Correct title is “Subcellular Imaging of Voltage and Calcium Signals Reveals Neural Processing In Vivo”; six authors, Cell 166(1):245–257, DOI 10.1016/j.cell.2016.05.031, PMID 27264607, PMCID PMC5606228 match. Its visual-system experiments are not direct MN5 transfer evidence. |
-| `GouwensWilson2009` | S-13: authors, journal, year, volume/issue/pages | Title, DOI, and identifiers absent. **VERIFY_REQUIRED**. |
-| `Meseke2009`, `DuchLevine2000`, `DuchBaylineLevine2000` | S-15: author names, year, journal/volume/pages where recorded; Manduca species boundary | Several titles and publication fields absent. **VERIFY_REQUIRED**; ensure these are used only for cross-species context. |
+| `GouwensWilson2009` | BibTeX currently includes title, author list, journal, year, volume/issue/pages, DOI, and PMID | Fields are present in the working bibliography; independently verify against the primary record and confirm relevance to claims. **VERIFY_REQUIRED**. |
+| `Meseke2009`, `DuchLevine2000`, `DuchBaylineLevine2000` | Working BibTeX now contains titles, authors, journal, year, volume/pages, and DOI for these entries | Metadata fields are present but need primary-record verification; use only for Manduca/cross-species context, never as MN5-specific measured passive parameters. **VERIFY_REQUIRED**. |
 | `Augustin2017` | Publisher/PubMed record checked | Full title, 11 authors, volume 15 issue 9, article e2001655, DOI 10.1371/journal.pbio.2001655, PMID 28902870 and PMCID PMC5597081 verified. Specific GF→PSI interpretation should be checked against the relevant figure/text in the primary article. |
 | `Kadas2012` | PubMed/PMC record checked | Corrected full title and four-author list; DOI, PMID 22219280 and PMCID PMC6621333 match. Supports developmental CaMKII/cholinergic GFS claims and the documented PSI driver-validation caveat; not evidence of PSI-selective activation. |
-| `Lansdell2012` | S-19: authors, title, journal, year, volume/article number, DOI | Complete against S-19 record; no external verification performed. |
+| `Lansdell2012` | Working BibTeX includes authors, title, journal, year, volume/pages, DOI | Metadata is populated from the source registry but no external verification is recorded in this audit. **VERIFY_REQUIRED**; recombinant receptor data do not establish native PSI→MN5 conductance. |
 
 S-14 is a software repository/function citation and needs an exact version/URL if cited. S-16 is a repository/data record with incomplete citation fields. S-17 is explicitly **UNVERIFIED** and must not be promoted into the bibliography as evidence. The source registry and other parameter records cite additional articles; reconcile every citation actually used in the paper against a primary record before release. Do not fill missing fields from memory.
+
+
+## 2026-10-12 working-bibliography reconciliation
+
+A fresh repository-local field scan of `paper/references.bib` on the test-fix branch found **21 entries**. Most article entries now contain author, title, journal, year, and DOI fields; `MaleCNSv1` is a dataset-style entry and intentionally has no DOI field. Presence of a field is not independent verification of its value. The rows above distinguish populated working metadata from verified publisher/PubMed metadata.
+
+**Important citation-rendering limitation:** `paper/REVIEW_MANUSCRIPT.md` does not contain machine-readable BibTeX citation commands or citation-key references. The review build script inserts the entire bibliography at `BIBLIOGRAPHY_INSERT` and prints each BibTeX key as a label. Consequently, the current build cannot mechanically prove that every in-text author–year citation maps to the intended bibliography entry or identify true orphan references. Claim IDs (for example, `[C-101]`) refer to the claim evidence map; they are not bibliographic citations. This is an editorial/source-format limitation, not a successful citation reconciliation.
+
+Before submission, reconcile author–year citations in the assembled manuscript against the primary records and the 21 bibliography entries, then convert the final source to the journal's required citation style. Do not remove entries solely because the current Markdown source does not contain their BibTeX keys; the source uses prose citations and claim IDs, and each reference's role must be reviewed first.
+
+A repository-local scan also confirms that several entries previously described as having missing titles in older registry notes now have title fields in the working BibTeX. Those changes update field-presence status only; they do not silently promote the records to externally verified status.
 
 ## Decision
 
