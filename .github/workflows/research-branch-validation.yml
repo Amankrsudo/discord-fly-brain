@@ -65,6 +65,44 @@ jobs:
         run: python paper/scripts/generate_figures_tables.py
       - name: Check generated package for whitespace errors
         run: git diff --check
+      - name: Install review PDF toolchain
+        run: python -m pip install "Markdown==3.7" "WeasyPrint==62.3" "pypdf==5.1.0"
+      - name: Build review-only manuscript PDF
+        env:
+          GITHUB_SHA: ${{ github.sha }}
+        run: python paper/scripts/build_review_pdf.py
+      - name: Inspect generated PDF text and page count
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          from pypdf import PdfReader
+
+          pdf = Path("build/review-manuscript/REVIEW_ONLY_NOT_FOR_SUBMISSION.pdf")
+          reader = PdfReader(str(pdf))
+          text = "\\n".join(page.extract_text() or "" for page in reader.pages)
+          checks = {
+              "review-only warning": "REVIEW ONLY" in text and "NOT FOR SUBMISSION" in text,
+              "Gate A remains closed": "NOT AUTHORIZED" in text and "spatial voltage transfer" in text.lower(),
+              "Gate B remains closed": "Dα7" in text and "NOT AUTHORIZED" in text,
+              "author placeholder visible": "AUTHOR NAMES AND ORDER TO BE CONFIRMED" in text,
+              "references included": "Berg2026MaleCNS" in text,
+          }
+          failed = [name for name, ok in checks.items() if not ok]
+          if len(reader.pages) < 10:
+              failed.append(f"unexpectedly short PDF ({len(reader.pages)} pages)")
+          if failed:
+              raise SystemExit("PDF inspection failed: " + "; ".join(failed))
+          print(f"PDF text inspection passed: {len(reader.pages)} pages; {pdf.stat().st_size} bytes")
+          PY
+      - name: Upload review-only PDF artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: review-only-manuscript-pdf
+          path: |
+            build/review-manuscript/REVIEW_ONLY_NOT_FOR_SUBMISSION.pdf
+            build/review-manuscript/REVIEW_ONLY_NOT_FOR_SUBMISSION.html
+          if-no-files-found: error
+          retention-days: 14
       - name: Validate manuscript source, references, and scientific gates
         run: |
           python - <<'PY'
