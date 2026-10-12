@@ -408,7 +408,7 @@ Gates are described as **evidence constraints** — the absence of qualifying pr
 
 ## 8. Reproducibility and validation
 
-**Software validation**: the repository pytest run (excluding `tests/test_diagnostics.py`) reported **1773 passed and 2 skipped** `[C-602]`. This verifies code paths and invariants against stated fixtures; it is **software validation, not empirical biological validation** `[C-602]`.
+**Software validation**: an earlier repository pytest run (excluding `tests/test_diagnostics.py`) reported **1,773 passed and 2 skipped**; this is a historical count, not a fresh result for the current branch `[C-602]`. It verifies code paths and invariants against stated fixtures; it is **software validation, not empirical biological validation** `[C-602]`.
 
 > **Permitted**: "The tests verify code paths against stated assertions and fixtures. This is software validation and is not empirical biological validation." `[C-602]`
 
@@ -532,7 +532,7 @@ Both are recorded as `recorded_value=True` (evidence about the artefact, not a u
 
 ## 8. Limitations
 
-**Provenance and snapshots**: the synapse-pair Feather carries **no recorded expected checksum**; download/staging commands are **not documented** in repository instructions; external-data license redistribution and author attribution are **VERIFY_REQUIRED** per `research_archive/EXTERNAL_DATA_REPRODUCIBILITY.md` `[C-701]`. The two cached SWCs consumed by the sensitivity script are pinned by SHA-256 in the script itself `[C-601]`.
+**Provenance and snapshots**: a SHA-256 digest is recorded for the local staged synapse-pair Feather, but no independent publisher-provided expected checksum was identified. Download/staging commands are documented in `research_archive/EXTERNAL_DATA_REPRODUCIBILITY.md`; successful re-staging still depends on external access and environment configuration. External-data license redistribution and author attribution remain **VERIFY_REQUIRED** `[C-701]`. The two cached SWCs consumed by the sensitivity script are pinned by SHA-256 in the script itself `[C-601]`.
 
 **Interpretation**: every model output is conditional on declared assumptions and must not be read as native physiology `[C-402, C-503]`. The 43 contacts are metadata in the reduced model and play no role in its arithmetic `[C-601]`. "Measured" quantities in the results are exclusively native electrophysiology (resting potential, threshold, AP amplitude, input resistance, the GF-stimulated EPSP) `[C-301, C-302, C-304]`; native PSI→MN5 conductance, spatial transfer, and Dα7 conductance are **absent**, not zero `[C-401, C-501]`.
 
