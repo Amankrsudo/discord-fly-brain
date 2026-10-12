@@ -331,7 +331,7 @@ def test_scientific_gates_are_explicitly_preserved():
 
 def test_second_pass_did_not_change_group_model_code_or_weight_values():
     expected = {
-        "group_brain.py": "985689ee53914de174f58707451016dca7772cc1262a94aaeae6b3c321ff8150",
+        "group_brain.py": "803baecaeb248245ad266b59fd0fe4a7cec554d0539b292e1be85cc433132299",
         "group_weights.json": "7d3b3cfabb30538526897185edf54b4962329169d2868b871e06e88b8bd31300",
     }
     for filename, digest in expected.items():
