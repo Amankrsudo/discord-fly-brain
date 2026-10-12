@@ -352,15 +352,18 @@ Bulk redistribution remains:
 
 ## 5. Reproducibility limitations
 
-The following items remain unresolved and must not be represented as completed
-reproducibility guarantees:
+The repository now documents retrieval/staging commands and expected checksums for the Feather table, SWCs, and mesh files. **Documentation is not the same as a clean end-to-end reproduction.** The following remain unresolved and must not be represented as completed reproducibility guarantees:
 
-- complete download/staging command for the Feather table (the SHA-256 is now RECORDED)
-- complete download/staging commands for the SWCs (SHA-256 values already recorded)
-- license text and bulk-redistribution terms
-- checksum for the remote annotation layer (not a static file)
-- exact dependency/environment lockfile
-- clean-checkout validation of the release snapshot
+- execute the documented staging procedure from a clean environment and record successful retrieval of each required external input
+- run the SWC-dependent analysis/tests with both exact SWC files staged, verify their SHA-256 values and expected node counts, and preserve the actual pytest output
+- review the MaleCNS license text, attribution requirements, and bulk-redistribution terms before redistributing any dataset assets
+- document a checksum/version strategy for the remote annotation layer, for which a static-file SHA-256 is not applicable
+- establish an exact dependency/environment lockfile or other reproducible environment specification
+- validate the release snapshot from a clean checkout, including figure/table generation and review-manuscript build
+
+### Current test implication
+
+The GitHub Actions run `38213618643` reported 1,646 passed, 44 skipped, zero failures, and zero errors in the broad-suite audit. Some tests that require `/tmp/em_801970.swc` and `/tmp/em_801295.swc` intentionally skip when those externally staged inputs are absent. Therefore, the clean software-test result does **not** establish that the SWC-dependent analyses were executed in that run. The exact staged files should be retrieved using the commands in §3, checked against the SHA-256 values recorded here and in the consuming code, and the affected tests rerun before claiming end-to-end reproduction.
 
 The following items were RESOLVED during the 2026-10-09 verification pass:
 - SHA-256 checksum for the Feather table: now RECORDED (`959d8e…`)
