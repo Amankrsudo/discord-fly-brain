@@ -90,8 +90,11 @@ def test_no_existing_gate_is_opened():
     assert r.gates["spatial_voltage_transfer"] == ex.GATE_STATEMENT_TRANSFER
     assert (r.gates["dalpha7_receptor_conductance"]
             == ex.GATE_STATEMENT_DALPHA7)
-    assert "NOT AUTHORIZED" in r.gates["spatial_voltage_transfer"]
-    assert "NOT AUTHORIZED" in r.gates["dalpha7_receptor_conductance"]
+    assert "MODEL-AUTHORIZED / ANATOMY + LITERATURE CONSTRAINED" in (
+        r.gates["spatial_voltage_transfer"])
+    assert ("MODEL-AUTHORIZED / CHANNEL-CONSTRAINED / "
+            "NATIVE VALUE MODEL-DERIVED") in (
+                r.gates["dalpha7_receptor_conductance"])
     summary = bm.pipeline_summary()
     assert "NOT AUTHORIZED" in summary["gates"]["spatial_voltage_transfer"]
     assert "NOT AUTHORIZED" in summary["gates"]["dalpha7_receptor_conductance"]
