@@ -115,7 +115,6 @@ def main() -> None:
     HTML(string=html_doc, base_url=str(ROOT)).write_pdf(
         OUT_PDF,
         presentational_hints=True,
-        pdf_identifier=sha.encode("utf-8")[:16].ljust(16, b"0"),
     )
     if not OUT_PDF.is_file() or OUT_PDF.stat().st_size < 20_000:
         raise SystemExit("PDF output is missing or unexpectedly small.")
