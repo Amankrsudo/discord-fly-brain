@@ -266,21 +266,6 @@ The **reported** full-suite figure of **1,773 passed and 2 skipped** is inherite
 
 ---
 
-## Internal notes: linkage to planned figures and tables
-
-The Methods here ground the following planned figure/table generation:
-- **Figure 3** (contact mapping) ← §7 + artifact `malecns_compartment_post_psi_mn5.csv` `[C-102, C-103]`
-- **Figure 4** (compartment annotations) ← §7 + `retrieve_malecns_compartment_post.py` `[C-103]`
-- **Figure 5** (two-gate model) ← §10 + `analyze_mn5_two_gate_constraint_model.py` `[C-402, C-601]`
-- **Figure 6** (sensitivity) ← §10 + `mn5_psi_mn5_final_constraint_model_sensitivity.csv` `[C-601]`
-- **Table R-2** (mesh/registration) ← §3–§4 `[C-202, C-204]`
-- **Table R-3** (native biophysics) ← §2 + `model_input_freeze.md` Section A `[C-301, C-302]`
-
-No figures or tables are generated in this phase.
-
----
-
----
 
 # Results
 
@@ -298,8 +283,7 @@ MaleCNS v1.0 is the source for both synapse counts and per-synapse annotations `
 
 > **Section status**: all claims here are supported by the frozen MaleCNS metadata table.
 
-*Figure/ table proposal*:
-- **Table R-1** — Body ID, VFB ID, hemisphere, and cell-type text for PSI/MN5. *Source*: `final_anatomy_audit.md` Block A. *Exists*: No — generate from audit table.
+
 
 ---
 
@@ -315,9 +299,7 @@ For context, across **all** of MN5's inputs the PSI→MN5 contacts fall exclusiv
 
 **Contact geometry** (surface-distance tier, 8 nm voxel domain): for 801970, contact→mesh surface ranges 8.55–51.70 nm (median 35.17); for 801295, 1.67–80.22 nm (median 26.97). All 43 contacts have a nearest surface triangle and index preserved; nearest-vertex distance is tracked separately and never substituted `[C-201]`. Three contacts (801970, indices 8/9/10) are **AMBIGUOUS** (margin ratios 1.110–1.172; runner-up is the same fragment in all three) — preserved, not broken by an invented threshold `[C-201]`.
 
-*Figure/table proposal*:
-- **Figure 3** — PSI→MN5 contact mapping at minconf 0.5 (43 contacts). *Source*: `final_anatomy_audit.md` Block C/D; artifact `research/artifacts/malecns_compartment_post_psi_mn5.csv`; generator `retrieve_malecns_compartment_post.py`. *Exists*: No — generate from pinned audit artifact.
-- **Figure 4** — `compartment_post`/`compartment_pre` distribution. *Source*: same artifact. *Exists*: No.
+
 
 > **Limitation**: contact counts and labels are dataset annotations; they establish where contacts are, not how much signal reaches the soma `[C-102, C-103]`.
 
@@ -337,8 +319,7 @@ The mesh is **not a closed surface**: 462,426 / 495,569 boundary edges and 2,238
 
 > **Limitation**: mesh fragmentation and non-closed surfaces do not establish biological disconnection; no component is assigned a compartment name `[C-204]`. The soma-proxy is a geometric anchor, never promoted to a labelled soma `[C-202]`.
 
-*Figure/table proposal*:
-- **Table R-2** — Mesh integrity metrics and coordinate-registration distances. *Source*: `final_anatomy_audit.md` Block I/F. *Exists*: No.
+
 
 ---
 
@@ -374,8 +355,7 @@ Several MN5 passive/cable quantities are **blocked / not measured in any accessi
 
 > **Limitation**: these values constrain model context only; they are NOT native MN5 cable measurements `[C-303]`.
 
-*Figure/table proposal*:
-- **Table R-3** — Admissible native MN5 measurements with provenance class. *Source*: `model_input_freeze.md` Section A. *Exists*: No.
+
 
 ---
 
@@ -400,9 +380,7 @@ The two-gate constrained analysis runs **15,528 rows** across a deterministic pa
 > **Permitted**: "Effective Dα7 conductance was swept as a model assumption; outputs are model-derived sensitivity, not native measurements." `[C-503]`
 > **Prohibited**: "Native Dα7 conductance" — this is NOT AUTHORIZED `[C-501]`.
 
-*Figure/table proposal*:
-- **Figure 5** — Two-gate conditional model diagram. *Source*: `mn5_psi_mn5_final_constraint_model.md`. *Exists*: No.
-- **Figure 6** — Sensitivity summary (model-derived min/median/max). *Source*: `mn5_psi_mn5_final_constraint_model_sensitivity.csv`; generator `analyze_mn5_two_gate_constraint_model.py`. *Exists*: No — generator script exists; CSV exists; figure not rendered.
+
 
 ---
 
@@ -424,9 +402,7 @@ Gates are described as **evidence constraints** — the absence of qualifying pr
 
 > **Section status**: gates closed and evidence gaps enumerated from `missing_evidence.md` Tier 1 `[C-401, C-501]`.
 
-*Figure/table proposal*:
-- **Figure 7** — Model capability/gating diagram. *Source*: `model_input_freeze.md`, `missing_evidence.md`. *Exists*: No.
-- **Table R-4** — Resolved vs blocked quantities (minimum-honest model). *Source*: `model_input_freeze.md` §Minimum honest model. *Exists*: No.
+
 
 ---
 
@@ -440,8 +416,7 @@ Gates are described as **evidence constraints** — the absence of qualifying pr
 
 > **Limitation**: the recorded digest is based on the local staged Feather, not an independently published source checksum; redistribution/license and attribution questions remain VERIFY_REQUIRED `[C-701]`.
 
-*Figure/table proposal*:
-- **Figure 8** — Validation/reproducibility overview. *Source*: `validation/full_suite_report.md`. *Exists*: No.
+
 
 ---
 
