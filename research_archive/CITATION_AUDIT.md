@@ -41,6 +41,7 @@ Entries below were checked only against repository records. A field's presence i
 | `Augustin2017` | Publisher/PubMed record checked | Full title, 11 authors, volume 15 issue 9, article e2001655, DOI 10.1371/journal.pbio.2001655, PMID 28902870 and PMCID PMC5597081 verified. Specific GF→PSI interpretation should be checked against the relevant figure/text in the primary article. |
 | `Kadas2012` | PubMed/PMC record checked | Corrected full title and four-author list; DOI, PMID 22219280 and PMCID PMC6621333 match. Supports developmental CaMKII/cholinergic GFS claims and the documented PSI driver-validation caveat; not evidence of PSI-selective activation. |
 | `Lansdell2012` | Working BibTeX includes authors, title, journal, year, volume/pages, DOI | Metadata is populated from the source registry but no external verification is recorded in this audit. **VERIFY_REQUIRED**; recombinant receptor data do not establish native PSI→MN5 conductance. |
+| `HerreraValdez2013` | PubMed/PMC record checked; DOI 10.1007/s10827-012-0416-6, PMID 22878689, PMCID PMC6595220 | Added to the bibliography because the Results draft cites it for the capacitance discussion. The paper is a motor-neuron model; its reported capacitance discussion must not be interpreted as native spatial-transfer validation. |
 
 S-14 is a software repository/function citation and needs an exact version/URL if cited. S-16 is a repository/data record with incomplete citation fields. S-17 is explicitly **UNVERIFIED** and must not be promoted into the bibliography as evidence. The source registry and other parameter records cite additional articles; reconcile every citation actually used in the paper against a primary record before release. Do not fill missing fields from memory.
 
@@ -57,6 +58,8 @@ A repository-local scan also confirms that several entries previously described 
 
 
 **Specific corrections made on 2026-10-12:** the Augustin et al. 2019 GFS model title, Meseke et al. 2009 title, Duch & Levine 2000 title, and von Hoff & Duch 2010 title/DOI were corrected against publisher/PubMed/PMC records. The `DuchBaylineLevine2000` DOI mismatch was identified and removed rather than replaced with a guessed DOI. These metadata corrections do not constitute a complete in-text citation audit.
+
+**In-text citation scan:** the Results draft cites Herrera-Valdez et al. (2013), which was absent from the BibTeX file; a verified entry has now been added. The scan also found a few author-string variants and draft notes that need editorial cleanup. The build script does not parse author–year citations, so this remains a manual manuscript-level check rather than a complete automated reconciliation.
 
 ## Decision
 
