@@ -257,3 +257,6 @@ against a pathway-filtered somatic voltage.
 - Dα7 biological conductance: NOT AUTHORIZED
 
 This model is not a measurement of MN5 spatial voltage transfer or Dα7 conductance.
+
+
+Clarification: no anatomically reconstructed contact-to-soma path exists.
