@@ -1,15 +1,19 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 560 340" width="560" height="340" font-family="sans-serif">
-<text x="280.0" y="20" text-anchor="middle" font-size="15" font-weight="bold">PSI→MN5 compartment annotations (43 contacts)</text>
-<text x="280.0" y="38" text-anchor="middle" font-size="10" fill="#555">Source: MaleCNS v1.0 annotation layer</text>
-<rect x="55" y="45.0" width="455.0" height="57.1" fill="#4a6fa5" stroke="#333"/>
-<text x="59" y="77.6" font-size="11" fill="#fff" font-weight="bold">43</text>
-<text x="59" y="40.0" font-size="10" fill="#444">axon (pre)</text>
-<text x="51" y="77.6" font-size="10" text-anchor="end" fill="#333">compartment_pre</text>
-<rect x="55" y="135.0" width="402.1" height="57.1" fill="#4a6fa5" fill-opacity="0.45" stroke="#333"/>
-<text x="59" y="167.6" font-size="11" fill="#333" font-weight="bold">38</text>
-<text x="51" y="167.6" font-size="10" text-anchor="end" fill="#333">compartment_post</text>
-<rect x="55" y="215.0" width="52.9" height="57.1" fill="#999999" fill-opacity="0.45" stroke="#333"/>
-<text x="59" y="247.6" font-size="11" fill="#333" font-weight="bold">5</text>
-<text x="51" y="247.6" font-size="10" text-anchor="end" fill="#333">compartment_post</text>
-<text x="280.0" y="332" text-anchor="middle" font-size="10" fill="#666">All 43 contacts: compartment_post=axon. Label is a dataset annotation, not electrophysiology [C-103].</text>
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="470" viewBox="0 0 900 470" font-family="Arial, sans-serif">
+<rect width="900" height="470" fill="#fff"/>
+<text x="450" y="32" text-anchor="middle" font-size="22" font-weight="bold">PSI→MN5 compartment annotations (43 contacts)</text>
+<text x="450" y="56" text-anchor="middle" font-size="14" fill="#555">MaleCNS v1.0 annotation layer · dataset labels, not electrophysiology</text>
+<text x="70" y="105" font-size="17" font-weight="bold">Postsynaptic compartment (MN5)</text>
+<text x="70" y="132" font-size="14" fill="#555">All 43 contacts annotated “axon”</text>
+<rect x="70" y="150" width="700" height="42" rx="5" fill="#dbeafe" stroke="#2563eb"/>
+<text x="785" y="177" font-size="16" font-weight="bold" fill="#1d4ed8">43 / 43 axon</text>
+<text x="70" y="235" font-size="17" font-weight="bold">Presynaptic compartment (PSI)</text>
+<text x="70" y="260" font-size="14" fill="#555">For the 26 contacts onto MN5 body 801295, 5 presynaptic labels are “unknown”</text>
+<rect x="70" y="280" width="560" height="42" rx="5" fill="#dcfce7" stroke="#16a34a"/>
+<rect x="630" y="280" width="140" height="42" rx="5" fill="#f3f4f6" stroke="#6b7280"/>
+<text x="350" y="307" text-anchor="middle" font-size="15" font-weight="bold" fill="#166534">21 / 26 non-unknown labels</text>
+<text x="700" y="307" text-anchor="middle" font-size="15" font-weight="bold" fill="#374151">5 unknown</text>
+<text x="70" y="365" font-size="13" fill="#555">Pre- and postsynaptic labels are distinct fields; do not infer one from the other.</text>
+<text x="70" y="390" font-size="13" fill="#555">The available audit establishes the postsynaptic label for all 43 contacts and preserves</text>
+<text x="70" y="410" font-size="13" fill="#555">the five unknown presynaptic labels on the right pairing; it does not support a full pre-label</text>
+<text x="70" y="430" font-size="13" fill="#555">distribution across all 43 contacts.</text>
 </svg>
