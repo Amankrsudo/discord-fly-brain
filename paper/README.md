@@ -48,7 +48,7 @@ The repository identifies these release commits:
 - `71f089319076d227029637fe75d6477e60a632ef` — dashboard visual-system redesign.
 - `fad468e59b14047477a1a3e19f15a2e7618d61aa` — asset provenance audit reconciliation.
 
-Latest reported full-suite result: **1773 passed, 2 skipped**, with `tests/test_diagnostics.py` excluded. The run was on a dirty worktree and is not tied to an immutable source-tree snapshot; details are in `validation/full_suite_report.md`. It is not biological validation.
+Latest confirmed CI broad-suite result: **1,646 passed, 44 skipped, 0 failed, 0 errors** in Actions run [38213618643](https://github.com/Amankrsudo/discord-fly-brain/actions/runs/38213618643), commit `1b76580690f67fac78c4bf6ef3893cf4ff00e4bd`, with `tests/test_diagnostics.py` excluded. The focused MN5 provenance/gate step reported 172 passed and 16 skipped. Some tests skip when external SWC inputs are not staged; skipped tests are not data-dependent passes. This is software validation, not biological validation.
 
 ## Limitations and unresolved gates
 

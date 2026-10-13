@@ -19,11 +19,18 @@ def _swc_paths():
 
 @pytest.fixture(scope="module")
 def analysis_result():
-    return analysis.run_analysis(swc_paths=_swc_paths())
+    paths = _swc_paths()
+    missing = [path for path in paths.values() if not os.path.isfile(path)]
+    if missing:
+        pytest.skip("MaleCNS SWCs are external staged inputs; missing: " + ", ".join(missing))
+    return analysis.run_analysis(swc_paths=paths)
 
 
 def test_preserves_all_43_audited_contact_mappings():
-    contacts = analysis.load_contact_geometry(swc_paths=_swc_paths())
+    paths = _swc_paths()
+    if any(not os.path.isfile(path) for path in paths.values()):
+        pytest.skip("MaleCNS SWCs are external staged inputs; stage per research_archive/EXTERNAL_DATA_REPRODUCIBILITY.md")
+    contacts = analysis.load_contact_geometry(swc_paths=paths)
     assert len(contacts) == 43
     assert {body: sum(c.post_body == body for c in contacts)
             for body in (801970, 801295)} == {801970: 17, 801295: 26}
@@ -39,7 +46,10 @@ def test_preserves_all_43_audited_contact_mappings():
 
 
 def test_contact_local_response_uses_real_local_geometry_without_a_soma_path():
-    contacts = analysis.load_contact_geometry(swc_paths=_swc_paths())
+    paths = _swc_paths()
+    if any(not os.path.isfile(path) for path in paths.values()):
+        pytest.skip("MaleCNS SWCs are external staged inputs; stage per research_archive/EXTERNAL_DATA_REPRODUCIBILITY.md")
+    contacts = analysis.load_contact_geometry(swc_paths=paths)
     peaks = [
         analysis.contact_local_peak(
             contact, g_psi_ns=1.0, e_syn_mv=0.0,

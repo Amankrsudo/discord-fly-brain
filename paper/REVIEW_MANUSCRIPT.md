@@ -253,7 +253,7 @@ The gates are **evidence constraints on interpretation**, not assertions that th
 
 Tests verify code paths and invariants, **not** biological validity `[C-602]`. The test command is `python -m pytest tests/ -v --tb=short --ignore=tests/test_diagnostics.py` (per `AGENTS.md`) `[C-602]`.
 
-The **reported** full-suite figure of **1,773 passed and 2 skipped** is inherited from an existing validation matrix (`validation/full_suite_report.md`) and was **not freshly reproduced** during Results-draft or Methods-draft writing `[C-602]`. Specific gates verified by test files include:
+The latest broad-suite audit for commit `1b76580690f67fac78c4bf6ef3893cf4ff00e4bd` (Actions run `38213618643`) reported **1,646 passed, 44 skipped, 0 failed, 0 errors**. The focused MN5 provenance/gate stage reported **172 passed, 16 skipped** in that run. These are software-validation results for that exact commit, not empirical biological validation `[C-602]`. Specific gates verified by test files include:
 - `tests/test_malecns_anatomy_audit.py` — contact counts and pairings
 - `tests/test_malecns_compartment.py` — annotation provenance
 - `tests/test_malecns_contact_path.py` — unresolved contact→soma path
@@ -408,7 +408,7 @@ Gates are described as **evidence constraints** — the absence of qualifying pr
 
 ## 8. Reproducibility and validation
 
-**Software validation**: an earlier repository pytest run (excluding `tests/test_diagnostics.py`) reported **1,773 passed and 2 skipped**; this is a historical count, not a fresh result for the current branch `[C-602]`. It verifies code paths and invariants against stated fixtures; it is **software validation, not empirical biological validation** `[C-602]`.
+**Software validation**: Actions run `38213618643` for commit `1b76580690f67fac78c4bf6ef3893cf4ff00e4bd` reported **1,646 passed, 44 skipped, 0 failed, 0 errors** in the broad-suite audit; the focused MN5 provenance/gate stage reported **172 passed, 16 skipped**. The broad audit excludes `tests/test_diagnostics.py` and is configured `continue-on-error`, so the recorded pytest summary—not just the workflow conclusion—is the relevant evidence. The 44 skips include tests dependent on externally staged SWCs when those files are absent. This is software validation, not empirical biological validation `[C-602]`.
 
 > **Permitted**: "The tests verify code paths against stated assertions and fixtures. This is software validation and is not empirical biological validation." `[C-602]`
 
@@ -536,7 +536,7 @@ Both are recorded as `recorded_value=True` (evidence about the artefact, not a u
 
 **Interpretation**: every model output is conditional on declared assumptions and must not be read as native physiology `[C-402, C-503]`. The 43 contacts are metadata in the reduced model and play no role in its arithmetic `[C-601]`. "Measured" quantities in the results are exclusively native electrophysiology (resting potential, threshold, AP amplitude, input resistance, the GF-stimulated EPSP) `[C-301, C-302, C-304]`; native PSI→MN5 conductance, spatial transfer, and Dα7 conductance are **absent**, not zero `[C-401, C-501]`.
 
-**Software validation**: 1,773 passed / 2 skipped is inherited from `validation/full_suite_report.md` and was **not freshly reproduced** during drafting `[C-602]`. Test coverage verifies code paths and invariants, not biological validity `[C-602]`.
+**Software validation**: the latest confirmed broad-suite result is 1,646 passed, 44 skipped, 0 failed, and 0 errors in Actions run `38213618643` (commit `1b76580690f67fac78c4bf6ef3893cf4ff00e4bd`). The focused MN5 stage reported 172 passed and 16 skipped. Skips include tests whose external SWC inputs were not staged. Test coverage verifies code paths and invariants, not biological validity `[C-602]`.
 
 **Anatomical uncertainties preserved** (not resolved): SWC `kind=2` biology is undefined by the source `[C-203]`; the 3 AMBIGUOUS contacts (margins 1.110–1.172, same runner-up fragment) are preserved without threshold invention `[C-201]`; per-neuron cut-node release remains unreleased (`M-06`, scope-limited) `[C-201]`.
 
@@ -640,14 +640,14 @@ The repository delivers an **audited, provenance-controlled evidence map** and a
 
 | Item | Value | Status | Evidence class |
 |---|---|---|---|
-| Focused MN5 provenance/gate tests | Required focused step passed in Actions run 38205908211 | PASS for that run | Software validation |
-| Broad repository test suite | Audit step cancelled in Actions run 38205908211; earlier counts are historical/inherited | NOT VERIFIED by this run | Software validation |
-| Test command (focused) | `tests/test_reduced_mn5.py`, `tests/test_model_framework.py`, `tests/test_parameter_adoption.py`, `tests/test_malecns_compartment.py`, `tests/test_malecns_contact_path.py`, `tests/test_mn5_spatial_transfer_gate_review.py` | PASS in run 38205908211 | Software validation |
+| Focused MN5 provenance/gate tests | 172 passed, 16 skipped in Actions run 38213618643 (commit `1b765806`) | PASS for that commit | Software validation |
+| Broad repository test suite | 1,646 passed, 44 skipped, 0 failed, 0 errors in Actions run 38213618643 (commit `1b765806`) | PASS for that commit; excludes `tests/test_diagnostics.py`; external-SWC tests may skip when inputs are absent | Software validation |
+| Test command (focused) | MN5 provenance and gate test step in workflow | 172 passed, 16 skipped in run 38213618643 | Software validation |
 | SWC SHA-256 pinning (sensitivity script) | 2 cached MN5 SWCs pinned in script | Recorded in source; provenance scope should be checked against each input | AM / software provenance |
 | MaleCNS synapse-pair Feather checksum | Local staged-file SHA-256 recorded; no independent publisher-provided expected checksum identified | PARTIAL — local identity only | Data provenance |
 | Data download/staging procedure | Staging command documented; successful re-staging depends on external access and environment | DOCUMENTED, not end-to-end independently verified here | Data provenance |
 | External data license/attribution | CC-BY recorded; final manuscript attribution and redistribution conditions require human review | REVIEW REQUIRED | Data provenance |
-| Review-only PDF | 30-page PDF built and text-checked in run 38205908211; visual inspection recorded separately | BUILD PASS; not submission-ready | Editorial artifact |
+| Review-only PDF | PDF built, text/page-checked, and uploaded in run 38213618643 | BUILD PASS for commit `1b765806`; not submission-ready | Editorial artifact |
 | Model sensitivity rows | 15,528 conditional model-derived rows | GENERATED; not native validation | MDE |
 
 > Software validation is not empirical biological validation [C-602].

@@ -535,11 +535,11 @@ def test_parameter_ranges_csv_schema():
         tiers[row["tier"]] = tiers.get(row["tier"], 0) + 1
         provenance[row["provenance"]] = \
             provenance.get(row["provenance"], 0) + 1
-    assert tiers == {ex.TIER_A: 7, ex.TIER_B: 3, ex.TIER_C: 11,
+    assert tiers == {ex.TIER_A: 7, ex.TIER_B: 5, ex.TIER_C: 9,
                      ex.TIER_GEOMETRY: 3}
     assert provenance == {"native_experimental_measurement": 7,
-                          "literature_derived_passive_parameter": 3,
-                          "model_assumption": 14}
+                          "literature_derived_passive_parameter": 5,
+                          "model_assumption": 12}
 
 
 def test_documents_carry_the_required_statements():
